@@ -1,0 +1,141 @@
+---
+title: 'Typing & Errors'
+description: 'An overview of Python type hints and the exception model — what they are, how they work together, and what to study next.'
+sidebar:
+  order: 1
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Two systems, one goal: reliable code
+
+Python gives you two complementary tools for writing code that breaks loudly instead of silently:
+
+1. **Type hints** — annotations that describe what types a variable, parameter, or return value should hold. They are checked statically by tools like mypy or pyright, not at runtime.
+2. **Exceptions** — a signal mechanism that interrupts normal execution when something unexpected happens, letting you catch and recover or propagate errors up the call stack.
+
+Together, type hints and exceptions let you communicate intent precisely and handle failures gracefully.
+
+## Type hints at a glance
+
+```python
+def greet(name: str, count: int = 1) -> str:
+    return (name + "! ") * count
+```
+
+`name: str`, `count: int`, and `-> str` are type hints. Python ignores them at runtime — they only exist for static checkers and human readers. They do not make `greet("Alice")` slower or faster.
+
+## The exception model at a glance
+
+```python
+try:
+    result = int("abc")
+except ValueError as e:
+    print(f"Caught: {e}")
+finally:
+    print("Always runs")
+```
+
+`try` wraps code that might fail. `except` catches a specific exception type. `finally` runs regardless of whether an exception occurred.
+
+## How they connect
+
+Type hints and exceptions are not mutually exclusive — they serve different phases:
+
+| Phase | Tool |
+|-------|------|
+| Static analysis (before running) | Type hints + mypy/pyright |
+| Runtime failures (while running) | Exceptions |
+
+A function signature tells callers what types are expected; exceptions tell callers what can go wrong at runtime.
+
+## Module roadmap
+
+| Lesson | What you will learn |
+|--------|---------------------|
+| [Type Hints](./type-hints) | Annotating variables, params, returns; `Optional`, `Union`, aliases |
+| [Exceptions](./exceptions) | `try/except/else/finally`, `raise`, chaining |
+| [Context Managers](./context-managers) | `with`, `__enter__/__exit__`, `contextlib` |
+| [Custom Errors](./custom-errors) | Subclassing `Exception`, attributes, hierarchies |
+
+## Runnable overview demo
+
+export const indexCode = `
+from typing import Optional
+
+def find_item(items: list[str], target: str) -> Optional[int]:
+    """Return the index of target in items, or None if not found."""
+    for i, item in enumerate(items):
+        if item == target:
+            return i
+    return None
+
+fruits = ["apple", "banana", "cherry"]
+
+# type hints describe intent — no runtime enforcement
+index = find_item(fruits, "banana")
+print(f"Found at index: {index}")
+
+missing = find_item(fruits, "mango")
+print(f"Not found: {missing}")
+
+# exceptions signal runtime failures
+try:
+    value = fruits[10]
+except IndexError as e:
+    print(f"IndexError: {e}")
+
+# the else clause runs only when no exception was raised
+try:
+    value = fruits[1]
+except IndexError:
+    print("Out of range")
+else:
+    print(f"Got: {value}")
+`.trim();
+
+<Playground client:visible code={indexCode} />
+
+<Callout title="Type hints are for humans and tools, not for Python">
+At runtime, Python does not check or enforce type hints. You can pass a string where an `int` was annotated and Python will not complain — it will simply do whatever the code does with that value. Run mypy or pyright as a separate step to catch type errors before they become runtime surprises.
+</Callout>
+
+export const quizIndex = [
+  {
+    q: "What does Python do with type hints at runtime?",
+    options: [
+      "Raises a TypeError if the wrong type is passed",
+      "Ignores them completely — they are for static checkers and readers",
+      "Converts the value to the annotated type automatically",
+      "Logs a warning to stderr"
+    ],
+    answer: 1
+  },
+  {
+    q: "Which block in a try statement runs regardless of whether an exception was raised?",
+    options: ["except", "else", "finally", "raise"],
+    answer: 2
+  },
+  {
+    q: "When does the `else` block of a try statement execute?",
+    options: [
+      "Always, after the try block",
+      "Only when an exception was raised and caught",
+      "Only when NO exception was raised in the try block",
+      "Only when the finally block is absent"
+    ],
+    answer: 2
+  },
+  {
+    q: "Which tool checks Python type hints statically?",
+    options: ["Python itself at runtime", "mypy or pyright", "pytest", "The `typing` module"],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="typing-errors/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="typing-errors/index" />

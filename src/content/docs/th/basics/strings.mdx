@@ -1,0 +1,179 @@
+---
+title: Strings
+description: 'String methods, slicing, f-strings, join/split, และ immutability ใน Python'
+sidebar:
+  order: 5
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## String คือลำดับของ Unicode characters
+
+Python 3 strings (`str`) เป็นลำดับ Unicode code points ที่เปลี่ยนแปลงไม่ได้
+Single quotes และ double quotes ใช้แทนกันได้ — เลือกแบบหนึ่งแล้วใช้สม่ำเสมอ
+Triple quotes (`"""` หรือ `'''`) อนุญาตให้สร้าง string หลายบรรทัด
+
+```python
+a = "Hello"
+b = 'World'
+c = """This spans
+multiple lines."""
+```
+
+## String methods ที่ใช้บ่อย
+
+String มี methods มากมาย
+เหล่านี้คือที่คุณจะใช้เป็นประจำ:
+
+```python
+s = "  Hello, Python!  "
+print(s.strip())          # "Hello, Python!"
+print(s.upper())          # "  HELLO, PYTHON!  "
+print(s.lower())          # "  hello, python!  "
+print(s.replace("Python", "World"))  # "  Hello, World!  "
+print(s.startswith("  H"))  # True
+print(s.endswith("!  "))    # True
+print(len(s))               # 18
+```
+
+Methods คืน string ใหม่ — ไม่เคยแก้ไข string ต้นฉบับ
+
+## Slicing
+
+String รองรับไวยากรณ์ slicing แบบเดียวกับ list: `s[start:stop:step]`
+Index ติดลบนับจากท้าย
+
+```python
+s = "Hello, Python!"
+print(s[0:5])    # Hello
+print(s[7:])     # Python!
+print(s[-7:])    # Python!
+print(s[::-1])   # !nohtyP ,olleH  (กลับด้าน)
+print(s[::2])    # Hlo,Pto!
+```
+
+## f-strings (formatted string literals)
+
+f-strings เปิดตัวใน Python 3.6 เป็นวิธีมาตรฐานในการฝังนิพจน์ใน string
+ใส่ prefix `f` ก่อน string แล้ววางนิพจน์ Python ใดก็ได้ไว้ใน `{}`
+
+```python
+name = "Alice"
+age = 30
+pi = 3.14159
+
+print(f"Name: {name}, Age: {age}")
+print(f"Pi to 2dp: {pi:.2f}")
+print(f"2 + 2 = {2 + 2}")
+print(f"Upper: {name.upper()}")
+```
+
+Format specifiers หลัง `:` ควบคุมการจัดวาง, ความแม่นยำ, และชนิด — mini-language เดียวกับที่ใช้ใน `str.format()`
+
+## `join()` และ `split()`
+
+`str.split(sep)` แบ่ง string เป็น list
+`sep.join(iterable)` รวม list ของ string เป็น string เดียว
+ทั้งสองเป็นการกลับกันของกัน
+
+```python
+csv = "one,two,three,four"
+parts = csv.split(",")       # ['one', 'two', 'three', 'four']
+rejoined = " | ".join(parts) # 'one | two | three | four'
+print(parts)
+print(rejoined)
+```
+
+ใช้ string method join เสมอ (`", ".join(items)`) ไม่ควร concatenate ใน loop — การ concatenate ใน loop สร้าง string กลางที่ไม่จำเป็น O(n²) ชิ้น
+
+## Demo ที่รันได้จริง
+
+export const stringsCode = `
+s = "Hello, Python!"
+print(s.upper())
+print(s.lower())
+print(s.replace("Python", "World"))
+print(s.startswith("Hello"))
+print(len(s))
+
+print(s[0:5])
+print(s[-7:])
+print(s[::2])
+
+name = "Alice"
+age = 30
+pi = 3.14159
+print(f"Name: {name}, Age: {age}")
+print(f"Pi to 2dp: {pi:.2f}")
+
+words = ["one", "two", "three"]
+joined = ", ".join(words)
+print(joined)
+parts = "a:b:c:d".split(":")
+print(parts)
+
+try:
+    s[0] = "h"
+except TypeError as e:
+    print(f"TypeError: {e}")
+`.trim();
+
+<Playground client:visible code={stringsCode} />
+
+<Callout title="Strings เปลี่ยนแปลงไม่ได้">
+เมื่อสร้าง string object แล้ว ตัวอักษรของมันไม่สามารถเปลี่ยนได้
+ทุก string method คืน **string ใหม่** — ต้นฉบับไม่ถูกแก้ไขเลย
+นี่ทำให้ string ปลอดภัยในการแชร์ข้ามหลายตัวแปรโดยไม่มีการ mutate ที่ไม่คาดคิด
+ถ้าต้องการสร้าง string ทีละส่วน (เช่น ในลูป) ให้รวบรวมชิ้นส่วนไว้ใน list
+แล้วเรียก `"".join(pieces)` ตอนท้าย — นี่คือ O(n) แทนที่จะเป็น O(n²)
+</Callout>
+
+export const quizStrings = [
+  {
+    q: "`\"Hello, World!\"[7:]` คืนค่าอะไร?",
+    options: [
+      "\"Hello, \"",
+      "\"World!\"",
+      "\"orld!\"",
+      "\"W\""
+    ],
+    answer: 1
+  },
+  {
+    q: "วิธีมาตรฐานในการ concatenate list ของ string คืออะไร?",
+    options: [
+      "str.concat(items)",
+      "sum(items, \"\")",
+      "\"\".join(items)",
+      "reduce(lambda a, b: a + b, items)"
+    ],
+    answer: 2
+  },
+  {
+    q: "prefix `f` ใน `f\"Hello {name}\"` ทำอะไร?",
+    options: [
+      "จัดรูปแบบ string เป็นตัวเลขทศนิยม",
+      "ประเมินนิพจน์ใน {} ขณะ runtime",
+      "สร้าง string constant ที่ frozen (เปลี่ยนแปลงไม่ได้)",
+      "เปิดใช้ไวยากรณ์ string หลายบรรทัด"
+    ],
+    answer: 1
+  },
+  {
+    q: "ทำไม string ใน Python จึงถูกเรียกว่า immutable?",
+    options: [
+      "ไม่สามารถส่งให้ฟังก์ชันได้",
+      "ตัวอักษรไม่สามารถเปลี่ยนได้หลังสร้าง; methods คืน string ใหม่",
+      "ไม่สามารถเก็บใน list ได้",
+      "ถูก compile เป็น bytecode และไม่สามารถอ่านขณะ runtime"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="basics/strings" questions={quizStrings} />
+
+<ProgressTracker client:visible id="basics/strings" />

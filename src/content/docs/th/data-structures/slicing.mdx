@@ -1,0 +1,164 @@
+---
+title: Slicing
+description: 'seq[start:stop:step], negative indices, กลับลำดับด้วย [::-1] และ shallow copy ผ่าน slice ใน Python 3.11+'
+sidebar:
+  order: 5
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Slice syntax
+
+Slice notation ของ Python ดึงลำดับย่อยจาก sequence type ใด ๆ — list, tuple, string และ `bytes`
+
+```
+seq[start : stop : step]
+```
+
+- **`start`** — index ของ element แรกที่รวม (ค่าเริ่มต้น: 0)
+- **`stop`** — index ถัดจาก element สุดท้ายที่รวม (ค่าเริ่มต้น: `len(seq)`)
+- **`step`** — ช่วงระหว่าง element (ค่าเริ่มต้น: 1)
+
+ส่วนใดก็ตามสามารถละได้ Python จะใส่ค่าเริ่มต้นให้
+
+```python
+nums = [10, 20, 30, 40, 50, 60, 70]
+nums[:3]    # [10, 20, 30]       — สามตัวแรก
+nums[2:5]   # [30, 40, 50]       — index 2, 3, 4
+nums[::2]   # [10, 30, 50, 70]   — ทุก element ที่สอง
+nums[::-1]  # [70, 60, 50, 40, 30, 20, 10]  — กลับลำดับ
+```
+
+## Negative indices
+
+Python รองรับ negative index: `-1` คือ element สุดท้าย, `-2` คือรองสุดท้าย และต่อไป
+
+```python
+nums = [10, 20, 30, 40, 50, 60, 70]
+nums[-1]     # 70   — element สุดท้าย
+nums[-3:]    # [50, 60, 70]  — สามตัวสุดท้าย
+nums[:-3]    # [10, 20, 30, 40]  — ทุกอย่างยกเว้นสามตัวสุดท้าย
+```
+
+Negative index ทำให้เข้าถึงส่วนท้ายของ sequence ได้ง่ายโดยไม่ต้องรู้ความยาว
+
+## การกลับลำดับ sequence
+
+`seq[::-1]` คือวิธีที่ idiomatic ใน Python เพื่อกลับลำดับ sequence ใด ๆ
+คืนค่าเป็น object ใหม่ที่กลับลำดับ — ไม่แก้ไข sequence ต้นฉบับ
+
+```python
+original = [1, 2, 3, 4, 5]
+reversed_copy = original[::-1]  # [5, 4, 3, 2, 1]
+print(original)                 # [1, 2, 3, 4, 5] — ไม่เปลี่ยนแปลง
+```
+
+สำหรับ string `[::-1]` ทำงานเหมือนกัน:
+
+```python
+s = 'Hello, World!'
+print(s[::-1])   # !dlroW ,olleH
+```
+
+## Shallow copy ผ่าน slice
+
+`seq[:]` (ไม่มี start, stop หรือ step) คืน **shallow copy** ของ sequence
+list ใหม่เป็น object ที่ต่างกันแต่แต่ละ element ยังชี้ไปยัง object เดียวกัน
+
+```python
+original = [1, 2, 3, 4, 5]
+copy = original[:]
+copy[0] = 99
+print(original)  # [1, 2, 3, 4, 5]  — ไม่เปลี่ยนแปลง
+print(copy)      # [99, 2, 3, 4, 5]
+```
+
+สำหรับโครงสร้างซ้อน (list ภายใน list) ใช้ `copy.deepcopy()` แทนหากต้องการ inner list ที่เป็นอิสระ
+
+## Named slices
+
+เก็บ slice ในตัวแปรด้วย `slice(start, stop, step)` เพื่อความอ่านง่าย:
+
+```python
+HEADER  = slice(None, 5)
+PAYLOAD = slice(5, -2)
+FOOTER  = slice(-2, None)
+
+data = b'HDRpayload!FT'
+```
+
+## ตัวอย่างรันได้
+
+export const slicingCode = `
+nums = [10, 20, 30, 40, 50, 60, 70]
+print('first 3:', nums[:3])
+print('last 3:', nums[-3:])
+print('middle:', nums[2:5])
+print('every other:', nums[::2])
+print('reversed:', nums[::-1])
+
+s = 'Hello, World!'
+print('first 5:', s[:5])
+print('last 6:', s[-6:])
+print('every 2nd:', s[::2])
+print('reversed:', s[::-1])
+
+original = [1, 2, 3, 4, 5]
+copy = original[:]
+copy[0] = 99
+print('original:', original)
+print('copy:', copy)
+`.trim();
+
+<Playground client:visible code={slicingCode} />
+
+<Callout title="Slicing คืน object ใหม่เสมอ; [::-1] กลับลำดับ">
+ทุก slice expression สร้าง list (หรือ string, tuple) ใหม่ — ไม่แก้ไข source
+`a[::-1]` คือ idiom มาตรฐานใน Python เพื่อกลับลำดับ sequence ในนิพจน์เดียว
+Index ที่เกินขอบเขตของ slice จะถูก clamp อัตโนมัติ: `a[100:]` คืน `[]` แทนที่จะเกิด `IndexError`
+</Callout>
+
+export const quizSlicing = [
+    {
+        q: "`nums[2:5]` คืนค่าอะไรสำหรับ `nums = [10, 20, 30, 40, 50, 60, 70]`?",
+        options: [
+            "[20, 30, 40]",
+            "[30, 40, 50]",
+            "[30, 40, 50, 60]",
+            "[20, 30, 40, 50]"
+        ],
+        answer: 1
+    },
+    {
+        q: "`nums[-3:]` คืนค่าอะไรสำหรับ list เดียวกัน?",
+        options: [
+            "[10, 20, 30]",
+            "[50, 60, 70]",
+            "[40, 50, 60]",
+            "[60, 70]"
+        ],
+        answer: 1
+    },
+    {
+        q: "Slice expression ใดที่กลับลำดับ sequence?",
+        options: ["seq[0:-1]", "seq[-1:0]", "seq[::-1]", "seq[::1]"],
+        answer: 2
+    },
+    {
+        q: "`original[:]` สร้าง deep copy หรือ shallow copy?",
+        options: [
+            "Deep copy — object ซ้อนทั้งหมดถูก duplicate",
+            "Shallow copy — outer list ใหม่แต่ element ถูก share",
+            "ไม่มีการ copy — คืน object เดิม",
+            "เกิด TypeError สำหรับ nested list"
+        ],
+        answer: 1
+    }
+];
+
+<Quiz client:visible id="data-structures/slicing" questions={quizSlicing} />
+
+<ProgressTracker client:visible id="data-structures/slicing" />

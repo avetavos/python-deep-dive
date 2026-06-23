@@ -1,0 +1,182 @@
+---
+title: Exceptions
+description: 'try/except/else/finally, การ raise exception, การจับประเภทเฉพาะ และ exception chaining ใน Python 3.11+'
+sidebar:
+  order: 3
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Exception คืออะไร
+
+**Exception** คือสัญญาณที่บอกว่ามีบางอย่างผิดพลาดระหว่างการรัน
+เมื่อ Python raise exception มันจะ unwind call stack จนกว่าจะเจอ `except` clause ที่ตรงกัน หรือหยุดโปรแกรม
+
+Exception คือ object — instance ของ class ที่สืบทอดจาก `BaseException` Exception ที่ใช้งานในโค้ดทั่วไปมักสืบทอดจาก `Exception`
+
+## โครงสร้าง try statement ครบรูปแบบ
+
+```python
+try:
+    result = risky_operation()
+except SomeError as e:
+    # ทำงานเฉพาะเมื่อ SomeError (หรือ subclass) ถูก raise
+    handle(e)
+else:
+    # ทำงานเฉพาะเมื่อไม่มี exception เกิดขึ้นใน try
+    use(result)
+finally:
+    # ทำงานเสมอ — ไม่ว่าจะเกิด exception หรือไม่
+    cleanup()
+```
+
+Block `else` เป็น feature Python ที่มีประโยชน์: ช่วยแยกแยะ "การดำเนินการสำเร็จ" ออกจาก "เราอยู่ใน cleanup" โค้ดใน `else` ทำงานเฉพาะเส้นทาง happy path เท่านั้น
+
+## การจับ exception ตามประเภทเฉพาะ
+
+จับ exception ที่เฉพาะเจาะจงที่สุดเสมอ การจับ `Exception` เป็นทางเลือกสุดท้าย ส่วน `except:` เปล่าจะกลืน `KeyboardInterrupt` และ `SystemExit` ไปด้วย
+
+```python
+try:
+    n = int(user_input)
+except ValueError:
+    print("Not a valid integer")
+except TypeError:
+    print("Expected a string, not None")
+```
+
+จับหลายประเภทในบรรทัดเดียวด้วย tuple:
+
+```python
+except (ValueError, TypeError) as e:
+    print(f"Input error: {e}")
+```
+
+## การ raise exception
+
+ใช้ `raise` เพื่อส่งสัญญาณ error อย่างชัดเจน:
+
+```python
+def divide(a: float, b: float) -> float:
+    if b == 0:
+        raise ValueError("divisor cannot be zero")
+    return a / b
+```
+
+Re-raise exception ปัจจุบันภายใน `except` block ด้วย `raise` เปล่า:
+
+```python
+except ValueError:
+    log_error()
+    raise   # re-raise exception เดิมโดยไม่เปลี่ยนแปลง
+```
+
+## Exception chaining ด้วย `raise ... from`
+
+เมื่อจับ exception หนึ่งแล้ว raise อีกอัน ให้ใช้ `raise NewError(...) from original` เพื่อเก็บ exception เดิมไว้เป็นสาเหตุ ทำให้ traceback ครบถ้วน
+
+```python
+try:
+    value = int(raw_string)
+except ValueError as original:
+    raise RuntimeError("Failed to parse config") from original
+```
+
+Attribute `__cause__` บน exception ใหม่เก็บ exception เดิมไว้ Python แสดง traceback ทั้งสองอันอัตโนมัติ
+
+หากต้องการตัด chain (ซ่อน traceback เดิม) ใช้ `raise ... from None`
+
+## Demo แบบ runnable เต็มรูปแบบ
+
+export const exceptionsCode = `
+def safe_divide(a: float, b: float) -> float:
+    """Divide a by b, raising ValueError if b is zero."""
+    if b == 0:
+        raise ValueError("divisor cannot be zero")
+    return a / b
+
+# --- try / except / else / finally ---
+print("=== basic try/except/else/finally ===")
+for b in [2.0, 0]:
+    try:
+        result = safe_divide(10.0, b)
+    except ValueError as e:
+        print(f"  ValueError: {e}")
+    else:
+        print(f"  Result: {result}")
+    finally:
+        print("  finally ran")
+
+# --- catching specific types ---
+print("\\n=== specific exception types ===")
+for val in ["42", "abc", None]:
+    try:
+        n = int(val)
+        print(f"  parsed {val!r} -> {n}")
+    except (TypeError, ValueError) as e:
+        print(f"  {type(e).__name__} for {val!r}: {e}")
+
+# --- exception chaining ---
+print("\\n=== exception chaining ===")
+try:
+    try:
+        raw = "not-a-number"
+        value = int(raw)
+    except ValueError as original:
+        raise RuntimeError("Failed to parse config value") from original
+except RuntimeError as e:
+    print(f"  RuntimeError: {e}")
+    print(f"  __cause__: {e.__cause__}")
+`.trim();
+
+<Playground client:visible code={exceptionsCode} />
+
+<Callout title="จับ exception เฉพาะประเภทเสมอ">
+`except:` เปล่า (ไม่ระบุประเภท) จับทุกอย่าง — รวมถึง `KeyboardInterrupt` (Ctrl+C) และ `SystemExit` ทำให้โปรแกรมหยุดไม่ได้และซ่อน bug ไว้
+จับ `Exception` เฉพาะที่ด้านบนสุดของ call stack (เช่น global error handler) เท่านั้น และต้อง log exception ก่อนเสมอถ้าจะกลืนมัน
+</Callout>
+
+export const quizExceptions = [
+  {
+    q: "Block `else` ใน try statement ทำงานเมื่อใด?",
+    options: [
+      "ทุกครั้ง หลัง try block จบ",
+      "เฉพาะเมื่อมี exception ถูก catch",
+      "เฉพาะเมื่อไม่มี exception เกิดขึ้นใน try block",
+      "เฉพาะเมื่อมี finally block อยู่"
+    ],
+    answer: 2
+  },
+  {
+    q: "`raise RuntimeError('msg') from original` ทำอะไร?",
+    options: [
+      "Raise RuntimeError และลบ exception เดิม",
+      "Raise RuntimeError และเก็บ exception เดิมไว้ใน __cause__",
+      "Re-raise exception เดิมพร้อมข้อความใหม่",
+      "Raise exception ทั้งสองอันพร้อมกัน"
+    ],
+    answer: 1
+  },
+  {
+    q: "Clause ใดใน try statement ทำงานเสมอ แม้จะเกิด exception?",
+    options: ["except", "else", "finally", "raise"],
+    answer: 2
+  },
+  {
+    q: "ปัญหาของ `except:` เปล่า (ไม่ระบุประเภท exception) คืออะไร?",
+    options: [
+      "เป็น syntax error ใน Python 3",
+      "จับได้เฉพาะ Exception ไม่ใช่ subclass",
+      "จับ KeyboardInterrupt และ SystemExit ด้วย ทำให้โปรแกรมออกไม่ได้ตามปกติ",
+      "ไม่สามารถเข้าถึง exception object ด้วย `as e`"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="typing-errors/exceptions" questions={quizExceptions} />
+
+<ProgressTracker client:visible id="typing-errors/exceptions" />

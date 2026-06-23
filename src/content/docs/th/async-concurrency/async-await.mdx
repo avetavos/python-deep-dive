@@ -1,0 +1,240 @@
+---
+title: 'Async / Await และ Tasks'
+description: 'asyncio.create_task, การรันแบบ sequential vs concurrent ด้วย gather และ asyncio.sleep ใน Python 3.11+'
+sidebar:
+  order: 3
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Sequential vs concurrent awaiting
+
+ข้อมูลเชิงลึกที่สำคัญใน async programming คือความแตกต่างระหว่างการ await coroutines แบบ **sequential** และการ schedule ให้รัน **concurrent**
+
+การ await coroutine ทีละตัวคือ sequential — แต่ละ coroutine ต้องเสร็จก่อนจึงจะเริ่มตัวถัดไป:
+
+```python
+import asyncio
+
+async def fetch(label: str, delay: float) -> str:
+    await asyncio.sleep(delay)
+    return f"{label} result"
+
+async def sequential() -> None:
+    a = await fetch("A", 0.3)   # รอ 0.3 วินาที
+    b = await fetch("B", 0.2)   # รอ 0.2 วินาทีหลัง A เสร็จ
+    print(a, b)
+    # รวม: ~0.5 วินาที
+
+asyncio.run(sequential())
+```
+
+การใช้ `asyncio.gather` รันพร้อมกัน — เวลารวมเท่ากับตัวที่ช้าที่สุด ไม่ใช่ผลรวม:
+
+```python
+import asyncio
+
+async def fetch(label: str, delay: float) -> str:
+    await asyncio.sleep(delay)
+    return f"{label} result"
+
+async def concurrent() -> None:
+    a, b = await asyncio.gather(
+        fetch("A", 0.3),
+        fetch("B", 0.2),
+    )
+    print(a, b)
+    # รวม: ~0.3 วินาที
+
+asyncio.run(concurrent())
+```
+
+## `asyncio.create_task` — การ schedule task แบบชัดเจน
+
+`asyncio.create_task(coro)` ห่อ coroutine ใน `Task` และ schedule มันบน event loop ที่กำลังรันทันที
+ต่างจากการเรียก coroutine โดยตรง task เริ่มรันทันทีที่ coroutine ปัจจุบันยกการควบคุม
+
+```python
+import asyncio
+
+async def worker(name: str, delay: float) -> str:
+    print(f"{name}: starting")
+    await asyncio.sleep(delay)
+    print(f"{name}: done")
+    return f"{name}-result"
+
+async def main() -> None:
+    # Schedule ทั้งสอง task ทันที — รันพร้อมกัน
+    task_a = asyncio.create_task(worker("A", 0.3))
+    task_b = asyncio.create_task(worker("B", 0.1))
+
+    # Await เพื่อรวบรวมผลลัพธ์
+    result_a = await task_a
+    result_b = await task_b
+    print(result_a, result_b)
+
+asyncio.run(main())
+# A: starting
+# B: starting
+# B: done
+# A: done
+# A-result B-result
+```
+
+สังเกตว่า "B: done" ปรากฏก่อน "A: done" แม้ว่าเรา `await task_a` ก่อน — tasks รันพร้อมกันและ B เสร็จเร็วกว่า
+
+## การยกเลิก Task
+
+`Task` ที่กำลังรันสามารถถูกยกเลิกได้ การยกเลิกจะ inject `asyncio.CancelledError` เข้าสู่ coroutine ที่จุด `await` ถัดไป
+
+```python
+import asyncio
+
+async def long_running() -> None:
+    try:
+        print("working...")
+        await asyncio.sleep(10)
+        print("done")
+    except asyncio.CancelledError:
+        print("cancelled — cleaning up")
+        raise    # re-raise CancelledError เสมอ
+
+async def main() -> None:
+    task = asyncio.create_task(long_running())
+    await asyncio.sleep(0.05)   # ให้มันเริ่มก่อน
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        print("task is cancelled")
+
+asyncio.run(main())
+# working...
+# cancelled — cleaning up
+# task is cancelled
+```
+
+Re-raise `CancelledError` หลัง cleanup เสมอ การกลืน error จะทำให้ structured cancellation พัง
+
+## `asyncio.sleep` เป็น cooperative yield
+
+`await asyncio.sleep(0)` คือ yield ขั้นต่ำ — มันหยุด coroutine ปัจจุบันชั่วคราว ทำให้ tasks อื่นที่พร้อมแล้วรันได้
+ใช้มันเพื่อหลีกเลี่ยงการ starve event loop ใน async code ที่ต้องคำนวณหนัก
+
+```python
+import asyncio
+
+async def progress_bar(total: int) -> None:
+    for i in range(total):
+        print(f"\r[{'#' * (i + 1)}{' ' * (total - i - 1)}]", end="", flush=True)
+        await asyncio.sleep(0)   # yield ระหว่างแต่ละขั้นตอน
+    print()
+
+asyncio.run(progress_bar(20))
+```
+
+## Python 3.11+: `asyncio.TaskGroup`
+
+`asyncio.TaskGroup` คือ structured-concurrency primitive ที่นำเสนอใน Python 3.11
+มันยกเลิก tasks ที่เหลือทั้งหมดโดยอัตโนมัติหากตัวใดตัวหนึ่ง raise exception
+
+```python
+import asyncio
+
+async def step(label: str, delay: float) -> str:
+    await asyncio.sleep(delay)
+    return f"{label} complete"
+
+async def main() -> None:
+    async with asyncio.TaskGroup() as tg:
+        task_a = tg.create_task(step("A", 0.2))
+        task_b = tg.create_task(step("B", 0.1))
+        task_c = tg.create_task(step("C", 0.3))
+    # ทั้งสาม task เสร็จสิ้น (หรือ group raise ExceptionGroup)
+    print(task_a.result())
+    print(task_b.result())
+    print(task_c.result())
+
+asyncio.run(main())
+# A complete
+# B complete
+# C complete
+```
+
+ควรใช้ `TaskGroup` แทน `gather` ใน Python 3.11+ — มันบังคับ structured lifetimes และส่งต่อ errors อย่างสะอาดผ่าน `ExceptionGroup`
+
+## Timeouts ด้วย `asyncio.wait_for`
+
+`asyncio.wait_for(coro, timeout)` ยกเลิก coroutine หากไม่เสร็จภายในจำนวนวินาทีที่กำหนด
+
+```python
+import asyncio
+
+async def slow_op() -> str:
+    await asyncio.sleep(5)
+    return "done"
+
+async def main() -> None:
+    try:
+        result = await asyncio.wait_for(slow_op(), timeout=0.1)
+    except asyncio.TimeoutError:
+        print("operation timed out")
+
+asyncio.run(main())
+# operation timed out
+```
+
+<Callout title="รันโปรแกรม asyncio บนเครื่องของคุณ">
+ตัวอย่างทั้งหมดในหน้านี้ใช้ `asyncio.run(main())`
+in-browser runner มี event loop รันอยู่แล้ว ดังนั้น `asyncio.run()` จะ raise `RuntimeError`
+วาง snippet ลงในไฟล์ `.py` แล้วรันด้วย `python3 async_await.py` เพื่อดู output
+</Callout>
+
+export const quizAsyncAwait = [
+  {
+    q: "เวลารวมที่ผ่านไปเมื่อ `await fetch('A', 0.3)` และ `await fetch('B', 0.2)` ถูกเรียกแบบ sequential คือเท่าใด?",
+    options: [
+      "ประมาณ 0.3 วินาที — เฉพาะตัวที่ช้าสุดที่สำคัญ",
+      "ประมาณ 0.2 วินาที — เฉพาะตัวที่เร็วสุดที่สำคัญ",
+      "ประมาณ 0.5 วินาที — delay ทั้งสองเกิดขึ้น",
+      "ประมาณ 0.0 วินาที — asyncio รันทันที"
+    ],
+    answer: 2
+  },
+  {
+    q: "`asyncio.create_task(coro)` ทำสิ่งที่ `await coro` แบบธรรมดาไม่ทำ คืออะไร?",
+    options: [
+      "รัน coroutine แบบ synchronous",
+      "Schedule coroutine บน event loop ทันทีเพื่อให้รัน concurrent ได้",
+      "สร้าง OS thread ใหม่สำหรับ coroutine",
+      "ปิดใช้งานการยกเลิกสำหรับ coroutine นั้น"
+    ],
+    answer: 1
+  },
+  {
+    q: "จะเกิดอะไรขึ้นถ้าคุณกลืน `asyncio.CancelledError` แทนที่จะ re-raise?",
+    options: [
+      "Task รันจนเสร็จสมบูรณ์ตามปกติ",
+      "Event loop raise RuntimeError ที่ await ถัดไป",
+      "Structured cancellation พัง — parent tasks อาจค้างรอ task ให้เสร็จ",
+      "ไม่มีอะไร asyncio จะ retry การยกเลิกโดยอัตโนมัติ"
+    ],
+    answer: 2
+  },
+  {
+    q: "feature ใดใน Python 3.11+ ให้ structured concurrency พร้อม automatic sibling-task cancellation เมื่อเกิด failure?",
+    options: [
+      "asyncio.gather พร้อม return_exceptions=True",
+      "asyncio.TaskGroup",
+      "asyncio.shield",
+      "asyncio.wait"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="async-concurrency/async-await" questions={quizAsyncAwait} />
+
+<ProgressTracker client:visible id="async-concurrency/async-await" />

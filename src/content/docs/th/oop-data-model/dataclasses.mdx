@@ -1,0 +1,193 @@
+---
+title: Dataclasses
+description: '@dataclass สร้าง __init__, __repr__ และ __eq__ อัตโนมัติ — พร้อม defaults, field() และ frozen=True'
+sidebar:
+  order: 5
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ปัญหา boilerplate
+
+Class ที่เก็บข้อมูลมักต้องการ `__init__`, `__repr__` และ `__eq__` — ทั้งหมดเขียนด้วยมือด้วย logic เหมือนกัน: copy constructor arguments ลงใน `self.attr`, format attributes เป็น string, เปรียบเทียบ attribute ทีละตัว
+`@dataclass` สร้างทั้งหมดนี้จาก type annotations ระดับ class
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Point:
+    x: float
+    y: float
+```
+
+Python สร้าง:
+
+- `__init__(self, x: float, y: float)` ที่กำหนด `self.x` และ `self.y`
+- `__repr__` ที่ return `"Point(x=1.0, y=2.0)"`
+- `__eq__` ที่เปรียบเทียบทุก field
+
+## Default values
+
+Scalar defaults ทำงานเหมือน keyword arguments:
+
+```python
+@dataclass
+class Config:
+    host: str = "localhost"
+    port: int = 8080
+    debug: bool = False
+```
+
+## `field()` สำหรับ mutable defaults
+
+ไม่สามารถใช้ mutable object (list, dict) เป็น default โดยตรง — Python จะใช้ instance เดียวร่วมกันระหว่าง object ทั้งหมด
+ใช้ `field(default_factory=...)` แทน:
+
+```python
+from dataclasses import dataclass, field
+
+@dataclass
+class Inventory:
+    name: str
+    tags: list = field(default_factory=list)
+    quantity: int = 0
+```
+
+`field` ยังรับ:
+
+| Parameter | ผล |
+|---|---|
+| `default_factory` | เรียกโดยไม่มี argument เพื่อสร้าง default ของแต่ละ instance |
+| `repr=False` | ยกเว้น field จาก `__repr__` |
+| `compare=False` | ยกเว้น field จาก `__eq__` และ `__lt__` |
+| `init=False` | ยกเว้นจาก `__init__`; กำหนดด้วยตนเองใน `__post_init__` |
+
+## `frozen=True` — immutable records
+
+`frozen=True` ทำให้ dataclass ไม่สามารถแก้ไขได้: สร้าง `__setattr__` และ `__delattr__` ที่ raise `FrozenInstanceError` และยังสร้าง `__hash__` ทำให้ใช้ frozen instances เป็น dict keys หรือใน sets ได้
+
+```python
+@dataclass(frozen=True)
+class Color:
+    red: int
+    green: int
+    blue: int
+```
+
+## เพิ่ม custom methods
+
+Dataclass ยังคงเป็น class ปกติ — เพิ่ม method ใดก็ได้ตามต้องการ:
+
+```python
+@dataclass
+class Point:
+    x: float
+    y: float
+
+    def distance_from_origin(self) -> float:
+        return (self.x ** 2 + self.y ** 2) ** 0.5
+```
+
+## Demo รันได้จริง
+
+export const dataclassesCode = `
+from dataclasses import dataclass, field
+
+@dataclass
+class Point:
+    x: float
+    y: float
+
+    def distance_from_origin(self) -> float:
+        return (self.x ** 2 + self.y ** 2) ** 0.5
+
+
+@dataclass
+class Inventory:
+    name: str
+    tags: list = field(default_factory=list)
+    quantity: int = 0
+
+    def add_tag(self, tag: str) -> None:
+        self.tags.append(tag)
+
+
+@dataclass(frozen=True)
+class Color:
+    red: int
+    green: int
+    blue: int
+
+
+p = Point(3.0, 4.0)
+print(p)
+print(p.distance_from_origin())
+
+item = Inventory("Widget")
+item.add_tag("sale")
+item.add_tag("clearance")
+print(item)
+
+red = Color(255, 0, 0)
+print(red)
+print(red == Color(255, 0, 0))
+`.trim();
+
+<Playground client:visible code={dataclassesCode} />
+
+<Callout title="Dataclasses remove boilerplate for record-like classes">
+ใช้ `@dataclass` เมื่อ class เป็น container สำหรับข้อมูลเป็นหลัก — configuration objects, DTOs, value objects, named tuples ที่มี methods
+สำหรับ value types ที่ immutable เต็มรูปแบบ เพิ่ม `frozen=True`; สำหรับ defaults ที่ยืดหยุ่นบน mutable list หรือ dict ให้ใช้ `field(default_factory=...)` เสมอ
+ถ้าต้องการ runtime validation บน field values ลองพิจารณา Pydantic's `BaseModel` — สร้างบน idea เดิมแต่เพิ่ม type coercion และ validators
+</Callout>
+
+export const quizDataclasses = [
+  {
+    q: "`@dataclass` สร้าง dunder methods ใดอัตโนมัติ?",
+    options: [
+      "__new__ และ __del__",
+      "__init__, __repr__ และ __eq__",
+      "__str__ และ __hash__",
+      "__iter__ และ __next__"
+    ],
+    answer: 1
+  },
+  {
+    q: "ทำไมถึงเขียน `tags: list = []` เป็น dataclass field default ไม่ได้?",
+    options: [
+      "List ไม่ได้รับอนุญาตเป็น field type",
+      "List object เดียวกันจะถูกใช้ร่วมกันระหว่าง instance ทั้งหมด",
+      "ต้องใช้ tuple แทน",
+      "Dataclass ไม่รองรับ mutable fields"
+    ],
+    answer: 1
+  },
+  {
+    q: "`frozen=True` เพิ่มอะไรให้ dataclass?",
+    options: [
+      "ทำให้ทุก field เป็น optional",
+      "ป้องกันการแก้ไข field และสร้าง __hash__",
+      "Sort field ตามตัวอักษรอัตโนมัติ",
+      "เปิดใช้งาน pickling"
+    ],
+    answer: 1
+  },
+  {
+    q: "`field(repr=False)` ใช้สำหรับอะไร?",
+    options: [
+      "ยกเว้น field จาก __init__",
+      "ยกเว้น field จาก __repr__ output",
+      "ทำให้ field เป็น read-only",
+      "กำหนด factory default"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="oop-data-model/dataclasses" questions={quizDataclasses} />
+
+<ProgressTracker client:visible id="oop-data-model/dataclasses" />

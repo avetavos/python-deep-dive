@@ -1,0 +1,95 @@
+---
+title: Data Structures
+description: 'An overview of Python built-in collections — list, tuple, dict, and set — with a runnable demo.'
+sidebar:
+  order: 1
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Python's built-in collections
+
+Python ships four general-purpose container types in the language core — no imports required.
+
+| Type | Syntax | Mutable | Ordered | Duplicates |
+|------|--------|---------|---------|------------|
+| `list` | `[1, 2, 3]` | yes | yes | yes |
+| `tuple` | `(1, 2, 3)` | no | yes | yes |
+| `dict` | `{"a": 1}` | yes | yes (3.7+) | keys: no |
+| `set` | `{1, 2, 3}` | yes | no | no |
+
+Each type has a distinct strength: lists for ordered sequences, tuples for fixed records, dicts for key-value lookup, and sets for membership tests and set algebra.
+
+## Choosing the right collection
+
+- Reach for a **list** when you need to append, sort, or index items by position.
+- Use a **tuple** when the data is fixed and positional meaning matters (e.g., an RGB colour, a database row).
+- Use a **dict** when you need fast key-based lookup or want to group named attributes without defining a class.
+- Use a **set** when uniqueness is the primary concern or you need union / intersection / difference operations.
+
+## Runnable overview
+
+export const dataStructuresIndexCode = `
+from collections import namedtuple
+
+# --- list ---
+nums = [1, 2, 3, 4, 5]
+print('list:', nums)
+print('sum:', sum(nums))
+
+# --- tuple unpacking ---
+coords = (10, 20, 30)
+x, y, z = coords
+print('tuple unpack:', x, y, z)
+
+# --- dict (insertion order preserved since Python 3.7) ---
+scores = {'alice': 95, 'bob': 87, 'carol': 92}
+print('dict:', scores)
+print('alice score:', scores['alice'])
+
+# --- set (duplicates removed automatically) ---
+unique = {3, 1, 4, 1, 5, 9, 2, 6, 5}
+print('set:', sorted(unique))
+
+# --- namedtuple: lightweight named record ---
+Point = namedtuple('Point', ['x', 'y'])
+p = Point(3, 4)
+print('namedtuple:', p.x, p.y)
+`.trim();
+
+<Playground client:visible code={dataStructuresIndexCode} />
+
+<Callout title="collections module extends the built-ins">
+The standard library `collections` module adds `namedtuple`, `deque`, `defaultdict`, `Counter`, and `OrderedDict` on top of the four core types.
+You will see these in depth as you progress through the module.
+</Callout>
+
+export const quizDataStructuresIndex = [
+    {
+        q: "Which built-in collection type does NOT allow duplicate values?",
+        options: ["list", "tuple", "dict (values)", "set"],
+        answer: 3
+    },
+    {
+        q: "Since Python 3.7, which collection preserves insertion order?",
+        options: ["set", "frozenset", "dict", "Both dict and set"],
+        answer: 2
+    },
+    {
+        q: "Which collection is immutable?",
+        options: ["list", "tuple", "dict", "set"],
+        answer: 1
+    },
+    {
+        q: "Which type is best for fast membership testing of a large number of unique items?",
+        options: ["list", "tuple", "set", "dict"],
+        answer: 2
+    }
+];
+
+<Quiz client:visible id="data-structures/index" questions={quizDataStructuresIndex} />
+
+<ProgressTracker client:visible id="data-structures/index" />

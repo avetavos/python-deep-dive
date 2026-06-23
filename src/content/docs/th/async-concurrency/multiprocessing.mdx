@@ -1,0 +1,226 @@
+---
+title: Multiprocessing
+description: 'multiprocessing และ ProcessPoolExecutor สำหรับงาน CPU-bound แบบ parallel — separate processes ข้าม GIL และใช้ทุก core ที่มี'
+sidebar:
+  order: 5
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ทำไมต้องใช้ processes ไม่ใช่ threads?
+
+ดังที่กล่าวไว้ในบทเรียน GIL, Global Interpreter Lock ของ CPython ป้องกัน threads หลายตัวจากการรัน Python bytecode แบบ parallel สำหรับงาน CPU-bound เช่น การคำนวณเชิงตัวเลข การประมวลผลภาพ การ parsing ข้อมูล — threads ไม่ให้ความเร็วเพิ่มขึ้น
+
+`multiprocessing` แก้ปัญหานี้โดยสร้าง **separate OS processes** แต่ละ process มี Python interpreter, GIL และ memory space ของตัวเอง True parallelism จึงเป็นไปได้: เครื่องที่มี 8 cores สามารถรัน Python processes ได้ 8 ตัวพร้อมกัน
+
+## guard `if __name__ == "__main__"`
+
+บน macOS และ Windows, start method เริ่มต้นคือ **spawn** — child process import module ของ parent ใหม่ตั้งแต่ต้น หากไม่มี guard, โค้ดระดับ module (รวมถึงการเรียก `Pool(...)`) จะรันใหม่ใน child ทุกตัว ทำให้เกิด loop การสร้าง process ไม่สิ้นสุด
+
+```python
+from multiprocessing import Pool
+
+def square(x: int) -> int:
+    return x * x
+
+if __name__ == "__main__":        # จำเป็นบน macOS/Windows
+    with Pool(processes=4) as pool:
+        results = pool.map(square, range(10))
+    print(results)
+    # [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
+```
+
+บน Linux, start method เริ่มต้นคือ **fork** (child คัดลอก memory ของ parent) ดังนั้น guard จึงเป็น optional ในทางเทคนิค แต่ควรใส่เสมอเพื่อความสามารถพกพา
+
+## `Pool.map` — parallel map บน iterable
+
+`Pool.map(fn, iterable)` กระจาย items ไปยัง workers และคืนผลลัพธ์ตามลำดับ input
+มันบล็อกจนกว่า items ทั้งหมดจะถูกประมวลผล
+
+```python
+from multiprocessing import Pool
+import math
+
+def is_prime(n: int) -> bool:
+    if n < 2:
+        return False
+    for i in range(2, int(math.sqrt(n)) + 1):
+        if n % i == 0:
+            return False
+    return True
+
+if __name__ == "__main__":
+    candidates = list(range(1, 1_000_001))
+    with Pool() as pool:              # Pool() ใช้ cpu_count() workers เป็นค่าเริ่มต้น
+        flags = pool.map(is_prime, candidates)
+    primes = [n for n, flag in zip(candidates, flags) if flag]
+    print(f"Found {len(primes)} primes up to 1,000,000")
+```
+
+## `Pool.starmap` — arguments หลายตัวต่อ call
+
+เมื่อ worker function รับ argument มากกว่าหนึ่งตัว ใช้ `starmap` พร้อม iterable ของ tuples:
+
+```python
+from multiprocessing import Pool
+
+def power(base: int, exp: int) -> int:
+    return base ** exp
+
+if __name__ == "__main__":
+    args = [(2, 10), (3, 5), (5, 4), (7, 3)]
+    with Pool(processes=4) as pool:
+        results = pool.starmap(power, args)
+    print(results)
+    # [1024, 243, 625, 343]
+```
+
+## `ProcessPoolExecutor` — modern high-level API
+
+`concurrent.futures.ProcessPoolExecutor` ให้ interface เดียวกับ `ThreadPoolExecutor`
+ทำให้ง่ายต่อการสลับระหว่าง thread-based และ process-based parallelism
+
+```python
+from concurrent.futures import ProcessPoolExecutor
+import math
+
+def cpu_work(n: int) -> float:
+    # จำลองการคำนวณ CPU-intensive
+    return sum(math.sin(i) for i in range(n))
+
+if __name__ == "__main__":
+    inputs = [500_000] * 8    # 8 CPU-bound tasks ที่เหมือนกัน
+
+    # Sequential baseline
+    import time
+    start = time.perf_counter()
+    seq_results = [cpu_work(n) for n in inputs]
+    seq_time = time.perf_counter() - start
+
+    # Parallel ด้วย ProcessPoolExecutor
+    start = time.perf_counter()
+    with ProcessPoolExecutor() as executor:
+        par_results = list(executor.map(cpu_work, inputs))
+    par_time = time.perf_counter() - start
+
+    print(f"Sequential: {seq_time:.2f}s")
+    print(f"Parallel:   {par_time:.2f}s")
+    print(f"Speedup:    {seq_time / par_time:.1f}x")
+```
+
+บนเครื่อง 8-core คุณควรเห็นความเร็วที่เพิ่มขึ้นใกล้ 8 เท่าสำหรับการคำนวณล้วนๆ
+
+## Inter-process communication
+
+Processes ไม่แชร์ memory เพื่อแลกเปลี่ยนข้อมูลระหว่างกัน ใช้ `multiprocessing.Queue` หรือ `multiprocessing.Pipe`
+
+```python
+from multiprocessing import Process, Queue
+
+def producer(q: Queue, items: list) -> None:
+    for item in items:
+        q.put(item)
+    q.put(None)    # sentinel
+
+def consumer(q: Queue) -> None:
+    while True:
+        item = q.get()
+        if item is None:
+            break
+        print(f"consumed: {item}")
+
+if __name__ == "__main__":
+    q: Queue = Queue()
+    p1 = Process(target=producer, args=(q, [1, 2, 3, 4, 5]))
+    p2 = Process(target=consumer, args=(q,))
+    p1.start(); p2.start()
+    p1.join();  p2.join()
+```
+
+## Shared memory ใน Python 3.8+
+
+`multiprocessing.shared_memory.SharedMemory` ช่วยให้ processes เข้าถึง memory block ที่แชร์กันโดยไม่มี serialization overhead — มีประโยชน์สำหรับ NumPy arrays ขนาดใหญ่
+
+```python
+from multiprocessing import shared_memory
+import numpy as np
+
+# สร้าง shared memory block
+shm = shared_memory.SharedMemory(create=True, size=400)   # 100 float32 values
+arr = np.ndarray((100,), dtype=np.float32, buffer=shm.buf)
+arr[:] = np.arange(100, dtype=np.float32)
+print(arr[:5])    # [0. 1. 2. 3. 4.]
+shm.close()
+shm.unlink()
+```
+
+## Processes vs threads: คู่มือการตัดสินใจ
+
+| เกณฑ์ | `multiprocessing` | `threading` | `asyncio` |
+|---|---|---|---|
+| งาน CPU-bound | ดีที่สุด | ไม่มีประโยชน์ (GIL) | เครื่องมือผิด |
+| I/O-bound, blocking libs | เกินความจำเป็น | ดี | `run_in_executor` |
+| I/O-bound, async libs | เกินความจำเป็น | ได้ | ดีที่สุด |
+| Memory overhead | สูง (คัดลอกทั้งหมด) | ต่ำ (แชร์) | น้อยมาก |
+| Communication | Queue / Pipe | Shared state + Lock | Channels / queues |
+| Startup time | ช้า (fork/spawn) | เร็ว | ศูนย์ |
+
+<Callout title="ไม่สามารถใช้งานใน in-browser runner">
+`multiprocessing` และ `ProcessPoolExecutor` ไม่สามารถใช้ได้ใน in-browser Python runner (Pyodide)
+รันตัวอย่างด้านบนบนเครื่องของคุณ:
+
+```bash
+python3 multiprocessing_demo.py
+```
+
+อย่าลืม guard `if __name__ == "__main__"` — หากไม่มีนี้ script จะ loop ตลอดไปบน macOS และ Windows
+</Callout>
+
+export const quizMultiprocessing = [
+  {
+    q: "เหตุใด `multiprocessing` จึงได้ true CPU parallelism ในขณะที่ `threading` ไม่ได้ใน CPython?",
+    options: [
+      "Processes ใช้ bytecode compiler ที่เร็วกว่า threads",
+      "แต่ละ process มี Python interpreter และ GIL ของตัวเอง จึงรันแบบ parallel จริงๆ",
+      "multiprocessing ข้าม OS scheduler ที่จำกัด threads",
+      "multiprocessing ใช้ C extensions ซึ่งปล่อย GIL โดยอัตโนมัติ"
+    ],
+    answer: 1
+  },
+  {
+    q: "เหตุใดต้องใส่ `if __name__ == '__main__':` เมื่อใช้ multiprocessing บน macOS/Windows?",
+    options: [
+      "เป็น Python style guideline ที่ไม่มีผลเชิงฟังก์ชัน",
+      "หากไม่มี Pool ไม่สามารถกำหนดจำนวน workers ได้",
+      "spawn start method import module ใหม่ใน child processes — หากไม่มี guard ทำให้เกิดการสร้าง process ไม่สิ้นสุด",
+      "ป้องกัน import errors ใน child processes"
+    ],
+    answer: 2
+  },
+  {
+    q: "method ใดกระจาย iterable ไปยัง process pool และคืนผลลัพธ์ตามลำดับ input?",
+    options: [
+      "Pool.apply()",
+      "Pool.map()",
+      "Pool.run()",
+      "Pool.scatter()"
+    ],
+    answer: 1
+  },
+  {
+    q: "ควรใช้กลไกใดเพื่อแชร์ NumPy arrays ขนาดใหญ่ระหว่าง processes โดยไม่มี serialization overhead?",
+    options: [
+      "multiprocessing.Queue",
+      "threading.shared_dict",
+      "multiprocessing.shared_memory.SharedMemory",
+      "pickle.dumps ผ่าน Pipe"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="async-concurrency/multiprocessing" questions={quizMultiprocessing} />
+
+<ProgressTracker client:visible id="async-concurrency/multiprocessing" />

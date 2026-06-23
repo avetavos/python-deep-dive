@@ -1,0 +1,143 @@
+---
+title: 'Packaging & pyproject.toml'
+description: 'Structure a Python package, declare metadata in pyproject.toml, build with build, and publish to PyPI with twine.'
+sidebar:
+  order: 5
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+A **Python package** is a directory of modules that can be installed, versioned, and shared. Packaging turns your local code into something anyone can install with `pip install mypackage`. Understanding packaging is essential the moment your project grows beyond a single script or you want to share work with teammates or the public.
+
+## Package layout
+
+A clean src-layout keeps your source isolated from tests and tooling, preventing accidental imports of uninstalled code.
+
+```
+mypackage/
+├── src/
+│   └── mypackage/
+│       ├── __init__.py
+│       ├── core.py
+│       └── utils.py
+├── tests/
+│   ├── conftest.py
+│   └── test_core.py
+├── pyproject.toml
+└── README.md
+```
+
+## pyproject.toml
+
+`pyproject.toml` is the single source of truth for your package. The `[build-system]` table specifies the build backend, and `[project]` declares all metadata pip and PyPI need.
+
+```toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mypackage"
+version = "0.1.0"
+description = "A short description of mypackage"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Your Name", email = "you@example.com" }
+]
+dependencies = [
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "mypy>=1.10",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourname/mypackage"
+```
+
+## Source files
+
+The public API is re-exported from `__init__.py`, keeping the import surface clean.
+
+```python
+# src/mypackage/__init__.py
+from mypackage.core import greet
+
+__all__ = ["greet"]
+```
+
+Business logic lives in dedicated modules such as `core.py`.
+
+```python
+# src/mypackage/core.py
+
+def greet(name: str) -> str:
+    """Return a greeting string."""
+    return f"Hello, {name}!"
+```
+
+## Editable install, building, and publishing
+
+During development you want code changes to take effect without reinstalling. The `-e` flag achieves this. When you are ready to distribute, `build` creates the artifacts and `twine` uploads them.
+
+```bash
+# editable install — changes to src/ take effect immediately
+pip install -e ".[dev]"
+
+# build source distribution + wheel
+python -m build
+
+# publish to PyPI (requires a PyPI account + token)
+twine upload dist/*
+
+# for practice, use TestPyPI first:
+twine upload --repository testpypi dist/*
+```
+
+<Callout title="pyproject.toml is the modern standard">
+    `setup.py` and `setup.cfg` are legacy. All modern Python projects declare metadata in `pyproject.toml`. The `[build-system]` table tells pip which backend to use (hatchling, setuptools, flit, etc.). `pip install -e .` installs the package in editable mode — ideal during development.
+</Callout>
+
+export const quizPackaging = [
+    {
+        q: "Which file is the modern standard for declaring Python package metadata?",
+        options: [
+            "setup.py",
+            "MANIFEST.in",
+            "pyproject.toml",
+            "requirements.txt",
+        ],
+        answer: 2,
+    },
+    {
+        q: "What does `pip install -e .` do?",
+        options: [
+            "Installs the package from PyPI",
+            "Installs the package in editable mode so source changes take effect immediately",
+            "Builds and publishes the package",
+            "Removes the package",
+        ],
+        answer: 1,
+    },
+    {
+        q: "Which tool is used to upload a package to PyPI?",
+        options: [
+            "build",
+            "pip",
+            "twine",
+            "setuptools",
+        ],
+        answer: 2,
+    },
+];
+
+<Quiz client:visible id="stdlib-testing-tooling/packaging" questions={quizPackaging} />
+
+<ProgressTracker client:visible id="stdlib-testing-tooling/packaging" />

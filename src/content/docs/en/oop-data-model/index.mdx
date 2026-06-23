@@ -1,0 +1,132 @@
+---
+title: 'OOP & the Data Model'
+description: 'An overview of Python object-oriented programming and the special-method protocol that powers built-in syntax.'
+sidebar:
+  order: 1
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Everything in Python is an object
+
+Python is a fully object-oriented language: integers, strings, functions, modules — every value is an **object** with an identity, a type, and a value.
+A **class** is the blueprint; an **object** (or *instance*) is what you create from that blueprint with `ClassName(...)`.
+
+```python
+x = 42
+print(type(x))    # <class 'int'>
+print(id(x))      # unique memory address
+```
+
+## The special-method protocol
+
+Python exposes nearly every built-in operation through **dunder methods** (double-underscore methods like `__init__`, `__repr__`, `__add__`).
+When you write `a + b`, Python calls `a.__add__(b)`.
+When you write `len(obj)`, Python calls `obj.__len__()`.
+When you write `repr(obj)`, Python calls `obj.__repr__()`.
+
+This protocol is called the **Python Data Model** — it lets your own classes integrate seamlessly with built-in syntax and standard-library functions.
+
+## A minimal class
+
+```python
+class Point:
+    def __init__(self, x: float, y: float) -> None:
+        self.x = x
+        self.y = y
+
+    def __repr__(self) -> str:
+        return f"Point({self.x}, {self.y})"
+```
+
+- `__init__` is the **initialiser** — it runs right after the object is created and sets up instance attributes.
+- `__repr__` gives the object a developer-friendly string representation.
+
+## What this module covers
+
+| Lesson | Topic |
+|---|---|
+| 1. Classes | `class`, `__init__`, instance vs class attributes, inheritance |
+| 2. Dunder methods | `__repr__`, `__eq__`, `__len__`, `__getitem__`, `__add__` |
+| 3. Properties | `@property`, computed attributes, `@classmethod`, `@staticmethod` |
+| 4. Dataclasses | `@dataclass`, defaults, `field`, `frozen=True` |
+
+## Runnable demo
+
+export const oopIndexCode = `
+class Point:
+    def __init__(self, x: float, y: float) -> None:
+        self.x = x
+        self.y = y
+
+    def __repr__(self) -> str:
+        return f"Point({self.x}, {self.y})"
+
+    def __add__(self, other: "Point") -> "Point":
+        return Point(self.x + other.x, self.y + other.y)
+
+p1 = Point(1, 2)
+p2 = Point(3, 4)
+print(p1)
+print(p1 + p2)
+print(type(p1))
+print(isinstance(p1, Point))
+`.trim();
+
+<Playground client:visible code={oopIndexCode} />
+
+<Callout title="Classes integrate with Python syntax via dunder methods">
+You do not need to call `__add__` directly — you write `p1 + p2`.
+Python looks up `__add__` on the left operand and calls it for you.
+Every operator, built-in function, and language construct has a corresponding dunder method your class can implement.
+</Callout>
+
+export const quizOopIndex = [
+  {
+    q: "Which dunder method runs when you write `obj = MyClass(1, 2)`?",
+    options: [
+      "__new__",
+      "__init__",
+      "__create__",
+      "__call__"
+    ],
+    answer: 1
+  },
+  {
+    q: "What does Python call internally when you write `len(my_list)`?",
+    options: [
+      "my_list.length()",
+      "my_list.__len__()",
+      "len.__call__(my_list)",
+      "my_list.size()"
+    ],
+    answer: 1
+  },
+  {
+    q: "What is the term for the system of dunder methods that integrates classes with Python syntax?",
+    options: [
+      "The magic system",
+      "The protocol buffer",
+      "The Python Data Model",
+      "The operator registry"
+    ],
+    answer: 2
+  },
+  {
+    q: "Which statement about Python objects is true?",
+    options: [
+      "Only class instances are objects; primitives like int are not",
+      "Every value in Python is an object with an identity, type, and value",
+      "Functions are not objects",
+      "Objects only exist at runtime after explicit allocation"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="oop-data-model/index" questions={quizOopIndex} />
+
+<ProgressTracker client:visible id="oop-data-model/index" />

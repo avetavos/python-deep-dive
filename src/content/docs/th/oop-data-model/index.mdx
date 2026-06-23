@@ -1,0 +1,132 @@
+---
+title: 'OOP และ Data Model'
+description: 'ภาพรวมของการเขียนโปรแกรมเชิงวัตถุใน Python และ special-method protocol ที่ขับเคลื่อน built-in syntax'
+sidebar:
+  order: 1
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ทุกอย่างใน Python คือ object
+
+Python เป็นภาษาที่เน้น object-oriented อย่างเต็มรูปแบบ: จำนวนเต็ม, string, function, module — ทุกค่าล้วนเป็น **object** ที่มี identity, type และ value
+**class** คือแบบพิมพ์เขียว ส่วน **object** (หรือ *instance*) คือสิ่งที่สร้างจาก class นั้นด้วย `ClassName(...)`
+
+```python
+x = 42
+print(type(x))    # <class 'int'>
+print(id(x))      # ที่อยู่ในหน่วยความจำ
+```
+
+## Special-method protocol
+
+Python เปิดเผย operation ของ built-in แทบทั้งหมดผ่าน **dunder methods** (เมธอดที่มี double-underscore เช่น `__init__`, `__repr__`, `__add__`)
+เมื่อเขียน `a + b` Python จะเรียก `a.__add__(b)`
+เมื่อเขียน `len(obj)` Python จะเรียก `obj.__len__()`
+เมื่อเขียน `repr(obj)` Python จะเรียก `obj.__repr__()`
+
+กลไกนี้เรียกว่า **Python Data Model** — ทำให้ class ของเราผสานเข้ากับ built-in syntax และฟังก์ชันของ standard library ได้อย่างราบรื่น
+
+## Class ที่เรียบง่ายที่สุด
+
+```python
+class Point:
+    def __init__(self, x: float, y: float) -> None:
+        self.x = x
+        self.y = y
+
+    def __repr__(self) -> str:
+        return f"Point({self.x}, {self.y})"
+```
+
+- `__init__` คือ **initialiser** — ทำงานทันทีหลังสร้าง object และกำหนด instance attribute
+- `__repr__` ให้ string representation ที่อ่านง่ายสำหรับนักพัฒนา
+
+## สิ่งที่ module นี้ครอบคลุม
+
+| บทเรียน | หัวข้อ |
+|---|---|
+| 1. Classes | `class`, `__init__`, instance vs class attributes, inheritance |
+| 2. Dunder methods | `__repr__`, `__eq__`, `__len__`, `__getitem__`, `__add__` |
+| 3. Properties | `@property`, computed attributes, `@classmethod`, `@staticmethod` |
+| 4. Dataclasses | `@dataclass`, defaults, `field`, `frozen=True` |
+
+## Demo รันได้จริง
+
+export const oopIndexCode = `
+class Point:
+    def __init__(self, x: float, y: float) -> None:
+        self.x = x
+        self.y = y
+
+    def __repr__(self) -> str:
+        return f"Point({self.x}, {self.y})"
+
+    def __add__(self, other: "Point") -> "Point":
+        return Point(self.x + other.x, self.y + other.y)
+
+p1 = Point(1, 2)
+p2 = Point(3, 4)
+print(p1)
+print(p1 + p2)
+print(type(p1))
+print(isinstance(p1, Point))
+`.trim();
+
+<Playground client:visible code={oopIndexCode} />
+
+<Callout title="Classes integrate with Python syntax via dunder methods">
+คุณไม่จำเป็นต้องเรียก `__add__` โดยตรง — แค่เขียน `p1 + p2`
+Python จะค้นหา `__add__` บน operand ทางซ้ายและเรียกให้อัตโนมัติ
+ทุก operator, ฟังก์ชัน built-in และ language construct มี dunder method ที่ class ของคุณสามารถ implement ได้
+</Callout>
+
+export const quizOopIndex = [
+  {
+    q: "Dunder method ใดที่ทำงานเมื่อเขียน `obj = MyClass(1, 2)`?",
+    options: [
+      "__new__",
+      "__init__",
+      "__create__",
+      "__call__"
+    ],
+    answer: 1
+  },
+  {
+    q: "Python เรียก method ใดภายใต้ hood เมื่อเขียน `len(my_list)`?",
+    options: [
+      "my_list.length()",
+      "my_list.__len__()",
+      "len.__call__(my_list)",
+      "my_list.size()"
+    ],
+    answer: 1
+  },
+  {
+    q: "คำศัพท์ใดหมายถึงระบบ dunder method ที่ผสาน class เข้ากับ Python syntax?",
+    options: [
+      "The magic system",
+      "The protocol buffer",
+      "The Python Data Model",
+      "The operator registry"
+    ],
+    answer: 2
+  },
+  {
+    q: "ข้อความใดเกี่ยวกับ object ใน Python เป็นความจริง?",
+    options: [
+      "เฉพาะ class instance เท่านั้นที่เป็น object; primitive เช่น int ไม่ใช่",
+      "ทุกค่าใน Python เป็น object ที่มี identity, type และ value",
+      "Function ไม่ใช่ object",
+      "Object มีอยู่เฉพาะ runtime หลังจากการจัดสรรที่ชัดเจนเท่านั้น"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="oop-data-model/index" questions={quizOopIndex} />
+
+<ProgressTracker client:visible id="oop-data-model/index" />

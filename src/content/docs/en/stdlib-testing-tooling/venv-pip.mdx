@@ -1,0 +1,129 @@
+---
+title: 'Virtual Environments & pip'
+description: 'Isolate project dependencies with venv, install packages with pip, and pin versions with requirements.txt.'
+sidebar:
+  order: 4
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+Every Python project should run inside its own virtual environment. Without one, every `pip install` lands in the global Python installation, where packages from different projects collide and version conflicts accumulate silently. A virtual environment is a self-contained directory tree with its own Python interpreter and site-packages, completely isolated from the system Python and from every other project.
+
+## Creating a virtual environment
+
+Python ships with the `venv` module in its standard library. The convention is to name the environment `.venv` and place it at the project root.
+
+```bash
+# create a virtual environment in .venv/
+python -m venv .venv
+```
+
+## Activating the environment
+
+After creation the environment is inert. Activation prepends `.venv/bin` (or `.venv\Scripts` on Windows) to your `PATH` so that `python` and `pip` resolve to the isolated copies.
+
+```bash
+# activate — macOS / Linux
+source .venv/bin/activate
+
+# activate — Windows (PowerShell)
+.venv\Scripts\Activate.ps1
+
+# you should now see (.venv) in your prompt
+```
+
+## Installing packages
+
+With the environment active, `pip` installs into `.venv/lib/` rather than the global site-packages.
+
+```bash
+# install a single package
+pip install requests
+
+# install a specific version
+pip install "requests==2.31.0"
+
+# install from requirements.txt
+pip install -r requirements.txt
+```
+
+## Pinning dependencies
+
+`pip freeze` prints every installed package and its exact version. Redirect the output to `requirements.txt` so collaborators and CI can reproduce the exact environment.
+
+```bash
+# write all installed packages + versions to requirements.txt
+pip freeze > requirements.txt
+
+# example output in requirements.txt:
+# certifi==2024.2.2
+# charset-normalizer==3.3.2
+# idna==3.7
+# requests==2.31.0
+# urllib3==2.2.1
+```
+
+## Deactivating
+
+When you are done working on a project, deactivate restores your original `PATH`.
+
+```bash
+deactivate
+```
+
+## Typical project layout
+
+A conventional Python project keeps the virtual environment at the root alongside source, tests, and dependency files.
+
+```
+.
+├── .venv/           # never commit this — add to .gitignore
+├── src/
+│   └── myapp/
+├── tests/
+├── requirements.txt
+└── pyproject.toml
+```
+
+<Callout title="Always use a virtual environment per project">
+Never install packages into the global Python environment. Each project should have its own `.venv` so dependency versions are isolated. Add `.venv/` to `.gitignore`. Modern projects use `pyproject.toml` with `pip install -e .` for editable installs — see the Packaging lesson.
+</Callout>
+
+export const quizVenvPip = [
+    {
+        q: "What command creates a virtual environment named .venv?",
+        options: [
+            "pip install venv .venv",
+            "python -m venv .venv",
+            "virtualenv create .venv",
+            "python venv --new .venv",
+        ],
+        answer: 1,
+    },
+    {
+        q: "What does `pip freeze > requirements.txt` do?",
+        options: [
+            "Deletes all packages",
+            "Writes all currently installed packages and their exact versions to requirements.txt",
+            "Installs packages from requirements.txt",
+            "Upgrades all packages",
+        ],
+        answer: 1,
+    },
+    {
+        q: "Why should .venv/ be listed in .gitignore?",
+        options: [
+            "Because venv folders are too large for git",
+            "Because virtual environments contain compiled binaries and absolute paths that are machine-specific and should not be shared",
+            "Because git cannot track hidden folders",
+            "Because pip deletes it on every install",
+        ],
+        answer: 1,
+    },
+];
+
+<Quiz client:visible id="stdlib-testing-tooling/venv-pip" questions={quizVenvPip} />
+
+<ProgressTracker client:visible id="stdlib-testing-tooling/venv-pip" />

@@ -1,0 +1,129 @@
+---
+title: "Virtual Environments & pip"
+description: 'แยก dependencies ของโปรเจกต์ด้วย venv ติดตั้งแพ็กเกจด้วย pip และกำหนดเวอร์ชันด้วย requirements.txt'
+sidebar:
+  order: 4
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+ทุกโปรเจกต์ Python ควรรันอยู่ภายใน virtual environment ของตัวเอง หากไม่มี ทุกคำสั่ง `pip install` จะติดตั้งไปยัง Python installation ระดับ global ซึ่งแพ็กเกจจากโปรเจกต์ต่าง ๆ จะชนกันและความขัดแย้งของเวอร์ชันจะสะสมอย่างเงียบ ๆ Virtual environment คือไดเรกทอรีต้นไม้ที่มี Python interpreter และ site-packages ของตัวเอง แยกออกจาก Python ของระบบและจากทุกโปรเจกต์อื่น ๆ อย่างสมบูรณ์
+
+## การสร้าง virtual environment
+
+Python มีโมดูล `venv` ใน standard library ข้อตกลงคือตั้งชื่อ environment ว่า `.venv` และวางไว้ที่ root ของโปรเจกต์
+
+```bash
+# create a virtual environment in .venv/
+python -m venv .venv
+```
+
+## การเปิดใช้งาน environment
+
+หลังจากสร้างแล้ว environment จะยังไม่ทำงาน การ activate จะเพิ่ม `.venv/bin` (หรือ `.venv\Scripts` บน Windows) ไว้ต้น `PATH` ของคุณ เพื่อให้ `python` และ `pip` ชี้ไปยังสำเนาที่แยกออกมา
+
+```bash
+# activate — macOS / Linux
+source .venv/bin/activate
+
+# activate — Windows (PowerShell)
+.venv\Scripts\Activate.ps1
+
+# you should now see (.venv) in your prompt
+```
+
+## การติดตั้งแพ็กเกจ
+
+เมื่อ environment ทำงานอยู่ `pip` จะติดตั้งไปยัง `.venv/lib/` แทนที่ site-packages ระดับ global
+
+```bash
+# install a single package
+pip install requests
+
+# install a specific version
+pip install "requests==2.31.0"
+
+# install from requirements.txt
+pip install -r requirements.txt
+```
+
+## การกำหนดเวอร์ชัน dependencies
+
+`pip freeze` จะพิมพ์แพ็กเกจที่ติดตั้งทุกตัวและเวอร์ชันที่ชัดเจน เปลี่ยนทิศทาง output ไปยัง `requirements.txt` เพื่อให้ผู้ร่วมทีมและ CI สามารถสร้าง environment เดียวกันได้
+
+```bash
+# write all installed packages + versions to requirements.txt
+pip freeze > requirements.txt
+
+# example output in requirements.txt:
+# certifi==2024.2.2
+# charset-normalizer==3.3.2
+# idna==3.7
+# requests==2.31.0
+# urllib3==2.2.1
+```
+
+## การปิดใช้งาน
+
+เมื่อทำงานในโปรเจกต์เสร็จแล้ว deactivate จะคืนค่า `PATH` เดิมของคุณ
+
+```bash
+deactivate
+```
+
+## โครงสร้างโปรเจกต์ทั่วไป
+
+โปรเจกต์ Python ตามมาตรฐานจะเก็บ virtual environment ไว้ที่ root ควบคู่กับ source, tests และไฟล์ dependencies
+
+```
+.
+├── .venv/           # never commit this — add to .gitignore
+├── src/
+│   └── myapp/
+├── tests/
+├── requirements.txt
+└── pyproject.toml
+```
+
+<Callout title="ใช้ virtual environment แยกสำหรับแต่ละโปรเจกต์เสมอ">
+อย่าติดตั้งแพ็กเกจใน Python environment ระดับ global แต่ละโปรเจกต์ควรมี `.venv` ของตัวเองเพื่อแยก dependency versions ออกจากกัน เพิ่ม `.venv/` ลงใน `.gitignore` โปรเจกต์สมัยใหม่ใช้ `pyproject.toml` ร่วมกับ `pip install -e .` สำหรับ editable installs — ดูที่บทเรียน Packaging
+</Callout>
+
+export const quizVenvPip = [
+    {
+        q: "คำสั่งใดที่สร้าง virtual environment ชื่อ .venv?",
+        options: [
+            "pip install venv .venv",
+            "python -m venv .venv",
+            "virtualenv create .venv",
+            "python venv --new .venv",
+        ],
+        answer: 1,
+    },
+    {
+        q: "`pip freeze > requirements.txt` ทำอะไร?",
+        options: [
+            "ลบแพ็กเกจทั้งหมด",
+            "เขียนแพ็กเกจที่ติดตั้งอยู่ทั้งหมดและเวอร์ชันที่ชัดเจนลงใน requirements.txt",
+            "ติดตั้งแพ็กเกจจาก requirements.txt",
+            "อัปเกรดแพ็กเกจทั้งหมด",
+        ],
+        answer: 1,
+    },
+    {
+        q: "ทำไม .venv/ ควรอยู่ใน .gitignore?",
+        options: [
+            "เพราะโฟลเดอร์ venv ใหญ่เกินไปสำหรับ git",
+            "เพราะ virtual environment มี compiled binaries และ absolute paths ที่จำเพาะกับเครื่องและไม่ควรแชร์",
+            "เพราะ git ไม่สามารถติดตาม hidden folders ได้",
+            "เพราะ pip จะลบมันทุกครั้งที่ติดตั้ง",
+        ],
+        answer: 1,
+    },
+];
+
+<Quiz client:visible id="stdlib-testing-tooling/venv-pip" questions={quizVenvPip} />
+
+<ProgressTracker client:visible id="stdlib-testing-tooling/venv-pip" />

@@ -1,0 +1,95 @@
+---
+title: โครงสร้างข้อมูล
+description: 'ภาพรวม collection ในตัวของ Python — list, tuple, dict และ set พร้อมตัวอย่างรันได้'
+sidebar:
+  order: 1
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Collection ในตัวของ Python
+
+Python มี container ประเภทใช้งานทั่วไปสี่ชนิดในตัวภาษา ไม่ต้อง import ใด ๆ
+
+| ประเภท | Syntax | เปลี่ยนแปลงได้ | มีลำดับ | ซ้ำได้ |
+|--------|--------|----------------|---------|--------|
+| `list` | `[1, 2, 3]` | ได้ | ได้ | ได้ |
+| `tuple` | `(1, 2, 3)` | ไม่ได้ | ได้ | ได้ |
+| `dict` | `{"a": 1}` | ได้ | ได้ (3.7+) | key: ไม่ได้ |
+| `set` | `{1, 2, 3}` | ได้ | ไม่ได้ | ไม่ได้ |
+
+แต่ละประเภทมีจุดเด่นต่างกัน: list สำหรับลำดับที่แก้ไขได้, tuple สำหรับข้อมูลคงที่, dict สำหรับการค้นหาด้วย key, และ set สำหรับทดสอบสมาชิกภาพ
+
+## เลือก collection ให้เหมาะสม
+
+- ใช้ **list** เมื่อต้องการ append, sort หรือเข้าถึงข้อมูลด้วย index
+- ใช้ **tuple** เมื่อข้อมูลคงที่และตำแหน่งมีความหมาย (เช่น สี RGB, แถวในฐานข้อมูล)
+- ใช้ **dict** เมื่อต้องการค้นหาด้วย key อย่างรวดเร็ว หรือจัดกลุ่ม attribute ที่มีชื่อโดยไม่ต้องสร้าง class
+- ใช้ **set** เมื่อต้องการความเป็นเอกลักษณ์ หรือต้องการ union / intersection / difference
+
+## ตัวอย่างรันได้
+
+export const dataStructuresIndexCode = `
+from collections import namedtuple
+
+# --- list ---
+nums = [1, 2, 3, 4, 5]
+print('list:', nums)
+print('sum:', sum(nums))
+
+# --- tuple unpacking ---
+coords = (10, 20, 30)
+x, y, z = coords
+print('tuple unpack:', x, y, z)
+
+# --- dict (insertion order preserved since Python 3.7) ---
+scores = {'alice': 95, 'bob': 87, 'carol': 92}
+print('dict:', scores)
+print('alice score:', scores['alice'])
+
+# --- set (duplicates removed automatically) ---
+unique = {3, 1, 4, 1, 5, 9, 2, 6, 5}
+print('set:', sorted(unique))
+
+# --- namedtuple: lightweight named record ---
+Point = namedtuple('Point', ['x', 'y'])
+p = Point(3, 4)
+print('namedtuple:', p.x, p.y)
+`.trim();
+
+<Playground client:visible code={dataStructuresIndexCode} />
+
+<Callout title="โมดูล collections ขยาย built-in เพิ่มเติม">
+โมดูล `collections` จาก standard library เพิ่ม `namedtuple`, `deque`, `defaultdict`, `Counter` และ `OrderedDict` บน built-in สี่ประเภท
+คุณจะได้เรียนรู้รายละเอียดเหล่านี้เมื่อดำเนินบทเรียนต่อไป
+</Callout>
+
+export const quizDataStructuresIndex = [
+    {
+        q: "Collection ประเภทใดที่ไม่อนุญาตให้มีค่าซ้ำ?",
+        options: ["list", "tuple", "dict (values)", "set"],
+        answer: 3
+    },
+    {
+        q: "ตั้งแต่ Python 3.7 collection ใดที่รักษาลำดับการแทรก?",
+        options: ["set", "frozenset", "dict", "ทั้ง dict และ set"],
+        answer: 2
+    },
+    {
+        q: "Collection ใดที่เปลี่ยนแปลงไม่ได้ (immutable)?",
+        options: ["list", "tuple", "dict", "set"],
+        answer: 1
+    },
+    {
+        q: "ประเภทใดเหมาะสมที่สุดสำหรับการทดสอบสมาชิกภาพของข้อมูลจำนวนมาก?",
+        options: ["list", "tuple", "set", "dict"],
+        answer: 2
+    }
+];
+
+<Quiz client:visible id="data-structures/index" questions={quizDataStructuresIndex} />
+
+<ProgressTracker client:visible id="data-structures/index" />

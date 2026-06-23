@@ -1,0 +1,244 @@
+---
+title: 'The GIL and Threading'
+description: 'The Global Interpreter Lock, threading for I/O-bound work, ThreadPoolExecutor, and why threads do not speed up CPU-bound Python.'
+sidebar:
+  order: 4
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The Global Interpreter Lock
+
+CPython (the standard Python interpreter) contains a mutex called the **Global Interpreter Lock** (GIL).
+The GIL ensures that only **one thread executes Python bytecode at any given moment** — even on
+a machine with many CPU cores.
+
+The GIL exists for a practical reason: CPython's memory management (reference counting) is not
+thread-safe. Rather than adding fine-grained locks to every object, the CPython developers took
+the simpler approach of a single global lock.
+
+**Consequences:**
+
+- CPU-bound Python code running in multiple threads does not run in parallel — threads take turns.
+- I/O-bound threads *do* benefit from threading because the GIL is released while a thread waits
+  for an OS I/O call to complete.
+
+<Callout title="Python 3.13 and the no-GIL build">
+Python 3.13 introduces an experimental **free-threaded** (no-GIL) build, enabled at compile time
+with `--disable-gil`. This allows true CPU-level parallelism across threads but may break C extensions
+that assumed the GIL's protection. Mainstream adoption is expected in 3.14+.
+</Callout>
+
+## CPU-bound threads: no speedup
+
+```python
+import threading
+import time
+
+def count_down(n: int) -> None:
+    while n > 0:
+        n -= 1
+
+N = 50_000_000
+
+# Single thread
+start = time.perf_counter()
+count_down(N)
+single = time.perf_counter() - start
+
+# Two threads — same total work split across threads
+start = time.perf_counter()
+t1 = threading.Thread(target=count_down, args=(N // 2,))
+t2 = threading.Thread(target=count_down, args=(N // 2,))
+t1.start(); t2.start()
+t1.join();  t2.join()
+threaded = time.perf_counter() - start
+
+print(f"Single thread: {single:.2f}s")
+print(f"Two threads:   {threaded:.2f}s")
+# Two threads is often SLOWER due to GIL contention and context-switch overhead
+```
+
+## I/O-bound threads: real concurrency
+
+When threads block on I/O, the GIL is released, allowing other threads to run Python code.
+This is why threading is still useful for I/O-bound tasks like HTTP requests or file reads.
+
+```python
+import threading
+import time
+
+def simulate_io(label: str, delay: float) -> None:
+    time.sleep(delay)   # releases the GIL — other threads run freely
+    print(f"{label} complete after {delay}s")
+
+# Sequential: ~0.6 s total
+# Threaded:   ~0.2 s total (all three sleep concurrently)
+threads = [
+    threading.Thread(target=simulate_io, args=(f"task-{i}", 0.2))
+    for i in range(3)
+]
+for t in threads: t.start()
+for t in threads: t.join()
+```
+
+## `threading.Thread` — basics
+
+```python
+import threading
+
+def worker(name: str, count: int) -> None:
+    for i in range(count):
+        print(f"[{name}] step {i}")
+
+t = threading.Thread(target=worker, args=("background", 3))
+t.start()
+print("main thread continues here")
+t.join()   # wait for the thread to finish
+print("background thread done")
+```
+
+`t.join()` blocks the calling thread until `t` finishes.
+Without `join()`, the main thread may exit while the background thread is still running.
+
+## Thread safety with `threading.Lock`
+
+Shared mutable state requires explicit synchronization.
+A `threading.Lock` ensures that only one thread modifies the shared data at a time.
+
+```python
+import threading
+
+counter: int = 0
+lock = threading.Lock()
+
+def increment(n: int) -> None:
+    global counter
+    for _ in range(n):
+        with lock:
+            counter += 1
+
+threads = [threading.Thread(target=increment, args=(100_000,)) for _ in range(5)]
+for t in threads: t.start()
+for t in threads: t.join()
+
+print(counter)   # reliably 500_000
+```
+
+Without the lock, `counter += 1` is three bytecode operations (LOAD, ADD, STORE) and two threads
+can interleave them, producing a lower total (a **race condition**).
+
+## `ThreadPoolExecutor` — the high-level API
+
+`concurrent.futures.ThreadPoolExecutor` manages a pool of threads and returns `Future` objects.
+It integrates cleanly with `asyncio` via `loop.run_in_executor`.
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+import time
+
+def blocking_io(label: str) -> str:
+    time.sleep(0.1)    # simulates a blocking library call
+    return f"{label} done"
+
+with ThreadPoolExecutor(max_workers=4) as executor:
+    futures = [executor.submit(blocking_io, f"job-{i}") for i in range(8)]
+    results = [f.result() for f in futures]
+
+print(results)
+```
+
+`executor.map(fn, iterable)` is a convenient shorthand when all calls share the same function
+and you want results in input order.
+
+## Bridging threads and asyncio: `run_in_executor`
+
+When you need to call a blocking library from an async context without blocking the event loop:
+
+```python
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import time
+
+def blocking_call(x: int) -> int:
+    time.sleep(0.1)      # a blocking library — e.g. psycopg2, boto3 (sync)
+    return x * x
+
+async def main() -> None:
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = await asyncio.gather(
+            *[loop.run_in_executor(pool, blocking_call, i) for i in range(5)]
+        )
+    print(results)
+
+asyncio.run(main())
+```
+
+<Callout title="Not available in the in-browser runner">
+`threading` and `concurrent.futures.ThreadPoolExecutor` are not available in the in-browser Python runner (Pyodide).
+Run the examples above locally:
+
+```bash
+python3 gil_threads.py
+```
+</Callout>
+
+## When to use threads vs asyncio
+
+| Criterion | Use `asyncio` | Use `threading` |
+|---|---|---|
+| I/O-bound, async-native libs | Yes | No |
+| I/O-bound, blocking libs (boto3, psycopg2) | `run_in_executor` | Yes |
+| CPU-bound work | No | No — use `multiprocessing` |
+| Need structured cancellation | Yes (TaskGroup) | Harder |
+| Legacy synchronous codebase | No | Yes |
+
+export const quizGilThreads = [
+  {
+    q: "Why does adding more threads NOT speed up CPU-bound Python code in CPython?",
+    options: [
+      "Python threads are emulated in software and do not use OS threads",
+      "The GIL allows only one thread to execute Python bytecode at a time",
+      "Python threads share the same stack and cannot run in parallel",
+      "The OS scheduler prevents Python threads from running on multiple cores"
+    ],
+    answer: 1
+  },
+  {
+    q: "When does a Python thread release the GIL?",
+    options: [
+      "Only when the thread calls `threading.release()`",
+      "Only during garbage collection",
+      "While waiting for an OS I/O call to complete",
+      "Never — the GIL is held for the thread's entire lifetime"
+    ],
+    answer: 2
+  },
+  {
+    q: "What is the purpose of `threading.Lock` when shared mutable state is accessed from multiple threads?",
+    options: [
+      "It speeds up access to shared state by caching it",
+      "It prevents two threads from modifying the shared state at the same time, avoiding race conditions",
+      "It copies the shared state into each thread's private memory",
+      "It serializes all threads into a single thread for safety"
+    ],
+    answer: 1
+  },
+  {
+    q: "How do you call a blocking synchronous function from inside an `async def` coroutine without blocking the event loop?",
+    options: [
+      "Call it directly — asyncio handles blocking calls transparently",
+      "Wrap it in `threading.Thread` and await the thread",
+      "Use `loop.run_in_executor(pool, blocking_fn, *args)` to offload it to a thread pool",
+      "Use `asyncio.sleep(0)` before the call"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="async-concurrency/gil-threads" questions={quizGilThreads} />
+
+<ProgressTracker client:visible id="async-concurrency/gil-threads" />

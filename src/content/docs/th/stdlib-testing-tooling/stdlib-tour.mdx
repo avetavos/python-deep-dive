@@ -1,0 +1,213 @@
+---
+title: 'Stdlib Tour'
+description: 'ทัวร์ module สำคัญใน standard library: collections, itertools, datetime, json และ pathlib'
+sidebar:
+  order: 2
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ทัวร์ module สำคัญใน stdlib
+
+Python standard library มีขนาดใหญ่ แต่มี module จำนวนหนึ่งที่ปรากฏในเกือบทุก codebase จริงจัง
+บทเรียนนี้จะพาคุณรู้จักห้า module อย่างลงมือปฏิบัติ: `collections`, `itertools`, `datetime`, `json` และ `pathlib`
+
+---
+
+## `collections` — container type พิเศษ
+
+module `collections` ขยาย container built-in ของ Python ด้วยสี่ตัวหลักที่คุณจะใช้ทุกวัน
+
+**`Counter`** นับ hashable object และรองรับ arithmetic บน count
+
+```python
+from collections import Counter
+c = Counter("aabbbcc")
+print(c)           # Counter({'b': 3, 'a': 2, 'c': 2})
+print(c.most_common(2))  # [('b', 3), ('a', 2)]
+```
+
+**`defaultdict`** ไม่เคย raise `KeyError` — key ที่หายไปจะถูก initialise อัตโนมัติด้วย factory ที่คุณกำหนด
+
+```python
+from collections import defaultdict
+dd = defaultdict(list)
+dd["fruits"].append("apple")   # no KeyError on a fresh key
+```
+
+**`namedtuple`** สร้าง record type แบบ lightweight, immutable ที่มี named field — อ่านง่ายกว่า tuple ธรรมดาและไม่มี overhead ต่างจาก tuple ปกติ
+
+```python
+from collections import namedtuple
+Point = namedtuple("Point", ["x", "y"])
+p = Point(3, 4)
+print(p.x, p.y)   # 3 4
+```
+
+---
+
+## `itertools` — lazy combinator
+
+`itertools` มี iterator building block ที่ compose ได้ดีและไม่ materialize sequence ทั้งหมดในหน่วยความจำจนกว่าจะถูกขอ
+
+**`chain`** รวม iterable หลายตัวเป็น stream เดียว
+**`islice`** ตัด iterator ใดก็ได้อย่าง lazy
+**`groupby`** จัดกลุ่ม element ที่มี key เท่ากันติดกัน — input *ต้องถูก sort* ตาม key เดียวกันก่อน
+
+```python
+import itertools
+list(itertools.chain([1, 2], [3, 4]))          # [1, 2, 3, 4]
+list(itertools.islice(range(100), 5))          # [0, 1, 2, 3, 4]
+```
+
+---
+
+## Playground 1 — `collections` และ `itertools`
+
+export const collIterCode = `
+import collections
+import itertools
+
+# --- Counter ---
+words = "the quick brown fox jumps over the lazy dog the fox".split()
+c = collections.Counter(words)
+print("top 3:", c.most_common(3))
+
+# --- defaultdict ---
+dd = collections.defaultdict(list)
+for k, v in [("a", 1), ("b", 2), ("a", 3)]:
+    dd[k].append(v)
+print("grouped:", dict(dd))
+
+# --- namedtuple ---
+Point = collections.namedtuple("Point", ["x", "y"])
+p = Point(3, 4)
+print("point:", p, "| x =", p.x)
+
+# --- chain ---
+merged = list(itertools.chain([1, 2], [3, 4], [5]))
+print("chained:", merged)
+
+# --- groupby (data must be sorted) ---
+data = [("a", 1), ("a", 2), ("b", 3), ("b", 4)]
+for key, group in itertools.groupby(data, key=lambda t: t[0]):
+    print(key, list(group))
+`.trim();
+
+<Playground client:visible code={collIterCode} />
+
+---
+
+## `datetime` — date, time และ arithmetic
+
+module `datetime` จัดการ date, time และการคำนวณระหว่างกัน
+object `datetime.datetime` เป็น immutable; operation เช่นการบวก `timedelta` จะคืน object ใหม่
+
+Demo ด้านล่างใช้ **วันที่คงที่** เพื่อให้ output คาดเดาได้เสมอ — เป็นนิสัยที่ดีเมื่อเขียน example หรือ test
+
+---
+
+## `json` — serialisation และ deserialisation
+
+`json.dumps` แปลง Python object เป็น JSON string; `json.loads` parse กลับ
+argument `separators` ช่วยตัด whitespace สำหรับ output แบบ compact
+
+```python
+import json
+s = json.dumps({"key": "value"}, separators=(",", ":"))
+# '{"key":"value"}'
+```
+
+---
+
+## Playground 2 — `datetime` และ `json`
+
+export const dtJsonCode = `
+import datetime
+import json
+
+# Fixed date for determinism
+dt = datetime.datetime(2024, 3, 14, 9, 26, 53)
+print("pi day:", dt.strftime("%Y-%m-%d %H:%M:%S"))
+delta = datetime.timedelta(days=10)
+print("plus 10 days:", (dt + delta).date())
+
+# json round-trip
+obj = {"name": "Python", "versions": [3, 10, 11]}
+s = json.dumps(obj, separators=(",", ":"))
+print("serialized:", s)
+back = json.loads(s)
+print("name:", back["name"], "| latest:", back["versions"][-1])
+`.trim();
+
+<Playground client:visible code={dtJsonCode} />
+
+---
+
+## `pathlib` — path ระบบไฟล์แบบ object-oriented
+
+`pathlib.Path` แทน path ระบบไฟล์เป็น object ที่มี method และ property แทนที่การใช้ string ของ `os.path` แบบเก่า
+
+```python
+from pathlib import Path
+
+p = Path("/usr/local/lib/python3.12/site-packages/requests/__init__.py")
+print(p.suffix)   # .py
+print(p.stem)     # __init__
+print(p.parts)    # ('/', 'usr', 'local', 'lib', 'python3.12', 'site-packages', 'requests', '__init__.py')
+
+# Building paths with /
+project = Path.home() / "projects" / "myapp"
+config  = project / "config.toml"
+print(config)
+```
+
+> `pathlib` จัดการ path ระบบไฟล์ — รัน code นี้ใน local; sandbox ของ browser ไม่มีระบบไฟล์จริง
+
+---
+
+<Callout title="Reach for stdlib before adding a dependency">
+ทุก module ในหน้านี้มาพร้อมกับ Python — ไม่ต้องใช้ `pip install`
+ก่อนจะเพิ่ม third-party library ให้ถามก่อนว่า `collections`, `itertools`, `datetime`, `json` หรือ `pathlib` แก้ปัญหาได้หรือไม่
+Module เหล่านี้ import ได้เร็วกว่า, ไม่มี dependency และได้ผ่านการทดสอบอย่างหนักในทุก Python version ที่คุณน่าจะ target
+</Callout>
+
+export const quizStdlibTour = [
+    {
+        q: "`collections.Counter('aab')` ให้ผลลัพธ์อะไร?",
+        options: [
+            "{'a': 2, 'b': 1}",
+            "['a', 'a', 'b']",
+            "Counter({1: 'a', 2: 'b'})",
+            "{'a': 1, 'b': 1}"
+        ],
+        answer: 0
+    },
+    {
+        q: "ทำไมต้อง sort ข้อมูลก่อนส่งให้ `itertools.groupby`?",
+        options: [
+            "groupby raise error เมื่อข้อมูลไม่ได้ sort",
+            "groupby จัดกลุ่มเฉพาะ key ที่เท่ากันติดกัน — ข้อมูลที่ไม่ได้ sort จะได้กลุ่มผิด",
+            "groupby ทำงานเร็วกว่าบนข้อมูลที่ sort แล้ว",
+            "Python dict ไม่มีลำดับ"
+        ],
+        answer: 1
+    },
+    {
+        q: "`datetime` method ใดที่ format วันที่เป็น string?",
+        options: [
+            "datetime.format()",
+            "datetime.isoformat() only",
+            "datetime.strftime(format_string)",
+            "str(datetime)"
+        ],
+        answer: 2
+    }
+];
+
+<Quiz client:visible id="stdlib-testing-tooling/stdlib-tour" questions={quizStdlibTour} />
+
+<ProgressTracker client:visible id="stdlib-testing-tooling/stdlib-tour" />

@@ -1,0 +1,183 @@
+---
+title: Context Managers
+description: 'The with statement, __enter__ and __exit__, and contextlib.contextmanager — guaranteed cleanup in Python 3.11+.'
+sidebar:
+  order: 4
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The problem context managers solve
+
+Many operations must be paired with a cleanup step: open a file then close it, acquire a lock then release it, start a timer then stop it.
+If an exception occurs between the two steps, the cleanup never runs — leading to resource leaks.
+
+The `with` statement solves this by guaranteeing that the cleanup runs no matter what.
+
+```python
+with open("data.txt") as f:
+    content = f.read()
+# f is always closed here, even if read() raised
+```
+
+## How `with` works: the protocol
+
+Any object with `__enter__` and `__exit__` methods is a **context manager**.
+
+```
+with expr as var:
+    body
+```
+
+This is exactly equivalent to:
+
+```python
+cm = expr
+var = cm.__enter__()
+try:
+    body
+except:
+    if not cm.__exit__(*sys.exc_info()):
+        raise
+else:
+    cm.__exit__(None, None, None)
+```
+
+`__enter__` sets up the resource and returns a value bound to `var`.
+`__exit__` always runs on exit. If it returns a truthy value it **suppresses** the exception; returning `False` (or `None`) lets the exception propagate.
+
+## Writing a class-based context manager
+
+```python
+class Timer:
+    def __enter__(self) -> "Timer":
+        print("Timer started")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        print("Timer stopped")
+        return False   # do not suppress exceptions
+```
+
+The three arguments to `__exit__` are the exception type, value, and traceback — all `None` when no exception occurred.
+
+## `contextlib.contextmanager` — the generator shortcut
+
+Writing a full class just to wrap setup/teardown is verbose.
+`contextlib.contextmanager` lets you use a generator function instead:
+
+```python
+import contextlib
+
+@contextlib.contextmanager
+def managed_resource(name: str):
+    print(f"Acquiring {name}")
+    try:
+        yield name          # value bound to the as-variable
+    finally:
+        print(f"Releasing {name}")
+```
+
+Everything before `yield` is `__enter__` logic. Everything after `yield` (in the `finally`) is `__exit__` logic.
+The `try/finally` inside the generator ensures the teardown runs even when an exception is raised inside the `with` block.
+
+## Nesting context managers
+
+Multiple context managers can be combined on one `with` line — they nest left to right:
+
+```python
+with open("in.txt") as src, open("out.txt", "w") as dst:
+    dst.write(src.read())
+```
+
+## Full runnable demo
+
+export const contextManagersCode = `
+import contextlib
+
+# --- class-based context manager ---
+class Timer:
+    def __enter__(self):
+        print("Timer started")
+        return self
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        print("Timer stopped")
+        return False
+
+print("=== class-based ===")
+with Timer():
+    print("  doing work...")
+
+# --- contextlib.contextmanager ---
+@contextlib.contextmanager
+def managed_resource(name: str):
+    print(f"Acquiring {name}")
+    try:
+        yield name
+    finally:
+        print(f"Releasing {name}")
+
+print("\\n=== contextmanager generator ===")
+with managed_resource("connection") as res:
+    print(f"  using {res}")
+
+# --- cleanup on error ---
+print("\\n=== cleanup runs even on error ===")
+try:
+    with managed_resource("db") as res:
+        print(f"  using {res}")
+        raise RuntimeError("something failed")
+except RuntimeError as e:
+    print(f"  caught: {e}")
+`.trim();
+
+<Playground client:visible code={contextManagersCode} />
+
+<Callout title="Context managers guarantee cleanup even on error">
+The `finally` clause inside a `@contextlib.contextmanager` generator always runs, even when the `with` body raises an exception. This is the canonical way to write cleanup-guaranteed code in Python. Always prefer `with` over manually calling `close()`, `release()`, or `stop()` — one unhandled exception will skip those manual calls.
+</Callout>
+
+export const quizContextManagers = [
+  {
+    q: "What two methods must an object implement to be used as a context manager?",
+    options: [
+      "__open__ and __close__",
+      "__enter__ and __exit__",
+      "__start__ and __stop__",
+      "__setup__ and __teardown__"
+    ],
+    answer: 1
+  },
+  {
+    q: "In a `@contextlib.contextmanager` generator, what marks the boundary between setup and teardown?",
+    options: ["return", "yield", "raise StopIteration", "break"],
+    answer: 1
+  },
+  {
+    q: "When does the `__exit__` method run?",
+    options: [
+      "Only when the with block exits normally",
+      "Only when an exception is raised inside the with block",
+      "Always — whether the block exits normally or with an exception",
+      "Only when the context manager is garbage-collected"
+    ],
+    answer: 2
+  },
+  {
+    q: "What happens if `__exit__` returns a truthy value when an exception occurred?",
+    options: [
+      "The exception is re-raised immediately",
+      "The exception is suppressed and execution continues after the with block",
+      "The exception is converted to a warning",
+      "Python raises a secondary RuntimeError"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="typing-errors/context-managers" questions={quizContextManagers} />
+
+<ProgressTracker client:visible id="typing-errors/context-managers" />

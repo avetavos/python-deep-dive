@@ -1,0 +1,199 @@
+---
+title: Functions
+description: 'Defining functions with def, parameters and return values, multiple returns via tuples, docstrings, and LEGB scope.'
+sidebar:
+  order: 4
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Defining a function
+
+Use `def` followed by the function name, a parameter list in parentheses, and a colon.
+The body is indented 4 spaces.
+Type hints are optional but strongly recommended — they document intent and enable static analysis.
+
+```python
+def greet(name: str, greeting: str = "Hello") -> str:
+    """Return a greeting string for the given name."""
+    return f"{greeting}, {name}!"
+
+print(greet("Alice"))              # Hello, Alice!
+print(greet("Bob", greeting="Hi")) # Hi, Bob!
+```
+
+The second parameter has a **default value** — callers may omit it.
+Default values are evaluated once at function definition time, not at call time.
+
+## Parameters and calling conventions
+
+Python has four kinds of parameters:
+
+```python
+def demo(pos, /, normal, *, kw_only):
+    print(pos, normal, kw_only)
+
+demo(1, 2, kw_only=3)      # OK
+demo(1, normal=2, kw_only=3) # OK
+```
+
+- **Positional-only** (before `/`): cannot be passed by keyword.
+- **Normal**: positional or keyword.
+- **Keyword-only** (after `*`): must be passed by keyword.
+
+## Returning multiple values
+
+A function can return any number of values by separating them with commas.
+Python packs them into a tuple automatically.
+
+```python
+def min_max(numbers: list) -> tuple:
+    """Return (minimum, maximum) of a list."""
+    return min(numbers), max(numbers)
+
+low, high = min_max([3, 1, 4, 1, 5, 9])
+print(f"min={low}, max={high}")   # min=1, max=9
+```
+
+**Tuple unpacking** on the left side of the assignment distributes the returned values into separate variables.
+
+## Docstrings
+
+A **docstring** is a string literal placed immediately after the `def` line.
+It documents what the function does, its parameters, and what it returns.
+Access it via `help(fn)` or `fn.__doc__`.
+
+```python
+def add(a: int, b: int) -> int:
+    """Return the sum of a and b.
+
+    Args:
+        a: First operand.
+        b: Second operand.
+
+    Returns:
+        The integer sum.
+    """
+    return a + b
+```
+
+## LEGB scope rules
+
+Python resolves names in four scopes, searched in order:
+
+1. **L**ocal — inside the current function.
+2. **E**nclosing — any enclosing function (for nested functions).
+3. **G**lobal — the module level.
+4. **B**uilt-in — Python's built-in names (`len`, `print`, etc.).
+
+```python
+x = 10  # global
+
+def outer():
+    y = 20  # enclosing
+    def inner():
+        z = 30  # local
+        return x + y + z   # finds x globally, y in enclosing, z locally
+    return inner()
+
+print(outer())  # 60
+```
+
+Use `global name` to rebind a module-level variable from inside a function.
+Use `nonlocal name` to rebind a variable from an enclosing (non-global) scope.
+
+## Full runnable demo
+
+export const functionsCode = `
+def greet(name: str, greeting: str = "Hello") -> str:
+    """Return a greeting string."""
+    return f"{greeting}, {name}!"
+
+def min_max(numbers: list) -> tuple:
+    """Return (minimum, maximum) of a list."""
+    return min(numbers), max(numbers)
+
+x = 10
+
+def outer():
+    y = 20
+    def inner():
+        z = 30
+        return x + y + z
+    return inner()
+
+print(greet("Alice"))
+print(greet("Bob", greeting="Hi"))
+
+low, high = min_max([3, 1, 4, 1, 5, 9])
+print(f"min={low}, max={high}")
+
+print(f"LEGB sum: {outer()}")
+
+def no_return():
+    pass
+
+result = no_return()
+print(f"no_return() gives: {result}")
+`.trim();
+
+<Playground client:visible code={functionsCode} />
+
+<Callout title="Functions return None by default">
+If a function body ends without a `return` statement, or contains a bare `return` with no value,
+Python automatically returns `None`.
+This is never an error — it is the defined behaviour.
+The most common surprise is assigning the result of a function that modifies something in-place
+(like `list.sort()`): the variable receives `None`, not the modified list.
+Use `sorted(lst)` (returns a new list) when you need the return value.
+</Callout>
+
+export const quizFunctions = [
+  {
+    q: "What does a Python function return if it has no `return` statement?",
+    options: [
+      "0",
+      "An empty string",
+      "None",
+      "It raises a RuntimeError"
+    ],
+    answer: 2
+  },
+  {
+    q: "Given `def f(a, b=5): ...`, which call is valid?",
+    options: [
+      "f()",
+      "f(1)",
+      "f(b=3)",
+      "f(1, 2, 3)"
+    ],
+    answer: 1
+  },
+  {
+    q: "In the LEGB rule, what does 'E' stand for?",
+    options: [
+      "External scope",
+      "Enclosing function scope",
+      "Exported module scope",
+      "Exception handler scope"
+    ],
+    answer: 1
+  },
+  {
+    q: "What is the result of `low, high = min_max([3, 1, 4])`?",
+    options: [
+      "low=3, high=4",
+      "low=1, high=4",
+      "low=1, high=3",
+      "A tuple (1, 4) is assigned to low"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="basics/functions" questions={quizFunctions} />
+
+<ProgressTracker client:visible id="basics/functions" />

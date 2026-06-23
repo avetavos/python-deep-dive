@@ -1,0 +1,181 @@
+---
+title: Properties และ Class Methods
+description: '@property สำหรับ getters/setters, computed attributes, @classmethod และ @staticmethod ใน Python'
+sidebar:
+  order: 4
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Decorator `@property`
+
+`@property` เปลี่ยน method ให้เป็น attribute-style accessor
+ผู้เรียกใช้ `obj.celsius` แทน `obj.get_celsius()` ทำให้ public API สะอาดในขณะที่ยังเรียก validation logic ได้เบื้องหลัง
+
+```python
+class Temperature:
+    def __init__(self, celsius: float = 0.0) -> None:
+        self._celsius = celsius    # underscore = internal storage
+
+    @property
+    def celsius(self) -> float:
+        return self._celsius
+```
+
+## Setters
+
+จับคู่ `@property` กับ `@name.setter` เพื่อ intercept การ assign ค่า:
+
+```python
+    @celsius.setter
+    def celsius(self, value: float) -> None:
+        if value < -273.15:
+            raise ValueError("Temperature below absolute zero!")
+        self._celsius = value
+```
+
+ตอนนี้ `t.celsius = -300` จะ raise `ValueError` อัตโนมัติ
+หากไม่มี setter, property จะเป็น read-only — การ assign จะ raise `AttributeError`
+
+## Computed (derived) properties
+
+Property สามารถคำนวณค่าในขณะที่เรียกโดยไม่มีพื้นที่จัดเก็บเบื้องหลัง:
+
+```python
+    @property
+    def fahrenheit(self) -> float:
+        return self._celsius * 9 / 5 + 32
+```
+
+`t.fahrenheit` ดูเหมือน plain attribute สำหรับผู้เรียก แต่คำนวณใหม่ทุกครั้ง
+
+## `@classmethod` — alternative constructors
+
+Class method รับ **class** (`cls`) เป็น argument แรกแทน instance
+การใช้งานที่พบบ่อยที่สุดคือการสร้าง alternative constructors:
+
+```python
+    @classmethod
+    def from_fahrenheit(cls, f: float) -> "Temperature":
+        return cls((f - 32) * 5 / 9)
+```
+
+```python
+boiling = Temperature.from_fahrenheit(212)
+print(boiling.celsius)   # 100.0
+```
+
+Subclass สืบทอด class method อัตโนมัติและ `cls` จะอ้างถึง subclass — factory จึงสร้าง instance ของ type ที่ถูกต้อง
+
+## `@staticmethod` — utility functions
+
+Static method ไม่รับทั้ง instance และ class
+ใช้สำหรับ utility ที่อยู่ใน class ตามตรรกะแต่ไม่ต้องการ access state ของ class หรือ instance:
+
+```python
+    @staticmethod
+    def absolute_zero() -> float:
+        return -273.15
+```
+
+```python
+print(Temperature.absolute_zero())   # -273.15
+```
+
+## Demo รันได้จริง
+
+export const propertiesCode = `
+class Temperature:
+    def __init__(self, celsius: float = 0.0) -> None:
+        self._celsius = celsius
+
+    @property
+    def celsius(self) -> float:
+        return self._celsius
+
+    @celsius.setter
+    def celsius(self, value: float) -> None:
+        if value < -273.15:
+            raise ValueError("Temperature below absolute zero!")
+        self._celsius = value
+
+    @property
+    def fahrenheit(self) -> float:
+        return self._celsius * 9 / 5 + 32
+
+    @classmethod
+    def from_fahrenheit(cls, f: float) -> "Temperature":
+        return cls((f - 32) * 5 / 9)
+
+    @staticmethod
+    def absolute_zero() -> float:
+        return -273.15
+
+
+t = Temperature(100)
+print(t.celsius)
+print(t.fahrenheit)
+t.celsius = 0
+print(t.fahrenheit)
+t2 = Temperature.from_fahrenheit(212)
+print(t2.celsius)
+print(Temperature.absolute_zero())
+`.trim();
+
+<Playground client:visible code={propertiesCode} />
+
+<Callout title="Prefer @property over getX/setX methods">
+Java และโค้ด Python รุ่นเก่าใช้ getter/setter methods ที่ชัดเจนเช่น `get_celsius()` และ `set_celsius(value)`
+ใน Python `@property` ให้ validation และ computed values ในขณะที่ call site ยังดูเหมือน plain attribute access: `t.celsius = 0` แทน `t.set_celsius(0)`
+เริ่มต้นด้วย plain attribute ก่อน แล้วค่อย promote เป็น `@property` ภายหลังเมื่อต้องการ validation หรือ lazy computation — ผู้เรียกไม่จำเป็นต้องเปลี่ยนโค้ด
+</Callout>
+
+export const quizProperties = [
+  {
+    q: "`@property` ทำอะไรกับ method?",
+    options: [
+      "ทำให้เป็น class method",
+      "ทำให้เรียกใช้ได้เหมือน attribute (ไม่ต้องมีวงเล็บ)",
+      "ทำให้เป็น private",
+      "Cache ค่า return ตลอดไป"
+    ],
+    answer: 1
+  },
+  {
+    q: "จะทำให้ `@property` เขียนได้อย่างไร?",
+    options: [
+      "เพิ่ม `writable=True` ใน decorator",
+      "กำหนด setter method ที่ decorate ด้วย `@name.setter`",
+      "ใช้ `@property.writable` แทน",
+      "Property เขียนได้เสมอโดย default"
+    ],
+    answer: 1
+  },
+  {
+    q: "parameter แรกของ `@classmethod` คืออะไร?",
+    options: [
+      "self — instance",
+      "cls — class เอง",
+      "type — metaclass",
+      "ไม่มี parameter เป็น implicit"
+    ],
+    answer: 1
+  },
+  {
+    q: "`@staticmethod` เหมาะสมเมื่อใด?",
+    options: [
+      "เมื่อ method ต้องการ access instance state",
+      "เมื่อ method ต้องการสร้าง instance ใหม่ผ่าน cls()",
+      "เมื่อ method เป็น utility ที่ไม่ต้องการ instance หรือ class",
+      "เมื่อต้องการให้ subclass inherit method แตกต่างออกไป"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="oop-data-model/properties" questions={quizProperties} />
+
+<ProgressTracker client:visible id="oop-data-model/properties" />

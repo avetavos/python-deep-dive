@@ -1,0 +1,158 @@
+---
+title: Variables & Types
+description: 'Dynamic typing, ชนิดข้อมูลพื้นฐาน, type(), การแปลงชนิด, และ truthiness ใน Python'
+sidebar:
+  order: 2
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ตัวแปรและ Dynamic Typing
+
+ใน Python คุณกำหนดค่าให้กับชื่อตัวแปรได้เลย — ไม่ต้องประกาศชนิดข้อมูล
+ชนิดของตัวแปรถูกกำหนดโดยออบเจกต์ที่มันอ้างถึงในขณะนั้น ไม่ใช่โดยการประกาศ
+
+```python
+x = 10          # x อ้างถึง int
+x = "hello"     # x อ้างถึง str แล้ว — ถูกต้องสมบูรณ์
+x = [1, 2, 3]   # x อ้างถึง list แล้ว
+```
+
+นี่เรียกว่า **dynamic typing**
+ชนิดข้อมูลติดอยู่กับออบเจกต์ ไม่ใช่กับชื่อตัวแปร
+
+## ชนิดข้อมูล Scalar พื้นฐาน
+
+Python มีชนิดข้อมูล scalar สี่ชนิดที่คุณจะใช้ในทุกโปรแกรม:
+
+| ชนิด | ตัวอย่างค่า | หมายเหตุ |
+|---|---|---|
+| `int` | `42`, `-7`, `0` | ความแม่นยำไม่จำกัด — ไม่มี overflow |
+| `float` | `3.14`, `-0.5` | ทศนิยม IEEE 754 double precision |
+| `str` | `"hello"`, `'world'` | ลำดับ Unicode ที่เปลี่ยนแปลงไม่ได้ |
+| `bool` | `True`, `False` | subclass ของ `int`; `True == 1`, `False == 0` |
+
+ยังมี `None` — singleton ที่แทนการขาดค่า
+`None` มีชนิดข้อมูลของตัวเอง คือ `NoneType` และมี `None` เพียงออบเจกต์เดียวในกระบวนการ Python ทั้งหมด
+ทดสอบด้วย `is None` เสมอ ไม่ใช่ `== None`
+
+## การตรวจสอบชนิดข้อมูลขณะรันไทม์
+
+`type()` คืนชนิดที่แน่นอนของออบเจกต์
+`isinstance()` ทดสอบว่าออบเจกต์เป็น instance ของชนิดนั้นหรือ subclass ของมัน
+
+```python
+age = 30
+print(type(age))           # <class 'int'>
+print(isinstance(age, int))  # True
+print(isinstance(True, int)) # True — bool เป็น subclass ของ int
+```
+
+## การแปลงชนิดข้อมูล
+
+Python ไม่แปลงชนิดข้อมูลโดยอัตโนมัติ
+คุณต้องแปลงอย่างชัดเจนโดยใช้ชื่อชนิดข้อมูลเป็นฟังก์ชัน:
+
+```python
+n = int("42")        # str -> int
+f = float("3.14")    # str -> float
+s = str(100)         # int -> str
+b = bool(0)          # int -> bool  ->  False
+```
+
+ถ้าแปลงไม่ได้ Python จะ raise `ValueError`:
+
+```python
+int("hello")   # ValueError: invalid literal for int()
+```
+
+## Truthiness
+
+ออบเจกต์ Python ทุกชิ้นมีการตีความเป็น boolean ที่ใช้ใน `if` และ `while`
+ค่าต่อไปนี้เป็น **falsy** — ค่าอื่นๆ ทั้งหมดเป็น truthy:
+
+- `False`, `None`
+- ศูนย์: `0`, `0.0`, `0j`
+- container ว่างเปล่า: `""`, `[]`, `{}`, `()`, `set()`
+
+```python
+name = ""
+if name:
+    print("has name")
+else:
+    print("name is empty")   # branch นี้ทำงาน
+```
+
+## Demo ที่รันได้จริง
+
+export const variablesTypesCode = `
+age: int = 30
+price: float = 9.99
+greeting: str = "Hello"
+active: bool = True
+nothing = None
+
+print(type(age))
+print(type(price))
+print(type(greeting))
+print(type(active))
+print(type(nothing))
+
+x = int("42")
+y = float("3.14")
+z = str(100)
+print(x, y, z)
+
+falsy_values = [0, "", None, False, [], 0.0]
+for v in falsy_values:
+    print(f"bool({v!r}) = {bool(v)}")
+`.trim();
+
+<Playground client:visible code={variablesTypesCode} />
+
+<Callout title="ทุกอย่างคือออบเจกต์">
+ใน Python, `42` ไม่ใช่ primitive — มันคือ instance ของคลาส `int`
+ซึ่งหมายความว่ามัน methods: `(42).bit_length()` คืนค่า `6`
+แม้แต่ `True` และ `False` ก็เป็นออบเจกต์ชนิด `bool` ซึ่งเป็น subclass ของ `int`
+นั่นคือเหตุผลที่ `True + True` ได้ผลลัพธ์เป็น `2`
+</Callout>
+
+export const quizVariablesTypes = [
+  {
+    q: "Dynamic typing ใน Python หมายความว่าอะไร?",
+    options: [
+      "ตัวแปรต้องประกาศชนิดข้อมูลก่อนใช้",
+      "ชนิดข้อมูลถูกกำหนดโดยออบเจกต์ที่ตัวแปรอ้างถึง ไม่ใช่โดยการประกาศ",
+      "ตัวแปรทั้งหมดถูกแปลงเป็น string อัตโนมัติ",
+      "การตรวจสอบชนิดข้อมูลเกิดขึ้นตอน compile time"
+    ],
+    answer: 1
+  },
+  {
+    q: "ค่าใดต่อไปนี้เป็น falsy ใน Python?",
+    options: ["1", "\"0\"", "[]", "True"],
+    answer: 2
+  },
+  {
+    q: "ควรทดสอบว่าตัวแปรเก็บ None อยู่อย่างไร?",
+    options: [
+      "if x == None:",
+      "if x is None:",
+      "if type(x) == NoneType:",
+      "if x.is_none():"
+    ],
+    answer: 1
+  },
+  {
+    q: "`bool` สืบทอดมาจากอะไรใน Python?",
+    options: ["object", "int", "str", "type"],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="basics/variables-types" questions={quizVariablesTypes} />
+
+<ProgressTracker client:visible id="basics/variables-types" />

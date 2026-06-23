@@ -1,0 +1,182 @@
+---
+title: Lists และ Tuples
+description: 'list ที่เปลี่ยนแปลงได้พร้อม sort และ slice เทียบกับ tuple ที่เปลี่ยนแปลงไม่ได้พร้อม unpacking ใน Python 3.11+'
+sidebar:
+  order: 2
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Lists — ลำดับที่เปลี่ยนแปลงได้
+
+**list** คือ container หลักของ Python ที่เก็บลำดับของ object ใด ๆ และรองรับการเปลี่ยนแปลงค่าภายใน
+
+```python
+fruits = ['apple', 'banana', 'cherry']
+fruits.append('date')        # เพิ่มที่ท้าย
+fruits.insert(1, 'avocado')  # แทรกก่อน index 1
+fruits.remove('banana')      # ลบรายการแรกที่พบ
+print(fruits)                # ['apple', 'avocado', 'cherry', 'date']
+```
+
+### Method ที่ใช้บ่อย
+
+| Method | คำอธิบาย |
+|--------|----------|
+| `append(x)` | เพิ่ม `x` ที่ท้าย |
+| `insert(i, x)` | แทรก `x` ก่อน index `i` |
+| `remove(x)` | ลบรายการแรกที่ตรงกับ `x` |
+| `pop(i=-1)` | ลบและคืนค่า item ที่ index `i` |
+| `sort(key=None, reverse=False)` | เรียงลำดับใน place |
+| `reverse()` | กลับลำดับใน place |
+| `index(x)` | คืน index ของรายการแรกที่ตรงกับ `x` |
+| `count(x)` | นับจำนวนรายการที่ตรงกับ `x` |
+
+### การเรียงลำดับ
+
+`list.sort()` เรียงลำดับใน place และคืนค่า `None`
+ส่ง `key` function เพื่อเรียงตามเกณฑ์ที่กำหนดเอง
+
+```python
+numbers = [5, 2, 8, 1, 9, 3]
+numbers.sort()
+print(numbers)  # [1, 2, 3, 5, 8, 9]
+
+words = ['banana', 'apple', 'cherry']
+words.sort(key=len)
+print(words)    # ['apple', 'banana', 'cherry']
+```
+
+ใช้ `sorted(iterable)` แทน `.sort()` เมื่อต้องการ list ใหม่โดยไม่แก้ไขต้นฉบับ
+
+## Tuples — ลำดับที่เปลี่ยนแปลงไม่ได้
+
+**tuple** คล้าย list แต่ไม่สามารถแก้ไขหลังสร้างแล้ว
+ใช้ tuple เพื่อแสดง record ที่คงที่ซึ่งตำแหน่งมีความหมาย
+
+```python
+rgb = (255, 128, 0)   # สีส้ม
+point = (3.0, 4.0)    # พิกัด 2 มิติ
+row = (1, 'Alice', 42)  # แถวในฐานข้อมูล
+```
+
+### Tuple unpacking
+
+Python อนุญาตให้ unpack tuple (หรือ iterable ใด ๆ) ลงในตัวแปรโดยตรง
+จำนวนตัวแปรต้องตรงกับความยาว ยกเว้นใช้ `*` เพื่อรับส่วนที่เหลือ
+
+```python
+coords = (10.5, 20.3, 30.1)
+x, y, z = coords
+print(x, y, z)           # 10.5 20.3 30.1
+
+first, *rest = [1, 2, 3, 4, 5]
+print(first)             # 1
+print(rest)              # [2, 3, 4, 5]
+```
+
+### การเข้าถึง field ของ tuple ด้วย index
+
+โดยไม่มีชื่อ field ของ tuple จะถูกเข้าถึงด้วย integer index
+กำหนด constant เพื่อให้อ่านง่าย:
+
+```python
+RGB = (255, 128, 0)
+RED   = 0
+GREEN = 1
+BLUE  = 2
+
+print(RGB[RED])    # 255
+print(RGB[GREEN])  # 128
+print(RGB[BLUE])   # 0
+```
+
+สำหรับแนวทางที่สะดวกกว่า ใช้ `collections.namedtuple` หรือ `typing.NamedTuple`
+
+## ตัวอย่างรันได้
+
+export const listsTuplesCode = `
+# --- list mutation and sorting ---
+fruits = ['apple', 'banana', 'cherry']
+fruits.append('date')
+fruits.insert(1, 'avocado')
+print('after insert:', fruits)
+
+fruits.remove('banana')
+print('after remove:', fruits)
+
+numbers = [5, 2, 8, 1, 9, 3]
+numbers.sort()
+print('sorted:', numbers)
+
+words = ['banana', 'apple', 'cherry']
+words.sort(key=len)
+print('by length:', words)
+
+# --- tuple unpacking ---
+coords = (10.5, 20.3, 30.1)
+x, y, z = coords
+print('unpacked:', x, y, z)
+
+first, *rest = [1, 2, 3, 4, 5]
+print('first:', first)
+print('rest:', rest)
+
+# --- named fields via index constants ---
+RGB = (255, 128, 0)
+print('red:', RGB[0], 'green:', RGB[1], 'blue:', RGB[2])
+`.trim();
+
+<Playground client:visible code={listsTuplesCode} />
+
+<Callout title="Tuple เปลี่ยนแปลงไม่ได้ — ใช้สำหรับ record ที่คงที่">
+เมื่อสร้าง tuple แล้วจะไม่สามารถแก้ไขได้
+การลอง `my_tuple[0] = 99` จะเกิด `TypeError: 'tuple' object does not support item assignment`
+ความ immutable นี้ทำให้ tuple ใช้เป็น dictionary key และใส่ใน set ได้ เนื่องจาก hashable ตราบใดที่ทุก element hashable ได้
+ใช้ tuple เมื่อข้อมูลแสดง record ที่คงที่และการเปลี่ยนแปลงถือเป็น bug
+</Callout>
+
+export const quizListsTuples = [
+    {
+        q: "Method ใดที่เพิ่ม element ไปที่ท้าย list?",
+        options: ["insert()", "extend()", "append()", "add()"],
+        answer: 2
+    },
+    {
+        q: "`list.sort()` คืนค่าอะไร?",
+        options: [
+            "list ที่เรียงแล้วใหม่",
+            "None — เรียงลำดับ list ใน place",
+            "element แรก",
+            "ความยาวของ list"
+        ],
+        answer: 1
+    },
+    {
+        q: "ข้อใดเป็น tuple unpacking ที่ถูกต้อง?",
+        options: [
+            "x, y = (1, 2, 3)",
+            "x, y, z = (1, 2, 3)",
+            "x = (1, 2, 3)[0, 1]",
+            "x, y, z = [1, 2]"
+        ],
+        answer: 1
+    },
+    {
+        q: "ทำไม tuple ถึงใช้เป็น dictionary key ได้แต่ list ไม่ได้?",
+        options: [
+            "Tuple วนซ้ำได้เร็วกว่า",
+            "Tuple เปลี่ยนแปลงไม่ได้จึง hashable",
+            "Tuple รองรับ attribute __hash__ โดยค่าเริ่มต้น",
+            "ทั้ง B และ C"
+        ],
+        answer: 3
+    }
+];
+
+<Quiz client:visible id="data-structures/lists-tuples" questions={quizListsTuples} />
+
+<ProgressTracker client:visible id="data-structures/lists-tuples" />

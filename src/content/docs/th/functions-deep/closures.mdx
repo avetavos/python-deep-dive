@@ -1,0 +1,163 @@
+---
+title: Closures
+description: 'nested function, free variable, nonlocal และกับดัก late-binding ใน closure ของ Python'
+sidebar:
+  order: 3
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Nested function
+
+Python อนุญาตให้เรานิยาม function ไว้ภายในอีก function หนึ่งได้
+function ตัวในสามารถเข้าถึงตัวแปรใน scope ของ function ตัวนอก (enclosing) ได้
+
+```python
+def outer():
+    message = "Hello from outer"
+
+    def inner():
+        print(message)   # accesses the enclosing scope
+
+    inner()
+
+outer()  # Hello from outer
+```
+
+## Free variable และ closure
+
+เมื่อ function ตัวใน **อ้างถึงตัวแปรจาก enclosing scope** แล้วถูก **return** ออกไปสู่โลกภายนอก
+Python จะสร้าง **closure** ขึ้นมา function ตัวในนั้น "ปิดครอบ" (close over) ตัวแปรไว้ และทำให้มันยังมีชีวิตอยู่แม้ `outer` จะทำงานเสร็จไปแล้ว
+
+```python
+def make_greeter(greeting: str):
+    def greet(name: str) -> str:
+        return f"{greeting}, {name}!"   # greeting is a free variable
+    return greet
+
+hello = make_greeter("Hello")
+hi    = make_greeter("Hi")
+
+print(hello("Alice"))   # Hello, Alice!
+print(hi("Bob"))        # Hi, Bob!
+```
+
+`greeting` เป็น **free variable** ใน `greet` มันไม่ได้ถูกนิยามภายใน `greet` และก็ไม่ใช่ global แต่อาศัยอยู่ใน local scope ของ `make_greeter`
+closure จะรักษาค่าของ `greeting` ให้มีชีวิตอยู่ตราบเท่าที่ `hello` หรือ `hi` ยังคงอยู่
+
+เราสามารถตรวจสอบตัวแปรที่ closure จับไว้ได้ผ่าน `__closure__`:
+
+```python
+print(hello.__closure__[0].cell_contents)   # Hello
+```
+
+## keyword `nonlocal`
+
+ภายใน nested function เราสามารถ **อ่าน** free variable ได้โดยไม่ต้องใช้ keyword พิเศษใด ๆ
+แต่ถ้าจะ **กำหนดค่าใหม่ (reassign)** ให้มัน เราต้องใช้ `nonlocal` มิฉะนั้น Python จะมองว่าชื่อนั้นเป็นตัวแปร local ตัวใหม่
+
+```python
+def make_counter(start: int = 0):
+    count = start
+
+    def increment(step: int = 1) -> int:
+        nonlocal count        # tells Python: reuse the enclosing 'count'
+        count += step
+        return count
+
+    def reset() -> None:
+        nonlocal count
+        count = start
+
+    return increment, reset
+
+inc, rst = make_counter()
+print(inc())    # 1
+print(inc())    # 2
+print(inc(5))   # 7
+rst()
+print(inc())    # 1
+```
+
+ถ้าไม่มี `nonlocal count` บรรทัด `count += step` จะทำให้เกิด `UnboundLocalError` เพราะ Python เห็นการ assign แล้วมองว่า `count` เป็นตัวแปร local ที่ยังไม่ได้ถูกกำหนดค่า
+
+## Factory function — closure ที่ใช้งานจริง
+
+export const closuresCode = `
+def make_validator(min_val: int, max_val: int):
+    """Return a validator function for the given range."""
+    def validate(value: int) -> bool:
+        return min_val <= value <= max_val
+
+    validate.__doc__ = f"Return True if value is in [{min_val}, {max_val}]."
+    return validate
+
+is_valid_age    = make_validator(0, 120)
+is_valid_score  = make_validator(0, 100)
+is_valid_port   = make_validator(1, 65535)
+
+tests = [
+    ("age 25",     is_valid_age(25)),
+    ("age 200",    is_valid_age(200)),
+    ("score 95",   is_valid_score(95)),
+    ("score 101",  is_valid_score(101)),
+    ("port 8080",  is_valid_port(8080)),
+    ("port 0",     is_valid_port(0)),
+]
+for label, result in tests:
+    print(f"{label}: {result}")
+`.trim();
+
+<Playground client:visible code={closuresCode} />
+
+<Callout title="closure จับตัวแปร ไม่ใช่จับค่า">
+กับดัก late-binding: closure จับ **ตัวแปร** ตัวมันเอง ไม่ใช่ค่าที่มันถืออยู่ตอนที่ closure ถูกสร้าง
+ในลูปนั้นเรื่องนี้กัดเจ็บมาก:
+
+```python
+# WRONG — all functions capture the same variable i
+funcs = [lambda: i for i in range(3)]
+print([f() for f in funcs])   # [2, 2, 2]  (all see the final i)
+
+# RIGHT — bind the current value as a default argument
+funcs = [lambda i=i: i for i in range(3)]
+print([f() for f in funcs])   # [0, 1, 2]
+```
+
+เทคนิคใช้ default argument `i=i` จะประเมินค่า `i` ตอน **นิยาม (definition time)** ทำให้เกิด binding ใหม่สำหรับแต่ละ function
+</Callout>
+
+export const quizClosures = [
+  {
+    q: "'closure' ใน Python คือ:",
+    options: [
+      "function ที่ไม่มีค่า return",
+      "inner function ที่จับตัวแปรจาก enclosing scope ของมัน",
+      "class ที่ override __call__",
+      "function ที่ถูก decorate ด้วย @staticmethod"
+    ],
+    answer: 1
+  },
+  {
+    q: "keyword ใดที่ต้องใช้เพื่อกำหนดค่าใหม่ (reassign) ให้ free variable จาก enclosing scope ภายใน nested function?",
+    options: ["global", "outer", "nonlocal", "free"],
+    answer: 2
+  },
+  {
+    q: "ทำไม `[lambda: i for i in range(3)]` ถึงให้ผลลัพธ์ `[2, 2, 2]` เมื่อถูกเรียก?",
+    options: [
+      "lambda ไม่รองรับลูป",
+      "ทุก lambda จับตัวแปร i ตัวเดียวกัน ซึ่งมีค่าเท่ากับ 2 หลังจากลูปจบ",
+      "Python ประเมิน body ของ lambda ตอน definition time",
+      "range(3) ให้ผลลัพธ์เป็น [2, 2, 2] เท่านั้น"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="functions-deep/closures" questions={quizClosures} />
+
+<ProgressTracker client:visible id="functions-deep/closures" />

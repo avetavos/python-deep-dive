@@ -1,0 +1,196 @@
+---
+title: Control Flow
+description: 'if/elif/else, ลูป for, while, range, break/continue/else, และ walrus operator ใน Python'
+sidebar:
+  order: 3
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## เงื่อนไข: `if` / `elif` / `else`
+
+เงื่อนไขใน Python ใช้การเยื้องแทนวงเล็บปีกกา
+นิพจน์ใดก็ตามที่ประเมินได้เป็น truthy หรือ falsy สามารถใช้เป็นเงื่อนไขได้
+
+```python
+score = 85
+
+if score >= 90:
+    grade = "A"
+elif score >= 80:
+    grade = "B"
+elif score >= 70:
+    grade = "C"
+else:
+    grade = "F"
+
+print(grade)   # B
+```
+
+Python ไม่มี `switch` statement — ใช้ `if`/`elif` chain หรือตั้งแต่ Python 3.10 ใช้ structural pattern matching (`match`/`case`)
+
+## ลูป `for` บน iterable
+
+ลูป `for` ของ Python วนซ้ำบน **iterable** ใดก็ได้ — list, string, range, file, dictionary, หรือออบเจกต์ที่ implement `__iter__`
+
+```python
+fruits = ["apple", "banana", "cherry"]
+for fruit in fruits:
+    print(fruit)
+
+# วนซ้ำบนตัวอักษรในสตริง
+for ch in "hello":
+    print(ch)
+```
+
+ใช้ `enumerate()` เมื่อต้องการทั้ง index และค่า:
+
+```python
+for i, fruit in enumerate(fruits, start=1):
+    print(f"{i}. {fruit}")
+```
+
+## `range()`
+
+`range(stop)`, `range(start, stop)`, และ `range(start, stop, step)` สร้างลำดับจำนวนเต็มโดยไม่สร้าง list ในหน่วยความจำ
+
+```python
+for i in range(5):         # 0, 1, 2, 3, 4
+    print(i)
+
+for i in range(2, 10, 2):  # 2, 4, 6, 8
+    print(i)
+```
+
+## ลูป `while`
+
+`while` ทำซ้ำตราบเท่าที่เงื่อนไขเป็น truthy
+
+```python
+count = 0
+while count < 3:
+    print(count)
+    count += 1
+```
+
+## `break`, `continue`, และ `else` บนลูป
+
+- `break` ออกจากลูปในสุดทันที
+- `continue` ข้ามส่วนที่เหลือของการวนซ้ำปัจจุบันและไปยังครั้งถัดไป
+- clause `else` บนลูปทำงาน **เฉพาะเมื่อลูปจบโดยไม่พบ `break`**
+
+```python
+for n in [1, 3, 5, 7]:
+    if n % 2 == 0:
+        print("found even")
+        break
+else:
+    print("no even number found")   # บรรทัดนี้ทำงาน
+```
+
+## Walrus Operator `:=`
+
+เปิดตัวใน Python 3.8, `:=` กำหนดค่าและประเมินเป็นค่านั้นในนิพจน์เดียว
+มีประโยชน์มากในเงื่อนไข `while` และ `if` เพื่อหลีกเลี่ยงการเขียนนิพจน์ซ้ำ
+
+```python
+data = [4, 7, 2, 9, 1]
+if (largest := max(data)) > 5:
+    print(f"Largest value {largest} exceeds 5")
+```
+
+## Demo ที่รันได้จริง
+
+export const controlFlowCode = `
+score = 85
+if score >= 90:
+    grade = "A"
+elif score >= 80:
+    grade = "B"
+elif score >= 70:
+    grade = "C"
+else:
+    grade = "F"
+print(f"Score {score} -> Grade {grade}")
+
+total = 0
+for i in range(1, 6):
+    total += i
+print(f"Sum 1..5 = {total}")
+
+numbers = [1, 3, 5, 7]
+for n in numbers:
+    if n % 2 == 0:
+        print(f"Found even: {n}")
+        break
+else:
+    print("No even numbers found")
+
+count = 0
+while True:
+    count += 1
+    if count % 2 == 0:
+        continue
+    if count > 7:
+        break
+    print(f"odd: {count}")
+
+data = [4, 7, 2, 9, 1]
+if (largest := max(data)) > 5:
+    print(f"Largest value {largest} exceeds 5")
+`.trim();
+
+<Playground client:visible code={controlFlowCode} />
+
+<Callout title="for...else ทำงานเมื่อไม่มี break">
+clause `else` บนลูป `for` หรือ `while` เป็นหนึ่งในฟีเจอร์ที่น่าประหลาดใจที่สุดของ Python
+มันไม่ได้หมายความว่า "ถ้าลูปวนศูนย์ครั้ง"
+มันหมายความว่า "ลูปจบปกติ — ไม่มี `break` ถูกเรียก"
+ใช้มันแทน flag variable: แทนที่ `found = False` แล้วตรวจหลังลูป
+ให้เขียน branch สำเร็จไว้ในลูปและ branch ล้มเหลวไว้ใน `else`
+</Callout>
+
+export const quizControlFlow = [
+  {
+    q: "clause `else` ของลูป `for` ทำงานเมื่อใด?",
+    options: [
+      "เมื่อ iterable ว่างเปล่า",
+      "เมื่อลูปจบโดยไม่พบ break",
+      "เสมอ หลัง body ของลูป",
+      "เมื่อ body ของลูป raise exception"
+    ],
+    answer: 1
+  },
+  {
+    q: "`range(2, 10, 3)` ให้ผลลัพธ์อะไร?",
+    options: [
+      "[2, 5, 8]",
+      "[2, 4, 6, 8, 10]",
+      "[2, 3, 4, 5, 6, 7, 8, 9]",
+      "[3, 6, 9]"
+    ],
+    answer: 0
+  },
+  {
+    q: "walrus operator `:=` ทำอะไร?",
+    options: [
+      "เปรียบเทียบสองค่าเพื่อความเท่าเทียม",
+      "กำหนดค่าและประเมินเป็นค่านั้นในนิพจน์เดียว",
+      "สร้างตัวแปรใหม่ใน scope อื่น",
+      "แปลงค่าเป็น boolean"
+    ],
+    answer: 1
+  },
+  {
+    q: "statement ใดจบการวนซ้ำปัจจุบันและไปยังครั้งถัดไปทันที?",
+    options: ["break", "return", "continue", "pass"],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="basics/control-flow" questions={quizControlFlow} />
+
+<ProgressTracker client:visible id="basics/control-flow" />

@@ -1,0 +1,143 @@
+---
+title: "Packaging & pyproject.toml"
+description: 'จัดโครงสร้าง Python package ประกาศ metadata ใน pyproject.toml, build ด้วย build และเผยแพร่ไปยัง PyPI ด้วย twine'
+sidebar:
+  order: 5
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+**Python package** คือไดเรกทอรีของโมดูลที่สามารถติดตั้ง กำหนดเวอร์ชัน และแชร์ได้ การทำ Packaging จะเปลี่ยนโค้ดในเครื่องของคุณให้เป็นสิ่งที่ทุกคนสามารถติดตั้งได้ด้วย `pip install mypackage` การเข้าใจ Packaging เป็นสิ่งจำเป็นทันทีที่โปรเจกต์ของคุณเติบโตเกินกว่าสคริปต์ไฟล์เดียว หรือเมื่อคุณต้องการแชร์งานกับเพื่อนร่วมทีมหรือสาธารณะ
+
+## โครงสร้าง Package
+
+การใช้ src-layout แบบเรียบร้อยจะแยกซอร์สโค้ดออกจากการทดสอบและ tooling ป้องกันการ import โค้ดที่ยังไม่ได้ติดตั้งโดยบังเอิญ
+
+```
+mypackage/
+├── src/
+│   └── mypackage/
+│       ├── __init__.py
+│       ├── core.py
+│       └── utils.py
+├── tests/
+│   ├── conftest.py
+│   └── test_core.py
+├── pyproject.toml
+└── README.md
+```
+
+## pyproject.toml
+
+`pyproject.toml` คือแหล่งข้อมูลหลักสำหรับ package ของคุณ ตาราง `[build-system]` ระบุ build backend และ `[project]` ประกาศ metadata ทั้งหมดที่ pip และ PyPI ต้องการ
+
+```toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mypackage"
+version = "0.1.0"
+description = "A short description of mypackage"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Your Name", email = "you@example.com" }
+]
+dependencies = [
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "mypy>=1.10",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourname/mypackage"
+```
+
+## ไฟล์ซอร์สโค้ด
+
+Public API จะถูก re-export จาก `__init__.py` เพื่อให้ import surface สะอาดเรียบร้อย
+
+```python
+# src/mypackage/__init__.py
+from mypackage.core import greet
+
+__all__ = ["greet"]
+```
+
+Business logic อยู่ในโมดูลเฉพาะ เช่น `core.py`
+
+```python
+# src/mypackage/core.py
+
+def greet(name: str) -> str:
+    """Return a greeting string."""
+    return f"Hello, {name}!"
+```
+
+## Editable install, การ Build และการเผยแพร่
+
+ในระหว่างการพัฒนา คุณต้องการให้การเปลี่ยนแปลงโค้ดมีผลทันทีโดยไม่ต้องติดตั้งใหม่ Flag `-e` ช่วยให้ทำแบบนั้นได้ เมื่อพร้อมแจกจ่าย `build` จะสร้าง artifact และ `twine` จะอัปโหลดขึ้น
+
+```bash
+# editable install — changes to src/ take effect immediately
+pip install -e ".[dev]"
+
+# build source distribution + wheel
+python -m build
+
+# publish to PyPI (requires a PyPI account + token)
+twine upload dist/*
+
+# for practice, use TestPyPI first:
+twine upload --repository testpypi dist/*
+```
+
+<Callout title="pyproject.toml คือมาตรฐานสมัยใหม่">
+    `setup.py` และ `setup.cfg` เป็น legacy แล้ว โปรเจกต์ Python สมัยใหม่ทั้งหมดประกาศ metadata ใน `pyproject.toml` ตาราง `[build-system]` บอก pip ว่าต้องใช้ backend อะไร (hatchling, setuptools, flit เป็นต้น) `pip install -e .` ติดตั้ง package ในโหมด editable ซึ่งเหมาะสำหรับการพัฒนา
+</Callout>
+
+export const quizPackaging = [
+    {
+        q: "ไฟล์ใดคือมาตรฐานสมัยใหม่สำหรับการประกาศ metadata ของ Python package?",
+        options: [
+            "setup.py",
+            "MANIFEST.in",
+            "pyproject.toml",
+            "requirements.txt",
+        ],
+        answer: 2,
+    },
+    {
+        q: "`pip install -e .` ทำอะไร?",
+        options: [
+            "ติดตั้ง package จาก PyPI",
+            "ติดตั้ง package ในโหมด editable เพื่อให้การเปลี่ยนแปลงซอร์สมีผลทันที",
+            "Build และเผยแพร่ package",
+            "ลบ package ออก",
+        ],
+        answer: 1,
+    },
+    {
+        q: "ใช้เครื่องมือใดในการอัปโหลด package ไปยัง PyPI?",
+        options: [
+            "build",
+            "pip",
+            "twine",
+            "setuptools",
+        ],
+        answer: 2,
+    },
+];
+
+<Quiz client:visible id="stdlib-testing-tooling/packaging" questions={quizPackaging} />
+
+<ProgressTracker client:visible id="stdlib-testing-tooling/packaging" />

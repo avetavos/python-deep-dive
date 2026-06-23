@@ -1,0 +1,150 @@
+---
+title: Dicts และ Sets
+description: 'dict ที่รักษาลำดับการแทรก, get/setdefault/items, dict comprehension และ set algebra ใน Python 3.11+'
+sidebar:
+  order: 3
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Dicts — การค้นหาด้วย key อย่างรวดเร็ว
+
+**dict** จับคู่ hashable key กับ value ใด ๆ
+ตั้งแต่ Python 3.7 ลำดับการแทรก key ได้รับการรับประกันและเก็บรักษาไว้
+
+```python
+scores = {'alice': 95, 'bob': 87}
+scores['carol'] = 92         # เพิ่ม key ใหม่
+print(scores['alice'])       # 95
+del scores['bob']            # ลบ key
+print(scores)                # {'alice': 95, 'carol': 92}
+```
+
+### การเข้าถึงที่ปลอดภัย: `get` และ `setdefault`
+
+การเข้าถึง key ที่ไม่มีด้วย `[]` จะเกิด `KeyError`
+ใช้ `.get()` สำหรับการอ่านที่ปลอดภัยพร้อม default ที่กำหนดได้ หรือ `.setdefault()` เพื่อแทรก default เมื่อ key ไม่มีอยู่
+
+```python
+scores = {'alice': 95, 'bob': 87}
+unknown = scores.get('dave', 0)      # คืน 0 — ไม่เกิด KeyError
+scores.setdefault('eve', 88)         # แทรก eve=88 เฉพาะเมื่อยังไม่มี
+print(scores)
+# {'alice': 95, 'bob': 87, 'eve': 88}
+```
+
+### การวนซ้ำด้วย `.items()`
+
+`.items()` ส่งคืน pair `(key, value)` ที่ unpack ได้โดยตรงใน `for` loop
+
+```python
+for name, score in scores.items():
+    print(f'{name}: {score}')
+```
+
+สามารถวนซ้ำด้วย `.keys()` (ค่าเริ่มต้น) หรือ `.values()` แยกกันได้เช่นกัน
+
+### Dict comprehensions
+
+เหมือน list comprehension แต่สร้าง dict ใหม่ในนิพจน์เดียว
+
+```python
+squared = {n: n**2 for n in range(1, 6)}
+# {1: 1, 2: 4, 3: 9, 4: 16, 5: 25}
+```
+
+## Sets — element ที่ไม่ซ้ำและ set algebra
+
+**set** คือ collection ที่ไม่มีลำดับของ hashable element ที่ไม่ซ้ำกัน
+ถูก optimize สำหรับการทดสอบสมาชิกภาพด้วย `in` (`O(1)` เฉลี่ย) และรองรับการดำเนินการ set ทางคณิตศาสตร์
+
+```python
+a = {1, 2, 3, 4}
+b = {3, 4, 5, 6}
+
+print(a | b)   # union:            {1, 2, 3, 4, 5, 6}
+print(a & b)   # intersection:     {3, 4}
+print(a - b)   # difference:       {1, 2}
+print(a ^ b)   # symmetric diff:   {1, 2, 5, 6}
+```
+
+ใช้ `frozenset` สำหรับ set ที่เปลี่ยนแปลงไม่ได้ (hashable ใช้เป็น dict key หรือ set element ได้)
+
+## ตัวอย่างรันได้
+
+export const dictsSetsCode = `
+# --- dict safe access ---
+scores = {'alice': 95, 'bob': 87}
+scores['carol'] = 92
+print('scores:', scores)
+
+unknown = scores.get('dave', 0)
+print('dave score:', unknown)
+
+scores.setdefault('eve', 88)
+print('after setdefault:', scores)
+
+for name, score in scores.items():
+    print(f'  {name}: {score}')
+
+# --- dict comprehension ---
+squared = {n: n**2 for n in range(1, 6)}
+print('squared:', squared)
+
+# --- set algebra ---
+a = {1, 2, 3, 4}
+b = {3, 4, 5, 6}
+print('union:', sorted(a | b))
+print('intersection:', sorted(a & b))
+print('difference:', sorted(a - b))
+print('symmetric diff:', sorted(a ^ b))
+`.trim();
+
+<Playground client:visible code={dictsSetsCode} />
+
+<Callout title="dict รักษาลำดับการแทรก (3.7+); set ไม่มีลำดับ">
+ตั้งแต่ Python 3.7 `dict` รับประกันว่า `list(d.keys())` คืน key ตามลำดับที่แทรกเข้ามาครั้งแรก
+Set ไม่มีการรับประกันลำดับ — ใช้ `sorted()` เพื่อสร้างลำดับที่ทำซ้ำได้จาก set
+โปรดทราบว่า `{}` ว่างเปล่าสร้าง **dict** ไม่ใช่ set
+เพื่อสร้าง set ว่างเปล่า ให้เขียน `set()`
+</Callout>
+
+export const quizDictsSets = [
+    {
+        q: "`scores.get('dave', 0)` คืนค่าอะไรเมื่อ 'dave' ไม่อยู่ใน dict?",
+        options: [
+            "เกิด KeyError",
+            "คืน None",
+            "คืน 0",
+            "คืน dict ว่างเปล่า"
+        ],
+        answer: 2
+    },
+    {
+        q: "`scores.setdefault('eve', 88)` ทำอะไรเมื่อ 'eve' มีอยู่ใน scores แล้ว?",
+        options: [
+            "เกิด KeyError",
+            "เขียนทับค่าเดิมด้วย 88",
+            "ไม่ทำอะไร — ค่าเดิมถูกเก็บไว้",
+            "ลบ key"
+        ],
+        answer: 2
+    },
+    {
+        q: "การดำเนินการ set ใดที่คืนค่า element ที่อยู่ใน ทั้งสอง set?",
+        options: ["a | b", "a & b", "a - b", "a ^ b"],
+        answer: 1
+    },
+    {
+        q: "จะสร้าง set ว่างเปล่าใน Python ได้อย่างไร?",
+        options: ["{}", "set()", "[]", "frozenset({})"],
+        answer: 1
+    }
+];
+
+<Quiz client:visible id="data-structures/dicts-sets" questions={quizDictsSets} />
+
+<ProgressTracker client:visible id="data-structures/dicts-sets" />

@@ -1,0 +1,155 @@
+---
+title: Comprehensions
+description: 'List, dict, and set comprehensions with conditions and nesting — idiomatic Python 3.11+.'
+sidebar:
+  order: 4
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## What is a comprehension?
+
+A **comprehension** is a concise, readable expression that builds a new collection by transforming or filtering an iterable.
+Python provides three forms: list, dict, and set comprehensions.
+
+## List comprehensions
+
+The general form is:
+
+```python
+[expression for item in iterable]
+[expression for item in iterable if condition]
+```
+
+```python
+squares = [x**2 for x in range(1, 8)]
+# [1, 4, 9, 16, 25, 36, 49]
+
+evens = [x for x in range(20) if x % 2 == 0]
+# [0, 2, 4, 6, 8, 10, 12, 14, 16, 18]
+```
+
+Both examples are equivalent to a `for` loop that appends to a list — but they are more compact and typically faster because the iteration happens in C rather than bytecode.
+
+## Nested comprehensions
+
+You can nest multiple `for` clauses to iterate over combinations.
+The clauses are read left to right — the leftmost `for` is the outer loop.
+
+```python
+pairs = [
+    (x, y)
+    for x in range(1, 4)
+    for y in range(1, 4)
+    if x != y
+]
+# [(1, 2), (1, 3), (2, 1), (2, 3), (3, 1), (3, 2)]
+```
+
+## Dict comprehensions
+
+Wrap the expression in `{}` and use `key: value` syntax.
+
+```python
+word_len = {word: len(word) for word in ['apple', 'banana', 'cherry']}
+# {'apple': 5, 'banana': 6, 'cherry': 6}
+```
+
+Dict comprehensions are a clean way to invert a mapping, filter entries, or transform values:
+
+```python
+prices = {'apple': 1.5, 'banana': 0.75, 'cherry': 3.0}
+expensive = {k: v for k, v in prices.items() if v >= 1.5}
+# {'apple': 1.5, 'cherry': 3.0}
+```
+
+## Set comprehensions
+
+Same syntax as list comprehensions but with `{}`.
+Duplicates are automatically discarded.
+
+```python
+unique_lens = {len(word) for word in ['apple', 'banana', 'cherry', 'date']}
+# {4, 5, 6}  (order not guaranteed)
+```
+
+## Full runnable demo
+
+export const comprehensionsCode = `
+# --- list comprehension ---
+squares = [x**2 for x in range(1, 8)]
+print('squares:', squares)
+
+evens = [x for x in range(20) if x % 2 == 0]
+print('evens:', evens)
+
+# --- nested comprehension ---
+pairs = [(x, y) for x in range(1, 4) for y in range(1, 4) if x != y]
+print('pairs:', pairs)
+
+# --- dict comprehension ---
+word_len = {word: len(word) for word in ['apple', 'banana', 'cherry']}
+print('word lengths:', word_len)
+
+# --- set comprehension ---
+unique_lens = {len(word) for word in ['apple', 'banana', 'cherry', 'date']}
+print('unique lengths:', sorted(unique_lens))
+`.trim();
+
+<Playground client:visible code={comprehensionsCode} />
+
+<Callout title="Comprehensions are idiomatic and fast — avoid side effects">
+Comprehensions communicate intent clearly: "build this collection by transforming that iterable."
+Do not use them when the primary purpose is a side effect (e.g., printing or writing to a file for each item) — a plain `for` loop is more honest in that case.
+Generator expressions `(x for x in ...)` use the same syntax but produce a lazy iterator instead of building a list in memory; prefer them when only iterating once over a large dataset.
+</Callout>
+
+export const quizComprehensions = [
+    {
+        q: "What does `[x**2 for x in range(4)]` produce?",
+        options: [
+            "[1, 4, 9, 16]",
+            "[0, 1, 4, 9]",
+            "[0, 1, 2, 3]",
+            "[1, 2, 3, 4]"
+        ],
+        answer: 1
+    },
+    {
+        q: "How do you add a filter to a list comprehension?",
+        options: [
+            "[x for x in items where x > 0]",
+            "[x if x > 0 for x in items]",
+            "[x for x in items if x > 0]",
+            "filter(lambda x: x > 0, items)"
+        ],
+        answer: 2
+    },
+    {
+        q: "Which comprehension type automatically removes duplicates?",
+        options: [
+            "List comprehension",
+            "Dict comprehension",
+            "Set comprehension",
+            "Generator expression"
+        ],
+        answer: 2
+    },
+    {
+        q: "In `[f(x, y) for x in A for y in B]`, which loop is the OUTER loop?",
+        options: [
+            "The loop over B",
+            "The loop over A",
+            "Both loops have equal priority",
+            "The one with more elements"
+        ],
+        answer: 1
+    }
+];
+
+<Quiz client:visible id="data-structures/comprehensions" questions={quizComprehensions} />
+
+<ProgressTracker client:visible id="data-structures/comprehensions" />

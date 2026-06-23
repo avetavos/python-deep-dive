@@ -1,0 +1,183 @@
+---
+title: Context Managers
+description: 'คำสั่ง with, __enter__ และ __exit__, และ contextlib.contextmanager — รับประกันการ cleanup ใน Python 3.11+'
+sidebar:
+  order: 4
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ปัญหาที่ context manager แก้ไข
+
+การดำเนินการหลายอย่างต้องมีขั้นตอน cleanup คู่กัน: เปิดไฟล์แล้วปิด, ล็อค resource แล้วปล่อย, เริ่ม timer แล้วหยุด
+ถ้าเกิด exception ระหว่างสองขั้นตอนนั้น cleanup จะไม่ทำงาน — นำไปสู่ resource leak
+
+คำสั่ง `with` แก้ปัญหานี้โดยรับประกันว่า cleanup จะทำงานไม่ว่าจะเกิดอะไรขึ้น
+
+```python
+with open("data.txt") as f:
+    content = f.read()
+# f ถูกปิดเสมอที่นี่ แม้ read() จะ raise
+```
+
+## วิธีที่ `with` ทำงาน: protocol
+
+Object ที่มี method `__enter__` และ `__exit__` คือ **context manager**
+
+```
+with expr as var:
+    body
+```
+
+เทียบเท่ากับ:
+
+```python
+cm = expr
+var = cm.__enter__()
+try:
+    body
+except:
+    if not cm.__exit__(*sys.exc_info()):
+        raise
+else:
+    cm.__exit__(None, None, None)
+```
+
+`__enter__` ตั้งค่า resource และคืนค่าที่ bind ให้ `var`
+`__exit__` ทำงานเสมอเมื่อออกจาก block ถ้าคืนค่า truthy จะ **suppress** exception ถ้าคืน `False` (หรือ `None`) exception จะ propagate ต่อ
+
+## เขียน context manager แบบ class
+
+```python
+class Timer:
+    def __enter__(self) -> "Timer":
+        print("Timer started")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        print("Timer stopped")
+        return False   # ไม่ suppress exceptions
+```
+
+อาร์กิวเมนต์สามตัวของ `__exit__` คือ exception type, value, และ traceback — ทั้งหมดเป็น `None` เมื่อไม่มี exception
+
+## `contextlib.contextmanager` — shortcut แบบ generator
+
+การเขียน class ครบรูปแบบเพียงเพื่อครอบ setup/teardown นั้นยาวเกินไป
+`contextlib.contextmanager` ให้ใช้ generator function แทน:
+
+```python
+import contextlib
+
+@contextlib.contextmanager
+def managed_resource(name: str):
+    print(f"Acquiring {name}")
+    try:
+        yield name          # ค่าที่ bind ให้ as-variable
+    finally:
+        print(f"Releasing {name}")
+```
+
+ทุกอย่างก่อน `yield` คือ logic ของ `__enter__` ทุกอย่างหลัง `yield` (ใน `finally`) คือ logic ของ `__exit__`
+`try/finally` ภายใน generator รับประกันว่า teardown ทำงานแม้จะเกิด exception ใน `with` block
+
+## ซ้อน context manager
+
+รวม context manager หลายตัวในบรรทัด `with` เดียวได้ — เรียงซ้อนจากซ้ายไปขวา:
+
+```python
+with open("in.txt") as src, open("out.txt", "w") as dst:
+    dst.write(src.read())
+```
+
+## Demo แบบ runnable เต็มรูปแบบ
+
+export const contextManagersCode = `
+import contextlib
+
+# --- class-based context manager ---
+class Timer:
+    def __enter__(self):
+        print("Timer started")
+        return self
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        print("Timer stopped")
+        return False
+
+print("=== class-based ===")
+with Timer():
+    print("  doing work...")
+
+# --- contextlib.contextmanager ---
+@contextlib.contextmanager
+def managed_resource(name: str):
+    print(f"Acquiring {name}")
+    try:
+        yield name
+    finally:
+        print(f"Releasing {name}")
+
+print("\\n=== contextmanager generator ===")
+with managed_resource("connection") as res:
+    print(f"  using {res}")
+
+# --- cleanup on error ---
+print("\\n=== cleanup runs even on error ===")
+try:
+    with managed_resource("db") as res:
+        print(f"  using {res}")
+        raise RuntimeError("something failed")
+except RuntimeError as e:
+    print(f"  caught: {e}")
+`.trim();
+
+<Playground client:visible code={contextManagersCode} />
+
+<Callout title="Context manager รับประกัน cleanup แม้จะเกิด error">
+Block `finally` ภายใน generator ของ `@contextlib.contextmanager` ทำงานเสมอ แม้ body ของ `with` จะ raise exception นี่คือวิธีมาตรฐานในการเขียนโค้ดที่รับประกัน cleanup ใน Python ใช้ `with` เสมอแทนการเรียก `close()`, `release()`, หรือ `stop()` ด้วยตนเอง — exception ที่ไม่ถูก handle เพียงอันเดียวก็ทำให้ข้ามการเรียกเหล่านั้นได้
+</Callout>
+
+export const quizContextManagers = [
+  {
+    q: "Object ต้อง implement method อะไรสองตัวเพื่อใช้เป็น context manager?",
+    options: [
+      "__open__ และ __close__",
+      "__enter__ และ __exit__",
+      "__start__ และ __stop__",
+      "__setup__ และ __teardown__"
+    ],
+    answer: 1
+  },
+  {
+    q: "ใน generator ของ `@contextlib.contextmanager` อะไรเป็นตัวแบ่งระหว่าง setup และ teardown?",
+    options: ["return", "yield", "raise StopIteration", "break"],
+    answer: 1
+  },
+  {
+    q: "Method `__exit__` ทำงานเมื่อใด?",
+    options: [
+      "เฉพาะเมื่อ with block ออกตามปกติ",
+      "เฉพาะเมื่อเกิด exception ใน with block",
+      "เสมอ — ไม่ว่า block จะออกตามปกติหรือมี exception",
+      "เฉพาะเมื่อ context manager ถูก garbage-collected"
+    ],
+    answer: 2
+  },
+  {
+    q: "เกิดอะไรขึ้นถ้า `__exit__` คืนค่า truthy เมื่อมี exception เกิดขึ้น?",
+    options: [
+      "Exception ถูก re-raise ทันที",
+      "Exception ถูก suppress และการทำงานดำเนินต่อหลัง with block",
+      "Exception ถูกแปลงเป็น warning",
+      "Python raise RuntimeError ตัวที่สอง"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="typing-errors/context-managers" questions={quizContextManagers} />
+
+<ProgressTracker client:visible id="typing-errors/context-managers" />

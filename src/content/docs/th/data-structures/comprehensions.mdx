@@ -1,0 +1,155 @@
+---
+title: Comprehensions
+description: 'List, dict และ set comprehension พร้อมเงื่อนไขและ nesting — Python 3.11+ แบบ idiomatic'
+sidebar:
+  order: 4
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Comprehension คืออะไร?
+
+**comprehension** คือนิพจน์ที่กระชับและอ่านง่าย ใช้สร้าง collection ใหม่โดยการแปลงหรือกรอง iterable
+Python มีสามรูปแบบ: list, dict และ set comprehension
+
+## List comprehensions
+
+รูปแบบทั่วไปคือ:
+
+```python
+[expression for item in iterable]
+[expression for item in iterable if condition]
+```
+
+```python
+squares = [x**2 for x in range(1, 8)]
+# [1, 4, 9, 16, 25, 36, 49]
+
+evens = [x for x in range(20) if x % 2 == 0]
+# [0, 2, 4, 6, 8, 10, 12, 14, 16, 18]
+```
+
+ทั้งสองตัวอย่างเทียบเท่ากับ `for` loop ที่ append ลง list แต่กระชับกว่าและมักเร็วกว่าเพราะการวนซ้ำเกิดใน C ไม่ใช่ bytecode
+
+## Nested comprehensions
+
+สามารถซ้อน `for` หลายตัวเพื่อวนซ้ำข้าม combination
+ประโยค `for` อ่านจากซ้ายไปขวา — `for` ซ้ายสุดเป็น outer loop
+
+```python
+pairs = [
+    (x, y)
+    for x in range(1, 4)
+    for y in range(1, 4)
+    if x != y
+]
+# [(1, 2), (1, 3), (2, 1), (2, 3), (3, 1), (3, 2)]
+```
+
+## Dict comprehensions
+
+ใช้ `{}` และ syntax `key: value`
+
+```python
+word_len = {word: len(word) for word in ['apple', 'banana', 'cherry']}
+# {'apple': 5, 'banana': 6, 'cherry': 6}
+```
+
+Dict comprehension เป็นวิธีที่สะอาดสำหรับการกลับ mapping, กรอง entry หรือแปลง value:
+
+```python
+prices = {'apple': 1.5, 'banana': 0.75, 'cherry': 3.0}
+expensive = {k: v for k, v in prices.items() if v >= 1.5}
+# {'apple': 1.5, 'cherry': 3.0}
+```
+
+## Set comprehensions
+
+Syntax เหมือน list comprehension แต่ใช้ `{}`
+ค่าซ้ำถูกลบออกอัตโนมัติ
+
+```python
+unique_lens = {len(word) for word in ['apple', 'banana', 'cherry', 'date']}
+# {4, 5, 6}  (ไม่รับประกันลำดับ)
+```
+
+## ตัวอย่างรันได้
+
+export const comprehensionsCode = `
+# --- list comprehension ---
+squares = [x**2 for x in range(1, 8)]
+print('squares:', squares)
+
+evens = [x for x in range(20) if x % 2 == 0]
+print('evens:', evens)
+
+# --- nested comprehension ---
+pairs = [(x, y) for x in range(1, 4) for y in range(1, 4) if x != y]
+print('pairs:', pairs)
+
+# --- dict comprehension ---
+word_len = {word: len(word) for word in ['apple', 'banana', 'cherry']}
+print('word lengths:', word_len)
+
+# --- set comprehension ---
+unique_lens = {len(word) for word in ['apple', 'banana', 'cherry', 'date']}
+print('unique lengths:', sorted(unique_lens))
+`.trim();
+
+<Playground client:visible code={comprehensionsCode} />
+
+<Callout title="Comprehension เป็น idiomatic และเร็ว — หลีกเลี่ยงการใช้เพื่อ side effect">
+Comprehension สื่อสาร intent ได้ชัดเจน: "สร้าง collection นี้โดยแปลง iterable นั้น"
+ไม่ควรใช้เมื่อวัตถุประสงค์หลักคือ side effect (เช่น การ print หรือเขียนไฟล์สำหรับแต่ละ item) — `for` loop ธรรมดาชัดเจนกว่าในกรณีนั้น
+Generator expression `(x for x in ...)` ใช้ syntax เดียวกันแต่สร้าง lazy iterator แทน เหมาะกว่าเมื่อวนซ้ำเพียงครั้งเดียวกับข้อมูลขนาดใหญ่
+</Callout>
+
+export const quizComprehensions = [
+    {
+        q: "`[x**2 for x in range(4)]` ได้ผลลัพธ์อะไร?",
+        options: [
+            "[1, 4, 9, 16]",
+            "[0, 1, 4, 9]",
+            "[0, 1, 2, 3]",
+            "[1, 2, 3, 4]"
+        ],
+        answer: 1
+    },
+    {
+        q: "จะเพิ่ม filter ใน list comprehension ได้อย่างไร?",
+        options: [
+            "[x for x in items where x > 0]",
+            "[x if x > 0 for x in items]",
+            "[x for x in items if x > 0]",
+            "filter(lambda x: x > 0, items)"
+        ],
+        answer: 2
+    },
+    {
+        q: "Comprehension ประเภทใดที่ลบค่าซ้ำออกอัตโนมัติ?",
+        options: [
+            "List comprehension",
+            "Dict comprehension",
+            "Set comprehension",
+            "Generator expression"
+        ],
+        answer: 2
+    },
+    {
+        q: "ใน `[f(x, y) for x in A for y in B]` loop ใดเป็น OUTER loop?",
+        options: [
+            "Loop ที่วนซ้ำ B",
+            "Loop ที่วนซ้ำ A",
+            "ทั้งสอง loop มีความสำคัญเท่ากัน",
+            "Loop ที่มี element มากกว่า"
+        ],
+        answer: 1
+    }
+];
+
+<Quiz client:visible id="data-structures/comprehensions" questions={quizComprehensions} />
+
+<ProgressTracker client:visible id="data-structures/comprehensions" />

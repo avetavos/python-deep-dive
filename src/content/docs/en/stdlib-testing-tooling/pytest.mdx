@@ -1,0 +1,160 @@
+---
+title: 'pytest — Modern Python Testing'
+description: 'Write test functions, use plain assert, fixtures, and parametrize with pytest.'
+sidebar:
+  order: 3
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+pytest is the de-facto standard for testing Python code. Unlike the built-in `unittest` module, pytest requires no class inheritance, no special assertion methods, and no boilerplate — you write plain functions and plain `assert` statements. pytest's test discovery, rich failure output, fixture system, and plugin ecosystem make it the first tool to reach for in any Python project.
+
+## Writing a test function
+
+pytest discovers test files whose names start with `test_` or end with `_test.py`, and within them, functions whose names start with `test_`. No class needed — a module-level function is enough.
+
+```python
+# math_utils.py
+def add(a: int, b: int) -> int:
+    return a + b
+
+def divide(a: float, b: float) -> float:
+    if b == 0:
+        raise ValueError("Cannot divide by zero")
+    return a / b
+```
+
+```python
+# test_math_utils.py
+from math_utils import add, divide
+import pytest
+
+def test_add_positive():
+    assert add(2, 3) == 5
+
+def test_add_negative():
+    assert add(-1, -2) == -3
+
+def test_divide_normal():
+    assert divide(10, 2) == 5.0
+
+def test_divide_by_zero():
+    with pytest.raises(ValueError, match="Cannot divide by zero"):
+        divide(1, 0)
+```
+
+## Running tests
+
+```bash
+# run all tests
+python -m pytest
+
+# verbose output
+python -m pytest -v
+
+# run only tests matching a keyword
+python -m pytest -k "divide"
+```
+
+## Fixtures
+
+Fixtures are reusable setup (and teardown) functions. pytest injects them into test functions by parameter name — no base class, no `setUp` method required. Use `yield` to separate setup from teardown.
+
+```python
+import pytest
+
+@pytest.fixture
+def sample_data():
+    """Provide a list of numbers for testing."""
+    return [1, 2, 3, 4, 5]
+
+def test_sum(sample_data):
+    assert sum(sample_data) == 15
+
+def test_length(sample_data):
+    assert len(sample_data) == 5
+
+@pytest.fixture
+def db_connection():
+    """Setup and teardown a fake DB connection."""
+    conn = {"connected": True}   # imagine a real DB here
+    yield conn
+    conn["connected"] = False    # teardown runs after test
+
+def test_db(db_connection):
+    assert db_connection["connected"] is True
+```
+
+## Parametrize
+
+`@pytest.mark.parametrize` runs the same test function with multiple sets of inputs, keeping your test suite DRY and making it easy to add edge cases.
+
+```python
+import pytest
+from math_utils import add
+
+@pytest.mark.parametrize("a, b, expected", [
+    (1, 2, 3),
+    (0, 0, 0),
+    (-1, 1, 0),
+    (100, -50, 50),
+])
+def test_add_parametrized(a, b, expected):
+    assert add(a, b) == expected
+```
+
+## conftest.py — shared fixtures
+
+Placing fixtures in a `conftest.py` file makes them available to all test files in the same directory and its subdirectories, without any import.
+
+```python
+# conftest.py  (place in project root or test dir)
+import pytest
+
+@pytest.fixture(scope="session")
+def app_config():
+    return {"debug": True, "db_url": "sqlite:///:memory:"}
+```
+
+<Callout title="pytest plain assert is smarter than it looks">
+pytest rewrites `assert` statements at collection time. When an assertion fails, pytest shows the actual vs expected values, diffs for collections, and the full expression — without you writing `assertEqual(a, b)`. This is the main reason to prefer pytest over `unittest`.
+</Callout>
+
+export const quizPytest = [
+    {
+        q: "What naming convention must test files and test functions follow for pytest to discover them?",
+        options: [
+            "Any name, pytest scans all .py files",
+            "Files must start with test_ or end with _test.py; functions must start with test_",
+            "Functions must be inside a class that inherits TestCase",
+            "Files must be named tests.py",
+        ],
+        answer: 1,
+    },
+    {
+        q: "What does `@pytest.fixture` do?",
+        options: [
+            "Marks a test as expected to fail",
+            "Defines a reusable setup function injected into tests by parameter name",
+            "Prevents a test from running in CI",
+            "Replaces assert with assertEqual",
+        ],
+        answer: 1,
+    },
+    {
+        q: "What does `@pytest.mark.parametrize` achieve?",
+        options: [
+            "Runs the test only once with default values",
+            "Runs the same test function multiple times with different input/expected pairs",
+            "Skips the test unless a flag is set",
+            "Marks the test as slow",
+        ],
+        answer: 1,
+    },
+];
+
+<Quiz client:visible id="stdlib-testing-tooling/pytest" questions={quizPytest} />
+
+<ProgressTracker client:visible id="stdlib-testing-tooling/pytest" />

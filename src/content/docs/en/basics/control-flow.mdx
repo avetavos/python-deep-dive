@@ -1,0 +1,196 @@
+---
+title: Control Flow
+description: 'if/elif/else, for loops over iterables, while, range, break/continue/else, and the walrus operator.'
+sidebar:
+  order: 3
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Conditionals: `if` / `elif` / `else`
+
+Python conditionals use indentation instead of braces.
+Any expression that evaluates to a truthy or falsy value can be used as the condition.
+
+```python
+score = 85
+
+if score >= 90:
+    grade = "A"
+elif score >= 80:
+    grade = "B"
+elif score >= 70:
+    grade = "C"
+else:
+    grade = "F"
+
+print(grade)   # B
+```
+
+There is no `switch` statement in Python — use `if`/`elif` chains or, since Python 3.10, structural pattern matching (`match`/`case`).
+
+## `for` loops over iterables
+
+Python's `for` loop iterates over any **iterable** — a list, string, range, file, dictionary, or custom object that implements `__iter__`.
+
+```python
+fruits = ["apple", "banana", "cherry"]
+for fruit in fruits:
+    print(fruit)
+
+# Iterate over characters in a string
+for ch in "hello":
+    print(ch)
+```
+
+Use `enumerate()` when you need both the index and the value:
+
+```python
+for i, fruit in enumerate(fruits, start=1):
+    print(f"{i}. {fruit}")
+```
+
+## `range()`
+
+`range(stop)`, `range(start, stop)`, and `range(start, stop, step)` generate integer sequences without building a list in memory.
+
+```python
+for i in range(5):        # 0, 1, 2, 3, 4
+    print(i)
+
+for i in range(2, 10, 2): # 2, 4, 6, 8
+    print(i)
+```
+
+## `while` loops
+
+`while` repeats as long as its condition is truthy.
+
+```python
+count = 0
+while count < 3:
+    print(count)
+    count += 1
+```
+
+## `break`, `continue`, and loop `else`
+
+- `break` exits the innermost loop immediately.
+- `continue` skips the rest of the current iteration and moves to the next.
+- The `else` clause on a loop runs **only if the loop completed without hitting a `break`**.
+
+```python
+for n in [1, 3, 5, 7]:
+    if n % 2 == 0:
+        print("found even")
+        break
+else:
+    print("no even number found")   # this runs
+```
+
+## The walrus operator `:=`
+
+Introduced in Python 3.8, `:=` assigns a value and evaluates to that value in the same expression.
+It is most useful in `while` and `if` conditions to avoid repeating an expression.
+
+```python
+data = [4, 7, 2, 9, 1]
+if (largest := max(data)) > 5:
+    print(f"Largest value {largest} exceeds 5")
+```
+
+## Full runnable demo
+
+export const controlFlowCode = `
+score = 85
+if score >= 90:
+    grade = "A"
+elif score >= 80:
+    grade = "B"
+elif score >= 70:
+    grade = "C"
+else:
+    grade = "F"
+print(f"Score {score} -> Grade {grade}")
+
+total = 0
+for i in range(1, 6):
+    total += i
+print(f"Sum 1..5 = {total}")
+
+numbers = [1, 3, 5, 7]
+for n in numbers:
+    if n % 2 == 0:
+        print(f"Found even: {n}")
+        break
+else:
+    print("No even numbers found")
+
+count = 0
+while True:
+    count += 1
+    if count % 2 == 0:
+        continue
+    if count > 7:
+        break
+    print(f"odd: {count}")
+
+data = [4, 7, 2, 9, 1]
+if (largest := max(data)) > 5:
+    print(f"Largest value {largest} exceeds 5")
+`.trim();
+
+<Playground client:visible code={controlFlowCode} />
+
+<Callout title="for...else runs when there is no break">
+The `else` clause on a `for` or `while` loop is one of Python's most surprising features.
+It does not mean "if the loop ran zero times."
+It means "the loop finished normally — no `break` was executed."
+Use it to replace a flag variable: instead of `found = False` + checking it after the loop,
+write the success branch inside the loop and the failure branch in `else`.
+</Callout>
+
+export const quizControlFlow = [
+  {
+    q: "When does the `else` clause of a `for` loop execute?",
+    options: [
+      "When the iterable is empty",
+      "When the loop completes without hitting a break",
+      "Always, after the loop body",
+      "When the loop body raises an exception"
+    ],
+    answer: 1
+  },
+  {
+    q: "What does `range(2, 10, 3)` produce?",
+    options: [
+      "[2, 5, 8]",
+      "[2, 4, 6, 8, 10]",
+      "[2, 3, 4, 5, 6, 7, 8, 9]",
+      "[3, 6, 9]"
+    ],
+    answer: 0
+  },
+  {
+    q: "What does the walrus operator `:=` do?",
+    options: [
+      "Compares two values for equality",
+      "Assigns a value and evaluates to that value in one expression",
+      "Creates a new variable in a different scope",
+      "Converts a value to a boolean"
+    ],
+    answer: 1
+  },
+  {
+    q: "Which statement immediately ends the current loop iteration and moves to the next one?",
+    options: ["break", "return", "continue", "pass"],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="basics/control-flow" questions={quizControlFlow} />
+
+<ProgressTracker client:visible id="basics/control-flow" />

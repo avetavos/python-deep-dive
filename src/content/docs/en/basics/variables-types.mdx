@@ -1,0 +1,158 @@
+---
+title: Variables & Types
+description: 'Dynamic typing, built-in scalar types, type(), conversions, and truthiness in Python.'
+sidebar:
+  order: 2
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Variables and dynamic typing
+
+In Python you assign a value to a name — no type declaration needed.
+The variable's type is determined by the object it currently references, not by a declaration.
+
+```python
+x = 10          # x references an int
+x = "hello"     # x now references a str — perfectly valid
+x = [1, 2, 3]   # x now references a list
+```
+
+This is called **dynamic typing**.
+The type travels with the object, not the variable name.
+
+## Built-in scalar types
+
+Python ships with four scalar types you will use in every program:
+
+| Type | Literal example | Notes |
+|---|---|---|
+| `int` | `42`, `-7`, `0` | Arbitrary precision — never overflows |
+| `float` | `3.14`, `-0.5` | IEEE 754 double precision |
+| `str` | `"hello"`, `'world'` | Immutable Unicode sequence |
+| `bool` | `True`, `False` | Subclass of `int`; `True == 1`, `False == 0` |
+
+There is also `None` — a singleton that represents the absence of a value.
+`None` has its own type, `NoneType`, and there is exactly one `None` object in the entire Python process.
+Always test for it with `is None`, never `== None`.
+
+## Checking types at runtime
+
+`type()` returns the exact type of an object.
+`isinstance()` tests whether an object is an instance of a type or any of its subclasses.
+
+```python
+age = 30
+print(type(age))           # <class 'int'>
+print(isinstance(age, int))  # True
+print(isinstance(True, int)) # True — bool is a subclass of int
+```
+
+## Type conversions
+
+Python does not silently coerce types.
+You convert explicitly using the type name as a function:
+
+```python
+n = int("42")        # str -> int
+f = float("3.14")    # str -> float
+s = str(100)         # int -> str
+b = bool(0)          # int -> bool  ->  False
+```
+
+If the conversion is impossible, Python raises a `ValueError`:
+
+```python
+int("hello")   # ValueError: invalid literal for int()
+```
+
+## Truthiness
+
+Every Python object has a boolean interpretation used in `if` and `while` conditions.
+The following values are **falsy** — everything else is truthy:
+
+- `False`, `None`
+- Zero: `0`, `0.0`, `0j`
+- Empty containers: `""`, `[]`, `{}`, `()`, `set()`
+
+```python
+name = ""
+if name:
+    print("has name")
+else:
+    print("name is empty")   # this branch runs
+```
+
+## Full runnable demo
+
+export const variablesTypesCode = `
+age: int = 30
+price: float = 9.99
+greeting: str = "Hello"
+active: bool = True
+nothing = None
+
+print(type(age))
+print(type(price))
+print(type(greeting))
+print(type(active))
+print(type(nothing))
+
+x = int("42")
+y = float("3.14")
+z = str(100)
+print(x, y, z)
+
+falsy_values = [0, "", None, False, [], 0.0]
+for v in falsy_values:
+    print(f"bool({v!r}) = {bool(v)}")
+`.trim();
+
+<Playground client:visible code={variablesTypesCode} />
+
+<Callout title="Everything is an object">
+In Python, `42` is not a primitive — it is an instance of the `int` class.
+That means it has methods: `(42).bit_length()` returns `6`.
+Even `True` and `False` are objects of type `bool`, which is a subclass of `int`.
+This is why `True + True` evaluates to `2`.
+</Callout>
+
+export const quizVariablesTypes = [
+  {
+    q: "What is dynamic typing in Python?",
+    options: [
+      "Variables must be declared with a type before use",
+      "The type is determined by the object a variable references, not by declaration",
+      "All variables are automatically converted to strings",
+      "Type checking happens at compile time"
+    ],
+    answer: 1
+  },
+  {
+    q: "Which of the following is falsy in Python?",
+    options: ["1", "\"0\"", "[]", "True"],
+    answer: 2
+  },
+  {
+    q: "How should you test whether a variable holds None?",
+    options: [
+      "if x == None:",
+      "if x is None:",
+      "if type(x) == NoneType:",
+      "if x.is_none():"
+    ],
+    answer: 1
+  },
+  {
+    q: "What does `bool` inherit from in Python?",
+    options: ["object", "int", "str", "type"],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="basics/variables-types" questions={quizVariablesTypes} />
+
+<ProgressTracker client:visible id="basics/variables-types" />

@@ -1,0 +1,172 @@
+---
+title: 'Args, Kwargs และ Parameter'
+description: 'positional args, keyword args, ค่า default, *args, **kwargs และ parameter แบบ keyword-only ใน Python'
+sidebar:
+  order: 2
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Parameter และ argument
+
+Python แยกความแตกต่างระหว่าง **parameter** (ชื่อที่อยู่ในนิยามของ function) กับ **argument** (ค่าที่ส่งเข้าไปตอนเรียกใช้)
+Python ให้เราควบคุมได้อย่างละเอียดว่าผู้เรียกจะส่งค่าเหล่านั้นเข้ามาได้อย่างไร
+
+## Positional และ keyword argument
+
+โดยปกติแล้ว ทุก parameter สามารถส่งค่าแบบ positional หรือแบบระบุชื่อ keyword ก็ได้
+
+```python
+def connect(host: str, port: int, timeout: int = 30) -> str:
+    return f"{host}:{port} (timeout={timeout}s)"
+
+# Positional
+connect("localhost", 5432)
+
+# Keyword — order does not matter
+connect(port=5432, host="localhost")
+
+# Mixed — positional first, then keyword
+connect("localhost", port=5432, timeout=60)
+```
+
+`timeout` มี **ค่า default** เป็น `30` ทำให้มันเป็นค่าที่ใส่หรือไม่ก็ได้
+positional argument จะต้องมาก่อน keyword argument เสมอ ณ จุดที่เรียกใช้
+
+## Variadic positional args: `*args`
+
+ใส่ `*` นำหน้า parameter เพื่อรวบ positional argument จำนวนเท่าใดก็ได้เข้ามาเป็น **tuple**
+
+```python
+def total(*amounts: float) -> float:
+    return sum(amounts)
+
+print(total(10.0, 20.5, 5.0))  # 35.5
+print(total())                  # 0.0
+```
+
+## Variadic keyword args: `**kwargs`
+
+ใส่ `**` นำหน้า parameter เพื่อรวบ keyword argument จำนวนเท่าใดก็ได้เข้ามาเป็น **dict**
+
+```python
+def log_event(event: str, **metadata) -> None:
+    parts = [f"event={event}"]
+    for key, value in metadata.items():
+        parts.append(f"{key}={value}")
+    print(", ".join(parts))
+
+log_event("login", user_id=42, ip="127.0.0.1")
+# event=login, user_id=42, ip=127.0.0.1
+```
+
+## Parameter แบบ keyword-only
+
+parameter ใด ๆ ที่อยู่ **หลัง `*` เปล่า ๆ** (หรือหลัง `*args`) จะส่งค่าได้ผ่าน keyword เท่านั้น ส่งแบบ positional ไม่ได้
+วิธีนี้ทำให้ API อธิบายตัวเองได้ในตัว และป้องกันความผิดพลาดเรื่องลำดับของ argument
+
+```python
+def send_email(to: str, subject: str, *, cc: str = "", bcc: str = "") -> None:
+    print(f"To: {to} | Subject: {subject} | CC: {cc} | BCC: {bcc}")
+
+send_email("alice@example.com", "Hello", cc="bob@example.com")
+# Calling send_email("a@b.com", "Hi", "c@d.com") would raise TypeError
+```
+
+## ลำดับ parameter ทั้งหมด
+
+ลำดับของชนิด parameter ในนิยามจะต้องเป็นแบบนี้เสมอ:
+
+1. Positional-or-keyword (`x`, `y`)
+2. `*args` (หรือ `*` เปล่า ๆ)
+3. Keyword-only (`key=value` หลัง `*`)
+4. `**kwargs`
+
+export const argsKwargsCode = `
+def describe(
+    name: str,
+    *adjectives: str,
+    separator: str = ", ",
+    **extras
+) -> str:
+    adj_str = separator.join(adjectives) if adjectives else "no adjectives"
+    extra_str = ", ".join(f"{k}={v}" for k, v in extras.items())
+    result = f"{name}: {adj_str}"
+    if extra_str:
+        result += f" ({extra_str})"
+    return result
+
+print(describe("Python"))
+print(describe("Python", "fast", "readable"))
+print(describe("Python", "fast", "readable", separator=" | "))
+print(describe("Python", "fast", separator=" + ", version="3.11", typed=True))
+`.trim();
+
+<Playground client:visible code={argsKwargsCode} />
+
+<Callout title="กับดักของ mutable default argument">
+อย่าใช้ mutable object (list, dict, set) เป็นค่า default argument เด็ดขาด
+ค่า default จะถูกประเมิน (evaluate) **เพียงครั้งเดียว** ตอนนิยาม function ไม่ใช่ทุกครั้งที่เรียก
+ผู้เรียกทุกคนจึงใช้ object ตัวเดียวกันร่วมกัน:
+
+```python
+# WRONG — all calls share the same list
+def add_item(item, container=[]):
+    container.append(item)
+    return container
+
+# RIGHT — use None and create inside
+def add_item(item, container=None):
+    if container is None:
+        container = []
+    container.append(item)
+    return container
+```
+
+pattern การใช้ `None` เป็นค่า sentinel คือสำนวนมาตรฐานของ Python สำหรับจัดการ mutable default
+</Callout>
+
+export const quizArgsKwargs = [
+  {
+    q: "*args รวบ argument เข้ามาเป็น type อะไร?",
+    options: ["list", "tuple", "dict", "set"],
+    answer: 1
+  },
+  {
+    q: "parameter ที่นิยามไว้หลัง `*` เปล่า ๆ ใน signature ของ function คือ:",
+    options: [
+      "variadic positional parameter",
+      "keyword-only parameter",
+      "positional-only parameter",
+      "parameter ที่จำเป็นต้องใส่ (required)"
+    ],
+    answer: 1
+  },
+  {
+    q: "ทำไม `def f(items=[])` ถึงอันตราย?",
+    options: [
+      "list ไม่ใช่ค่า default ที่ใช้ได้ใน Python",
+      "list ที่เป็น default ถูกใช้ร่วมกันในทุกการเรียก เพราะมันถูกสร้างเพียงครั้งเดียว",
+      "function จะไม่สามารถรับ argument อื่นได้เลย",
+      "Python จะ copy list ใหม่ทุกครั้งที่เรียก ทำให้เปลือง memory"
+    ],
+    answer: 1
+  },
+  {
+    q: "ลำดับของชนิด parameter ที่ถูกต้องใน signature ของ function ใน Python คืออะไร?",
+    options: [
+      "**kwargs, *args, keyword-only, positional",
+      "positional, keyword-only, *args, **kwargs",
+      "positional, *args, keyword-only, **kwargs",
+      "*args, positional, **kwargs, keyword-only"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="functions-deep/args-kwargs" questions={quizArgsKwargs} />
+
+<ProgressTracker client:visible id="functions-deep/args-kwargs" />

@@ -1,0 +1,193 @@
+---
+title: Custom Errors
+description: 'Defining application exception classes by subclassing Exception, adding custom attributes, and building exception hierarchies in Python 3.11+.'
+sidebar:
+  order: 5
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Why custom exceptions matter
+
+Python's built-in exceptions (`ValueError`, `TypeError`, `RuntimeError`, …) are generic.
+When your code raises a `ValueError`, callers cannot tell whether it came from their input, a broken config file, or a network response.
+
+Custom exception classes give your errors a distinct type that callers can catch selectively, add structured attributes (like HTTP status codes or field names), and document what can go wrong in each part of your application.
+
+## Subclassing `Exception`
+
+The minimal custom exception is just a class that inherits from `Exception`:
+
+```python
+class AppError(Exception):
+    """Base class for all application errors."""
+```
+
+That is enough to raise and catch it by name:
+
+```python
+raise AppError("something went wrong")
+```
+
+## Adding custom attributes
+
+Override `__init__` to attach extra context to the exception:
+
+```python
+class AppError(Exception):
+    def __init__(self, message: str, code: int = 0) -> None:
+        super().__init__(message)   # pass message to Exception
+        self.code = code
+```
+
+Callers can then read `err.code` to get structured information without parsing the message string.
+
+## Building a hierarchy
+
+Create subclasses for each distinct failure category. Every `NotFoundError` is also an `AppError`, so callers can catch at whichever level of specificity they need.
+
+```python
+class ValidationError(AppError):
+    def __init__(self, field: str, message: str) -> None:
+        super().__init__(f'Validation failed on "{field}": {message}', code=400)
+        self.field = field
+
+class NotFoundError(AppError):
+    def __init__(self, resource: str, resource_id: int) -> None:
+        super().__init__(f"{resource} id={resource_id} not found", code=404)
+        self.resource = resource
+        self.resource_id = resource_id
+```
+
+Catching at different levels:
+
+```python
+try:
+    raise ValidationError("email", "must contain @")
+except ValidationError as e:
+    print(f"Field {e.field!r} invalid: {e}")   # specific
+except AppError as e:
+    print(f"App error [{e.code}]: {e}")          # broad
+```
+
+## `str(exception)` and `repr(exception)`
+
+`str(e)` returns the message you passed to `super().__init__()`. This is what gets printed when you `print(e)` or include the exception in an f-string.
+
+`repr(e)` returns `ExceptionClass(message)` — useful for logging.
+
+## Full runnable demo
+
+export const customErrorsCode = `
+# --- base application error ---
+class AppError(Exception):
+    """Base class for all application errors."""
+    def __init__(self, message: str, code: int = 0) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+# --- specific subclasses ---
+class ValidationError(AppError):
+    """Raised when input validation fails."""
+    def __init__(self, field: str, message: str) -> None:
+        super().__init__(
+            f'Validation failed on field "{field}": {message}',
+            code=400,
+        )
+        self.field = field
+
+
+class NotFoundError(AppError):
+    """Raised when a requested resource does not exist."""
+    def __init__(self, resource: str, resource_id: int) -> None:
+        super().__init__(
+            f"{resource} with id={resource_id} not found",
+            code=404,
+        )
+        self.resource = resource
+        self.resource_id = resource_id
+
+
+# --- catching at different levels ---
+errors = [
+    ValidationError("email", "must contain @"),
+    NotFoundError("User", 42),
+    AppError("generic app failure", code=500),
+]
+
+for err in errors:
+    try:
+        raise err
+    except ValidationError as e:
+        print(f"[{e.code}] Validation on {e.field!r}: {e}")
+    except NotFoundError as e:
+        print(f"[{e.code}] {e.resource} not found (id={e.resource_id})")
+    except AppError as e:
+        print(f"[{e.code}] AppError: {e}")
+
+# --- isinstance hierarchy ---
+print()
+e = ValidationError("name", "too short")
+print(f"ValidationError? {isinstance(e, ValidationError)}")
+print(f"AppError?        {isinstance(e, AppError)}")
+print(f"Exception?       {isinstance(e, Exception)}")
+print(f"BaseException?   {isinstance(e, BaseException)}")
+`.trim();
+
+<Playground client:visible code={customErrorsCode} />
+
+<Callout title="Subclass Exception, not BaseException, for application errors">
+`BaseException` is the root of the entire hierarchy and includes `KeyboardInterrupt`, `SystemExit`, and `GeneratorExit` — signals that should terminate the process. Catching `BaseException` accidentally swallows those.
+Subclass `Exception` for every application-level error. Only subclass `BaseException` directly if you are writing framework-level code that genuinely needs to intercept process-exit signals.
+</Callout>
+
+export const quizCustomErrors = [
+  {
+    q: "Why should custom application exceptions subclass `Exception` instead of `BaseException`?",
+    options: [
+      "Exception is faster to instantiate than BaseException",
+      "BaseException includes KeyboardInterrupt and SystemExit — subclassing it lets you accidentally catch process-exit signals",
+      "Exception supports custom attributes; BaseException does not",
+      "BaseException cannot be raised with a message string"
+    ],
+    answer: 1
+  },
+  {
+    q: "Given a hierarchy `NotFoundError -> AppError -> Exception`, which `except` clause would catch a `NotFoundError`?",
+    options: [
+      "Only `except NotFoundError`",
+      "`except NotFoundError`, `except AppError`, and `except Exception` all match",
+      "Only the most specific clause (`except NotFoundError`) matches",
+      "None — custom exceptions must be caught with `except Exception`"
+    ],
+    answer: 1
+  },
+  {
+    q: "What does calling `super().__init__(message)` inside a custom exception's `__init__` do?",
+    options: [
+      "Nothing — it is optional and has no effect",
+      "Passes the message to Exception so that str(err) returns the message",
+      "Registers the exception in the traceback",
+      "Converts the message to a bytes object"
+    ],
+    answer: 1
+  },
+  {
+    q: "You have `except ValidationError` before `except AppError` in a try block. A ValidationError is raised. Which clause runs?",
+    options: [
+      "Both clauses run in sequence",
+      "except AppError runs because it is broader",
+      "except ValidationError runs — Python uses the first matching clause",
+      "A TypeError is raised because two clauses match"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="typing-errors/custom-errors" questions={quizCustomErrors} />
+
+<ProgressTracker client:visible id="typing-errors/custom-errors" />

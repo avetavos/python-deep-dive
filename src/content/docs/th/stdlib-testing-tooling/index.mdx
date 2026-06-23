@@ -1,0 +1,114 @@
+---
+title: 'Stdlib, Testing และ Tooling'
+description: 'ภาพรวม "batteries included" ของ standard library Python และแนวทาง tooling สมัยใหม่'
+sidebar:
+  order: 1
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Batteries included
+
+Python มาพร้อมกับปรัชญาที่เรียกว่า **"batteries included"**: standard library มีการ implement พร้อมใช้สำหรับงานที่โปรแกรมส่วนใหญ่ต้องการ — โดยไม่ต้องพึ่ง third-party package
+เมื่อติดตั้ง Python คุณจะได้รับ module สำหรับ collections, การจัดการข้อมูล, networking, file I/O, testing, serialisation, concurrency และอีกมากมายโดยอัตโนมัติ
+
+Standard library ครอบคลุมมากกว่า 200 module
+ก่อนที่จะใช้ `pip` ให้ตรวจสอบก่อนว่า stdlib module แก้ปัญหาของคุณได้หรือไม่ — จะ import ได้เร็วกว่า, เข้ากันได้กับ Python version ของคุณเสมอ และได้รับความเชื่อถือจากผู้ใช้นับล้าน
+
+## แนวทาง Python tooling สมัยใหม่
+
+โปรเจกต์ Python สำหรับ production มักพึ่งพา tool ชุดเล็กๆ:
+
+- **`venv`** — สร้าง virtual environment แบบ isolated เพื่อไม่ให้ dependency ของโปรเจกต์หนึ่งปนกับอีกโปรเจกต์
+- **`pip`** — ติดตั้ง third-party package จาก PyPI ควรใช้หลังจากยืนยันแล้วว่า stdlib ช่วยไม่ได้
+- **`pyproject.toml`** — ไฟล์มาตรฐาน PEP-517 สมัยใหม่สำหรับประกาศ package metadata, build backend และการตั้งค่า tool (แทนที่ `setup.py` + `setup.cfg` แบบเก่า)
+- **`pytest`** — test runner มาตรฐานโดยพฤตินัยสำหรับโปรเจกต์ Python ซึ่งสร้างบน `unittest` ของ stdlib ด้วย API ที่เป็นมิตรกว่า
+
+คุณจะได้ศึกษา `unittest` และ `pytest` ในบทเรียนถัดไปของ chapter นี้
+ตอนนี้ นิสัยสำคัญคือ: **ใช้ stdlib ก่อนเสมอ**
+
+## ลิ้มลองสั้นๆ: stdlib สามโมดูลในการใช้งานจริง
+
+Demo ด้านล่างใช้สามโมดูลที่คุณจะพบบ่อยมาก:
+
+- **`collections.Counter`** — นับ hashable object ในรอบเดียว
+- **`itertools.islice`** — ตัด iterator ใดก็ได้อย่าง lazy โดยไม่ต้อง materialize ก่อน
+- **`json`** — แปลง Python object เป็น JSON string และแปลงกลับ
+
+export const stdlibIntroCode = `
+import collections
+import itertools
+import json
+
+# Count word frequencies
+words = "the quick brown fox jumps over the lazy dog the fox".split()
+counter = collections.Counter(words)
+print("Top 3 words:", counter.most_common(3))
+
+# First 5 squares using itertools
+squares = list(itertools.islice((x*x for x in range(1, 100)), 5))
+print("First 5 squares:", squares)
+
+# JSON round-trip
+payload = json.dumps({"lang": "Python", "batteries": True})
+data = json.loads(payload)
+print("Parsed:", data["lang"], "batteries:", data["batteries"])
+`.trim();
+
+<Playground client:visible code={stdlibIntroCode} />
+
+<Callout title="The stdlib is vast — learn it before adding dependencies">
+Python มาพร้อมกับมากกว่า 200 module ที่ครอบคลุมงานโปรแกรมประจำวันส่วนใหญ่
+การใช้ `pip` ก่อนเป็นความผิดพลาด — มันเพิ่มปัญหาด้านการติดตั้ง, versioning และความปลอดภัยที่หลีกเลี่ยงได้ทั้งหมดเมื่อ stdlib เพียงพอ
+
+Module สำคัญที่ควรรู้จักดี:
+
+- **`collections`** — `Counter`, `defaultdict`, `deque`, `namedtuple`, `OrderedDict`
+- **`itertools`** — lazy combinator: `chain`, `islice`, `groupby`, `product`, `combinations`
+- **`functools`** — `lru_cache`, `partial`, `reduce`, `wraps`
+- **`pathlib`** — การจัดการ path ระบบไฟล์แบบ object-oriented
+- **`json`** — JSON serialisation/deserialisation ที่รวดเร็ว
+- **`datetime`** — date, time, timedelta และรองรับ timezone
+- **`re`** — regular-expression engine ครบรูปแบบ
+- **`unittest`** — framework การทดสอบ built-in (และเป็นพื้นฐานที่ pytest สร้างต่อยอด)
+</Callout>
+
+export const quizStdlibIntro = [
+    {
+        q: "'batteries included' หมายความว่าอะไรสำหรับ Python?",
+        options: [
+            "Python มาพร้อมกับเครื่องชาร์จแบตเตอรี่ built-in",
+            "Python มาพร้อมกับ standard library ขนาดใหญ่ที่ครอบคลุมงานทั่วไป",
+            "คุณต้องติดตั้ง library ทั้งหมดผ่าน pip",
+            "stdlib ต้องติดตั้งแยกต่างหาก"
+        ],
+        answer: 1
+    },
+    {
+        q: "module ใดที่มี Counter และ defaultdict?",
+        options: [
+            "itertools",
+            "functools",
+            "collections",
+            "builtins"
+        ],
+        answer: 2
+    },
+    {
+        q: "tool สมัยใหม่สำหรับประกาศ package metadata และการตั้งค่า build คืออะไร?",
+        options: [
+            "setup.py",
+            "requirements.txt",
+            "pyproject.toml",
+            "Makefile"
+        ],
+        answer: 2
+    }
+];
+
+<Quiz client:visible id="stdlib-testing-tooling/index" questions={quizStdlibIntro} />
+
+<ProgressTracker client:visible id="stdlib-testing-tooling/index" />

@@ -1,0 +1,193 @@
+---
+title: Dataclasses
+description: '@dataclass generates __init__, __repr__, and __eq__ automatically — plus defaults, field(), and frozen=True.'
+sidebar:
+  order: 5
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The boilerplate problem
+
+A class that holds data typically needs `__init__`, `__repr__`, and `__eq__` — all written by hand with identical logic: copy constructor arguments into `self.attr`, format attributes into a string, compare attribute by attribute.
+`@dataclass` generates all of this from the class-level type annotations.
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Point:
+    x: float
+    y: float
+```
+
+Python generates:
+
+- `__init__(self, x: float, y: float)` that sets `self.x` and `self.y`
+- `__repr__` that returns `"Point(x=1.0, y=2.0)"`
+- `__eq__` that compares all fields
+
+## Default values
+
+Scalar defaults work like keyword arguments:
+
+```python
+@dataclass
+class Config:
+    host: str = "localhost"
+    port: int = 8080
+    debug: bool = False
+```
+
+## `field()` for mutable defaults
+
+You cannot use a mutable object (list, dict) directly as a default — Python would share one instance across all objects.
+Use `field(default_factory=...)` instead:
+
+```python
+from dataclasses import dataclass, field
+
+@dataclass
+class Inventory:
+    name: str
+    tags: list = field(default_factory=list)
+    quantity: int = 0
+```
+
+`field` also accepts:
+
+| Parameter | Effect |
+|---|---|
+| `default_factory` | Called with no arguments to produce each instance's default |
+| `repr=False` | Exclude the field from `__repr__` |
+| `compare=False` | Exclude the field from `__eq__` and `__lt__` |
+| `init=False` | Exclude from `__init__`; set manually in `__post_init__` |
+
+## `frozen=True` — immutable records
+
+`frozen=True` makes the dataclass immutable: it generates `__setattr__` and `__delattr__` that raise `FrozenInstanceError`, and it also generates `__hash__` so frozen instances can be used as dict keys or in sets.
+
+```python
+@dataclass(frozen=True)
+class Color:
+    red: int
+    green: int
+    blue: int
+```
+
+## Adding custom methods
+
+A dataclass is still a normal class — add any methods you need:
+
+```python
+@dataclass
+class Point:
+    x: float
+    y: float
+
+    def distance_from_origin(self) -> float:
+        return (self.x ** 2 + self.y ** 2) ** 0.5
+```
+
+## Full runnable demo
+
+export const dataclassesCode = `
+from dataclasses import dataclass, field
+
+@dataclass
+class Point:
+    x: float
+    y: float
+
+    def distance_from_origin(self) -> float:
+        return (self.x ** 2 + self.y ** 2) ** 0.5
+
+
+@dataclass
+class Inventory:
+    name: str
+    tags: list = field(default_factory=list)
+    quantity: int = 0
+
+    def add_tag(self, tag: str) -> None:
+        self.tags.append(tag)
+
+
+@dataclass(frozen=True)
+class Color:
+    red: int
+    green: int
+    blue: int
+
+
+p = Point(3.0, 4.0)
+print(p)
+print(p.distance_from_origin())
+
+item = Inventory("Widget")
+item.add_tag("sale")
+item.add_tag("clearance")
+print(item)
+
+red = Color(255, 0, 0)
+print(red)
+print(red == Color(255, 0, 0))
+`.trim();
+
+<Playground client:visible code={dataclassesCode} />
+
+<Callout title="Dataclasses remove boilerplate for record-like classes">
+Use `@dataclass` whenever your class is primarily a container for data fields — configuration objects, DTOs, value objects, named tuples with methods.
+For fully immutable value types, add `frozen=True`; for flexible defaults on mutable lists or dicts, always use `field(default_factory=...)`.
+If you need runtime validation on field values, consider Pydantic's `BaseModel` — it builds on the same idea but adds type coercion and validators.
+</Callout>
+
+export const quizDataclasses = [
+  {
+    q: "Which dunder methods does `@dataclass` generate automatically?",
+    options: [
+      "__new__ and __del__",
+      "__init__, __repr__, and __eq__",
+      "__str__ and __hash__",
+      "__iter__ and __next__"
+    ],
+    answer: 1
+  },
+  {
+    q: "Why can't you write `tags: list = []` as a dataclass field default?",
+    options: [
+      "Lists are not allowed as field types",
+      "The same list object would be shared by all instances",
+      "You must use a tuple instead",
+      "Dataclasses do not support mutable fields"
+    ],
+    answer: 1
+  },
+  {
+    q: "What does `frozen=True` add to a dataclass?",
+    options: [
+      "Makes all fields optional",
+      "Prevents modification of fields and generates __hash__",
+      "Automatically sorts the fields alphabetically",
+      "Enables pickling"
+    ],
+    answer: 1
+  },
+  {
+    q: "What is `field(repr=False)` used for?",
+    options: [
+      "Excluding the field from __init__",
+      "Excluding the field from __repr__ output",
+      "Making the field read-only",
+      "Setting a factory default"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="oop-data-model/dataclasses" questions={quizDataclasses} />
+
+<ProgressTracker client:visible id="oop-data-model/dataclasses" />

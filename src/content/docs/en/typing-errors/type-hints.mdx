@@ -1,0 +1,196 @@
+---
+title: Type Hints
+description: 'Annotating variables, parameters, and return values in Python 3.11+ — Optional, Union, type aliases, and the |  syntax.'
+sidebar:
+  order: 2
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## What type hints are
+
+A **type hint** is an annotation attached to a variable, function parameter, or return value that declares the expected type.
+Python stores these annotations in `__annotations__` but never acts on them at runtime — they are metadata for static analysis tools and human readers.
+
+```python
+x: int = 10
+name: str = "Alice"
+```
+
+The `: int` and `: str` have zero effect on execution. They exist solely to communicate intent.
+
+## Annotating function signatures
+
+The most valuable place for type hints is function signatures — they document the contract of every callable.
+
+```python
+def add(a: int, b: int) -> int:
+    return a + b
+
+def repeat(text: str, times: int = 1) -> str:
+    return text * times
+```
+
+`-> int` annotates the return type. Default values come after the type annotation: `times: int = 1`.
+
+## Built-in generic types
+
+Python 3.9+ lets you use the built-in collection types directly as generics — no import needed.
+
+```python
+scores: list[int] = [95, 87, 92]
+mapping: dict[str, int] = {"a": 1, "b": 2}
+pair: tuple[str, int] = ("Alice", 30)
+unique: set[str] = {"red", "green", "blue"}
+```
+
+Before Python 3.9 you had to write `List[int]`, `Dict[str, int]` from `typing`. Prefer the lowercase built-in forms in Python 3.9+.
+
+## Optional — values that can be None
+
+`Optional[T]` means the value is either `T` or `None`. It is shorthand for `Union[T, None]`.
+
+```python
+from typing import Optional
+
+def find_user(user_id: int) -> Optional[str]:
+    users = {1: "Alice", 2: "Bob"}
+    return users.get(user_id)   # returns str or None
+```
+
+In Python 3.10+ you can write `str | None` instead:
+
+```python
+def find_user(user_id: int) -> str | None:
+    users = {1: "Alice", 2: "Bob"}
+    return users.get(user_id)
+```
+
+Both forms are equivalent. The `X | None` syntax is preferred in modern Python.
+
+## Union — one of several types
+
+`Union[X, Y]` means the value can be either `X` or `Y`. In Python 3.10+ use the `|` operator directly.
+
+```python
+from typing import Union
+
+def process(value: Union[int, str]) -> str:
+    return str(value)
+
+# Python 3.10+ shorthand:
+def process_modern(value: int | str) -> str:
+    return str(value)
+```
+
+## Type aliases
+
+A type alias gives a meaningful name to a complex annotation, making signatures easier to read.
+
+```python
+Vector = list[float]
+UserId = int
+UserMap = dict[UserId, str]
+
+def scale(v: Vector, factor: float) -> Vector:
+    return [x * factor for x in v]
+```
+
+For Python 3.12+ use `type` statements:
+
+```python
+type Vector = list[float]   # Python 3.12+
+```
+
+## Full runnable demo
+
+export const typeHintsCode = `
+from typing import Optional, Union
+
+# --- variable annotations ---
+x: int = 10
+name: str = "Alice"
+scores: list[int] = [95, 87, 92]
+mapping: dict[str, int] = {"a": 1, "b": 2}
+
+# --- function signatures ---
+def add(a: int, b: int) -> int:
+    return a + b
+
+def repeat(text: str, times: int = 1) -> str:
+    return text * times
+
+# --- Optional / X | None ---
+def find_user(user_id: int) -> Optional[str]:
+    users = {1: "Alice", 2: "Bob"}
+    return users.get(user_id)
+
+# --- Union / | ---
+def process(value: Union[int, str]) -> str:
+    return str(value)
+
+# --- type alias ---
+Vector = list[float]
+
+def scale(v: Vector, factor: float) -> Vector:
+    return [x * factor for x in v]
+
+# --- run it ---
+print(add(3, 4))
+print(repeat("Hi", 3))
+print(find_user(1))
+print(find_user(99))
+print(process(42))
+print(process("hello"))
+print(scale([1.0, 2.0, 3.0], 2.5))
+
+# hints do NOT restrict runtime behaviour
+print(add("oops", " still works"))  # Python does not enforce at runtime
+`.trim();
+
+<Playground client:visible code={typeHintsCode} />
+
+<Callout title="Type hints are not enforced at runtime — use mypy">
+The last line in the demo passes strings to `add`, which expects `int`. Python runs it without error.
+Type hints are only enforced by static checkers like **mypy** or **pyright**. Run `mypy yourfile.py` to catch type violations before they become bugs in production.
+</Callout>
+
+export const quizTypeHints = [
+  {
+    q: "What is the modern Python 3.10+ syntax for 'str or None'?",
+    options: ["Optional[str]", "str | None", "Union[str, None]", "Nullable[str]"],
+    answer: 1
+  },
+  {
+    q: "What does Python do if you pass a string to a parameter annotated as `int`?",
+    options: [
+      "Raises a TypeError immediately",
+      "Converts the string to int automatically",
+      "Runs the code as normal — type hints are not enforced at runtime",
+      "Logs a DeprecationWarning"
+    ],
+    answer: 2
+  },
+  {
+    q: "Which of the following is the correct Python 3.9+ annotation for a list of integers?",
+    options: ["List[int]", "list[int]", "Array[int]", "int[]"],
+    answer: 1
+  },
+  {
+    q: "What is a type alias?",
+    options: [
+      "A runtime cast that converts values",
+      "A name given to a complex type annotation to improve readability",
+      "A decorator that enforces types at runtime",
+      "A special class provided by the `typing` module"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="typing-errors/type-hints" questions={quizTypeHints} />
+
+<ProgressTracker client:visible id="typing-errors/type-hints" />

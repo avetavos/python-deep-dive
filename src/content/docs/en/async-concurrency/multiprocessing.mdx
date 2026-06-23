@@ -1,0 +1,235 @@
+---
+title: Multiprocessing
+description: 'multiprocessing and ProcessPoolExecutor for CPU-bound parallelism — separate processes bypass the GIL and use all available cores.'
+sidebar:
+  order: 5
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Why processes, not threads?
+
+As covered in the GIL lesson, CPython's Global Interpreter Lock prevents multiple threads from
+executing Python bytecode in parallel. For CPU-bound work — numerical computation, image processing,
+data parsing — threads provide no speedup.
+
+`multiprocessing` solves this by spawning **separate OS processes**. Each process has its own
+Python interpreter, its own GIL, and its own memory space. True parallelism becomes possible:
+a machine with 8 cores can run 8 Python processes simultaneously.
+
+## The `if __name__ == "__main__"` guard
+
+On macOS and Windows, the default process start method is **spawn** — the child process imports
+the parent's module from scratch. Without the guard, the module-level code (including the
+`Pool(...)` call) re-executes in every child, causing an infinite process-spawning loop.
+
+```python
+from multiprocessing import Pool
+
+def square(x: int) -> int:
+    return x * x
+
+if __name__ == "__main__":        # REQUIRED on macOS/Windows
+    with Pool(processes=4) as pool:
+        results = pool.map(square, range(10))
+    print(results)
+    # [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
+```
+
+On Linux the default start method is **fork** (the child copies the parent's memory), so the guard
+is technically optional — but always include it for portability.
+
+## `Pool.map` — parallel map over an iterable
+
+`Pool.map(fn, iterable)` distributes the items across workers and returns results in input order.
+It blocks until all items are processed.
+
+```python
+from multiprocessing import Pool
+import math
+
+def is_prime(n: int) -> bool:
+    if n < 2:
+        return False
+    for i in range(2, int(math.sqrt(n)) + 1):
+        if n % i == 0:
+            return False
+    return True
+
+if __name__ == "__main__":
+    candidates = list(range(1, 1_000_001))
+    with Pool() as pool:              # Pool() defaults to cpu_count() workers
+        flags = pool.map(is_prime, candidates)
+    primes = [n for n, flag in zip(candidates, flags) if flag]
+    print(f"Found {len(primes)} primes up to 1,000,000")
+```
+
+## `Pool.starmap` — multiple arguments per call
+
+When the worker function takes more than one argument, use `starmap` with an iterable of tuples:
+
+```python
+from multiprocessing import Pool
+
+def power(base: int, exp: int) -> int:
+    return base ** exp
+
+if __name__ == "__main__":
+    args = [(2, 10), (3, 5), (5, 4), (7, 3)]
+    with Pool(processes=4) as pool:
+        results = pool.starmap(power, args)
+    print(results)
+    # [1024, 243, 625, 343]
+```
+
+## `ProcessPoolExecutor` — the modern high-level API
+
+`concurrent.futures.ProcessPoolExecutor` provides the same interface as `ThreadPoolExecutor`,
+making it easy to switch between thread-based and process-based parallelism.
+
+```python
+from concurrent.futures import ProcessPoolExecutor
+import math
+
+def cpu_work(n: int) -> float:
+    # Simulate CPU-intensive computation
+    return sum(math.sin(i) for i in range(n))
+
+if __name__ == "__main__":
+    inputs = [500_000] * 8    # 8 identical CPU-bound tasks
+
+    # Sequential baseline
+    import time
+    start = time.perf_counter()
+    seq_results = [cpu_work(n) for n in inputs]
+    seq_time = time.perf_counter() - start
+
+    # Parallel with ProcessPoolExecutor
+    start = time.perf_counter()
+    with ProcessPoolExecutor() as executor:
+        par_results = list(executor.map(cpu_work, inputs))
+    par_time = time.perf_counter() - start
+
+    print(f"Sequential: {seq_time:.2f}s")
+    print(f"Parallel:   {par_time:.2f}s")
+    print(f"Speedup:    {seq_time / par_time:.1f}x")
+```
+
+On an 8-core machine you should see close to an 8x speedup for pure computation.
+
+## Inter-process communication
+
+Processes do not share memory. To exchange data between them, use `multiprocessing.Queue` or
+`multiprocessing.Pipe`.
+
+```python
+from multiprocessing import Process, Queue
+
+def producer(q: Queue, items: list) -> None:
+    for item in items:
+        q.put(item)
+    q.put(None)    # sentinel
+
+def consumer(q: Queue) -> None:
+    while True:
+        item = q.get()
+        if item is None:
+            break
+        print(f"consumed: {item}")
+
+if __name__ == "__main__":
+    q: Queue = Queue()
+    p1 = Process(target=producer, args=(q, [1, 2, 3, 4, 5]))
+    p2 = Process(target=consumer, args=(q,))
+    p1.start(); p2.start()
+    p1.join();  p2.join()
+```
+
+## Shared memory in Python 3.8+
+
+`multiprocessing.shared_memory.SharedMemory` allows processes to access a shared block of
+memory without serialization overhead — useful for large NumPy arrays.
+
+```python
+from multiprocessing import shared_memory
+import numpy as np
+
+# Create a shared memory block
+shm = shared_memory.SharedMemory(create=True, size=400)   # 100 float32 values
+arr = np.ndarray((100,), dtype=np.float32, buffer=shm.buf)
+arr[:] = np.arange(100, dtype=np.float32)
+print(arr[:5])    # [0. 1. 2. 3. 4.]
+shm.close()
+shm.unlink()
+```
+
+## Processes vs threads: decision guide
+
+| Criterion | `multiprocessing` | `threading` | `asyncio` |
+|---|---|---|---|
+| CPU-bound work | Best | No benefit (GIL) | Wrong tool |
+| I/O-bound, blocking libs | Overkill | Good | `run_in_executor` |
+| I/O-bound, async libs | Overkill | OK | Best |
+| Memory overhead | High (full copy) | Low (shared) | Minimal |
+| Communication | Queue / Pipe | Shared state + Lock | Channels / queues |
+| Startup time | Slow (fork/spawn) | Fast | Zero |
+
+<Callout title="Not available in the in-browser runner">
+`multiprocessing` and `ProcessPoolExecutor` are not available in the in-browser Python runner (Pyodide).
+Run the examples above locally:
+
+```bash
+python3 multiprocessing_demo.py
+```
+
+Remember the `if __name__ == "__main__"` guard — without it the script loops forever on macOS and Windows.
+</Callout>
+
+export const quizMultiprocessing = [
+  {
+    q: "Why does `multiprocessing` achieve true CPU parallelism while `threading` does not in CPython?",
+    options: [
+      "Processes use a faster bytecode compiler than threads",
+      "Each process has its own Python interpreter and GIL, so they run truly in parallel",
+      "multiprocessing bypasses the OS scheduler that throttles threads",
+      "multiprocessing uses C extensions which release the GIL automatically"
+    ],
+    answer: 1
+  },
+  {
+    q: "Why must you include `if __name__ == '__main__':` when using multiprocessing on macOS/Windows?",
+    options: [
+      "It is a Python style guideline with no functional effect",
+      "Without it, the Pool cannot determine how many workers to create",
+      "The spawn start method re-imports the module in child processes — without the guard this causes infinite process spawning",
+      "It prevents import errors in the child processes"
+    ],
+    answer: 2
+  },
+  {
+    q: "Which method distributes an iterable over a process pool and returns results in input order?",
+    options: [
+      "Pool.apply()",
+      "Pool.map()",
+      "Pool.run()",
+      "Pool.scatter()"
+    ],
+    answer: 1
+  },
+  {
+    q: "What mechanism should you use to share large NumPy arrays between processes without serialization overhead?",
+    options: [
+      "multiprocessing.Queue",
+      "threading.shared_dict",
+      "multiprocessing.shared_memory.SharedMemory",
+      "pickle.dumps across a Pipe"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="async-concurrency/multiprocessing" questions={quizMultiprocessing} />
+
+<ProgressTracker client:visible id="async-concurrency/multiprocessing" />

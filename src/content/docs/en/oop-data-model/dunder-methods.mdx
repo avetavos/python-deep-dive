@@ -1,0 +1,180 @@
+---
+title: Dunder Methods
+description: 'The Python Data Model: __repr__, __str__, __eq__, __len__, __getitem__, and operator overloading with __add__.'
+sidebar:
+  order: 3
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## What are dunder methods?
+
+**Dunder methods** (short for *double-underscore*) are special methods like `__repr__`, `__eq__`, and `__add__` that Python calls automatically in response to built-in syntax and functions.
+They are the mechanism behind the **Python Data Model** — the contract that lets your objects behave like built-in types.
+
+## `__repr__` and `__str__`
+
+Both produce string representations, but they serve different audiences:
+
+| Method | When called | Purpose |
+|---|---|---|
+| `__repr__` | `repr(obj)`, interactive shell | Unambiguous developer representation |
+| `__str__` | `str(obj)`, `print(obj)` | Human-friendly display |
+
+If only `__repr__` is defined, Python uses it for both.
+The convention for `__repr__` is to return a string that, if passed to `eval()`, would recreate the object.
+
+```python
+class Point:
+    def __init__(self, x: float, y: float) -> None:
+        self.x = x
+        self.y = y
+
+    def __repr__(self) -> str:
+        return f"Point({self.x}, {self.y})"
+
+    def __str__(self) -> str:
+        return f"({self.x}, {self.y})"
+```
+
+## `__eq__` — equality
+
+Python calls `__eq__` when you write `a == b`.
+Without it, `==` falls back to identity comparison (`is`) — two separate instances with the same data are never equal.
+
+```python
+def __eq__(self, other: object) -> bool:
+    if not isinstance(other, Point):
+        return NotImplemented
+    return self.x == other.x and self.y == other.y
+```
+
+Return `NotImplemented` (not `False`) when the types are incompatible — this lets Python try the reflected operation on the other operand.
+
+## `__len__` and `__getitem__`
+
+Implement `__len__` to support `len(obj)`.
+Implement `__getitem__` to support `obj[index]` subscript access.
+Together they also make the object iterable via a `for` loop (Python calls `__getitem__` with 0, 1, 2, ... until `IndexError`).
+
+```python
+def __len__(self) -> int:
+    return 2
+
+def __getitem__(self, index: int) -> float:
+    return (self.x, self.y)[index]
+```
+
+## Operator overloading with `__add__`
+
+Arithmetic operators map to dunder methods:
+
+| Operator | Method |
+|---|---|
+| `a + b` | `a.__add__(b)` |
+| `a - b` | `a.__sub__(b)` |
+| `a * b` | `a.__mul__(b)` |
+| `a == b` | `a.__eq__(b)` |
+| `a < b` | `a.__lt__(b)` |
+
+```python
+def __add__(self, other: "Vector") -> "Vector":
+    return Vector(self.x + other.x, self.y + other.y)
+```
+
+## Full runnable demo
+
+export const dunderCode = `
+class Vector:
+    def __init__(self, x: float, y: float) -> None:
+        self.x = x
+        self.y = y
+
+    def __repr__(self) -> str:
+        return f"Vector({self.x}, {self.y})"
+
+    def __str__(self) -> str:
+        return f"({self.x}, {self.y})"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Vector):
+            return NotImplemented
+        return self.x == other.x and self.y == other.y
+
+    def __add__(self, other: "Vector") -> "Vector":
+        return Vector(self.x + other.x, self.y + other.y)
+
+    def __len__(self) -> int:
+        return 2
+
+    def __getitem__(self, index: int) -> float:
+        return (self.x, self.y)[index]
+
+
+v1 = Vector(1, 2)
+v2 = Vector(3, 4)
+print(repr(v1))
+print(str(v1))
+print(v1 == Vector(1, 2))
+print(v1 + v2)
+print(len(v1))
+print(v1[0], v1[1])
+`.trim();
+
+<Playground client:visible code={dunderCode} />
+
+<Callout title="Dunder methods hook into built-in syntax and functions">
+You never call `v1.__add__(v2)` directly in application code — you write `v1 + v2` and Python resolves the dunder method for you.
+This is what makes user-defined objects feel native: `len(v)`, `v[0]`, `v1 == v2`, and `print(v)` all just work once the corresponding dunders are defined.
+The full list is in the Python Data Model reference — there are dunders for context managers (`__enter__`/`__exit__`), iteration (`__iter__`/`__next__`), attribute access (`__getattr__`), and much more.
+</Callout>
+
+export const quizDunder = [
+  {
+    q: "What is the difference between `__repr__` and `__str__`?",
+    options: [
+      "There is no difference; they are aliases",
+      "__repr__ is for developers (unambiguous), __str__ is for end users (readable)",
+      "__str__ is for developers, __repr__ is for end users",
+      "__repr__ is only used in f-strings"
+    ],
+    answer: 1
+  },
+  {
+    q: "When should `__eq__` return `NotImplemented` instead of `False`?",
+    options: [
+      "When both operands are equal",
+      "When the other operand is of an incompatible type",
+      "When self is None",
+      "When the comparison would raise an exception"
+    ],
+    answer: 1
+  },
+  {
+    q: "Which dunder method does `v1 + v2` call on `v1`?",
+    options: [
+      "__plus__",
+      "__sum__",
+      "__add__",
+      "__combine__"
+    ],
+    answer: 2
+  },
+  {
+    q: "If a class implements `__len__` and `__getitem__`, what else does Python allow automatically?",
+    options: [
+      "Pickle serialisation",
+      "Iteration with a for loop (index-based fallback)",
+      "Hashing with hash()",
+      "Comparison with <"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="oop-data-model/dunder-methods" questions={quizDunder} />
+
+<ProgressTracker client:visible id="oop-data-model/dunder-methods" />

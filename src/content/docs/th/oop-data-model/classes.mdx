@@ -1,0 +1,160 @@
+---
+title: Classes และ Inheritance
+description: 'class, __init__, instance vs class attributes, methods, self และ inheritance ด้วย super() ใน Python'
+sidebar:
+  order: 2
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## การกำหนด class
+
+คีย์เวิร์ด `class` กำหนด type ใหม่
+body ประกอบด้วย **methods** (ฟังก์ชันที่กำหนดภายใน class) และ **class attributes** (ที่ instance ทุกตัวใช้ร่วมกัน)
+
+```python
+class Dog:
+    species: str = "Canis lupus familiaris"   # class attribute
+
+    def __init__(self, name: str, age: int) -> None:
+        self.name = name   # instance attribute
+        self.age = age     # instance attribute
+
+    def bark(self) -> str:
+        return f"{self.name} says woof!"
+```
+
+## `self` — การอ้างอิง instance
+
+ทุก instance method รับ **instance** เป็น argument แรก ซึ่งตามธรรมเนียมตั้งชื่อว่า `self`
+Python ส่งให้อัตโนมัติ คุณไม่ต้องส่งเองเมื่อเรียกใช้:
+
+```python
+rex = Dog("Rex", 3)
+rex.bark()   # Python เรียก Dog.bark(rex) ภายใต้ hood
+```
+
+`self` ไม่ใช่ keyword — คุณตั้งชื่ออื่นได้ — แต่ `self` เป็น convention สากลใน Python และการเบี่ยงเบนจะทำให้ผู้อ่านและเครื่องมือทุกอย่างสับสน
+
+## Instance vs class attributes
+
+| | Instance attribute | Class attribute |
+|---|---|---|
+| กำหนดที่ไหน | ภายใน `__init__` บน `self` | โดยตรงใน class body |
+| จัดเก็บที่ไหน | บน object แต่ละตัว | บน class เอง |
+| การเข้าถึง | `obj.attr` | `ClassName.attr` หรือ `obj.attr` (fallback) |
+
+การแก้ไข class attribute ผ่าน instance จะสร้าง *shadow* instance attribute และ **ไม่** เปลี่ยน class attribute ของ instance อื่น
+ใช้ class attribute เฉพาะสำหรับ constant หรือ shared state ที่เป็นของ class จริงๆ
+
+## Inheritance และ `super()`
+
+Subclass สืบทอด methods ทั้งหมดจาก parent
+ใช้ `super()` เพื่อเรียก method ของ parent — ที่พบบ่อยที่สุดคือ `super().__init__()` เพื่อ initialise state ของ parent
+
+```python
+class Animal:
+    def __init__(self, name: str, sound: str) -> None:
+        self.name = name
+        self.sound = sound
+
+    def speak(self) -> str:
+        return f"{self.name} says {self.sound}"
+
+
+class Dog(Animal):
+    def __init__(self, name: str) -> None:
+        super().__init__(name, "woof")   # delegate ไปยัง Animal.__init__
+
+    def fetch(self, item: str) -> str:
+        return f"{self.name} fetches the {item}!"
+```
+
+`super()` ใช้ได้โดยไม่ต้องส่ง argument ใน Python 3 — ไม่จำเป็นต้องระบุ class หรือ instance อย่างชัดเจน
+
+## Demo รันได้จริง
+
+export const classesCode = `
+class Animal:
+    kingdom: str = "Animalia"
+
+    def __init__(self, name: str, sound: str) -> None:
+        self.name = name
+        self.sound = sound
+
+    def speak(self) -> str:
+        return f"{self.name} says {self.sound}"
+
+
+class Dog(Animal):
+    def __init__(self, name: str) -> None:
+        super().__init__(name, "woof")
+
+    def fetch(self, item: str) -> str:
+        return f"{self.name} fetches the {item}!"
+
+
+dog = Dog("Rex")
+print(dog.speak())
+print(dog.fetch("ball"))
+print(Dog.kingdom)
+print(isinstance(dog, Animal))
+`.trim();
+
+<Playground client:visible code={classesCode} />
+
+<Callout title="self is explicit in Python">
+ต่างจากภาษาอื่นที่การอ้างอิง instance เป็น implicit (`this` ใน JavaScript/Java), Python กำหนดให้ทุก instance method ประกาศ `self` เป็น parameter แรกอย่างชัดเจน
+นี่เป็นเจตนา — philosophy ของ Python คือ explicit ดีกว่า implicit
+parameter `self` ทำให้เห็นชัดเจนทันทีว่า function ทำงานกับ instance และทำให้ method resolution ของ Python ทำงานได้โดยไม่มี magic ที่ซ่อนอยู่
+</Callout>
+
+export const quizClasses = [
+  {
+    q: "`__init__` ใน Python class มีจุดประสงค์อะไร?",
+    options: [
+      "สร้าง class object ใหม่",
+      "Initialise instance ที่เพิ่งสร้างโดยการกำหนด attributes",
+      "ถูกเรียกเมื่อ instance ถูกลบ",
+      "กำหนด constant ระดับ class"
+    ],
+    answer: 1
+  },
+  {
+    q: "คุณกำหนด `species = 'Canis'` โดยตรงใน class body มันเป็น attribute ประเภทใด?",
+    options: [
+      "Instance attribute",
+      "Local variable",
+      "Class attribute ที่ทุก instance ใช้ร่วมกัน",
+      "Private attribute"
+    ],
+    answer: 2
+  },
+  {
+    q: "ภายใน instance method `self` อ้างถึงอะไร?",
+    options: [
+      "Class เอง",
+      "Module ปัจจุบัน",
+      "Instance ที่เฉพาะเจาะจงที่ถูกเรียก method",
+      "Parent class"
+    ],
+    answer: 2
+  },
+  {
+    q: "`super().__init__(name, sound)` ภายใน subclass ทำอะไร?",
+    options: [
+      "สร้าง instance ที่สองของ parent class",
+      "เรียก __init__ ของ parent class เพื่อ set up state ที่สืบทอด",
+      "Override __init__ ของ parent โดยสมบูรณ์",
+      "Raise TypeError ถ้า parent ไม่มี __init__"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="oop-data-model/classes" questions={quizClasses} />
+
+<ProgressTracker client:visible id="oop-data-model/classes" />

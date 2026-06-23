@@ -1,0 +1,181 @@
+---
+title: Properties and Class Methods
+description: '@property for getters/setters, computed attributes, @classmethod, and @staticmethod in Python.'
+sidebar:
+  order: 4
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The `@property` decorator
+
+`@property` turns a method into an attribute-style accessor.
+Callers use `obj.celsius` instead of `obj.get_celsius()`, keeping the public API clean while allowing validation logic to run behind the scenes.
+
+```python
+class Temperature:
+    def __init__(self, celsius: float = 0.0) -> None:
+        self._celsius = celsius    # underscore = internal storage
+
+    @property
+    def celsius(self) -> float:
+        return self._celsius
+```
+
+## Setters
+
+Pair `@property` with `@name.setter` to intercept assignment:
+
+```python
+    @celsius.setter
+    def celsius(self, value: float) -> None:
+        if value < -273.15:
+            raise ValueError("Temperature below absolute zero!")
+        self._celsius = value
+```
+
+Now `t.celsius = -300` raises `ValueError` automatically.
+Without a setter, the property is read-only — attempts to assign raise `AttributeError`.
+
+## Computed (derived) properties
+
+A property can compute its value on the fly with no backing storage:
+
+```python
+    @property
+    def fahrenheit(self) -> float:
+        return self._celsius * 9 / 5 + 32
+```
+
+`t.fahrenheit` looks like a plain attribute to the caller, but it is recalculated each time.
+
+## `@classmethod` — alternative constructors
+
+A class method receives the **class** (`cls`) as its first argument instead of the instance.
+The most common use is providing alternative constructors:
+
+```python
+    @classmethod
+    def from_fahrenheit(cls, f: float) -> "Temperature":
+        return cls((f - 32) * 5 / 9)
+```
+
+```python
+boiling = Temperature.from_fahrenheit(212)
+print(boiling.celsius)   # 100.0
+```
+
+Subclasses automatically inherit the class method and `cls` will refer to the subclass — so the factory creates an instance of the correct type.
+
+## `@staticmethod` — utility functions
+
+A static method receives **neither** the instance nor the class.
+Use it for utilities that logically belong to the class but do not need access to class or instance state:
+
+```python
+    @staticmethod
+    def absolute_zero() -> float:
+        return -273.15
+```
+
+```python
+print(Temperature.absolute_zero())   # -273.15
+```
+
+## Full runnable demo
+
+export const propertiesCode = `
+class Temperature:
+    def __init__(self, celsius: float = 0.0) -> None:
+        self._celsius = celsius
+
+    @property
+    def celsius(self) -> float:
+        return self._celsius
+
+    @celsius.setter
+    def celsius(self, value: float) -> None:
+        if value < -273.15:
+            raise ValueError("Temperature below absolute zero!")
+        self._celsius = value
+
+    @property
+    def fahrenheit(self) -> float:
+        return self._celsius * 9 / 5 + 32
+
+    @classmethod
+    def from_fahrenheit(cls, f: float) -> "Temperature":
+        return cls((f - 32) * 5 / 9)
+
+    @staticmethod
+    def absolute_zero() -> float:
+        return -273.15
+
+
+t = Temperature(100)
+print(t.celsius)
+print(t.fahrenheit)
+t.celsius = 0
+print(t.fahrenheit)
+t2 = Temperature.from_fahrenheit(212)
+print(t2.celsius)
+print(Temperature.absolute_zero())
+`.trim();
+
+<Playground client:visible code={propertiesCode} />
+
+<Callout title="Prefer @property over getX/setX methods">
+Java and older Python code uses explicit getter/setter methods like `get_celsius()` and `set_celsius(value)`.
+In Python, `@property` gives you validation and computed values while keeping the call site looking like plain attribute access: `t.celsius = 0` instead of `t.set_celsius(0)`.
+Start with a plain attribute; promote it to a `@property` later if you need validation or lazy computation — callers never need to change their code.
+</Callout>
+
+export const quizProperties = [
+  {
+    q: "What does `@property` do to a method?",
+    options: [
+      "Makes it a class method",
+      "Makes it callable as an attribute (no parentheses needed)",
+      "Makes it private",
+      "Caches its return value forever"
+    ],
+    answer: 1
+  },
+  {
+    q: "How do you make a `@property` writable?",
+    options: [
+      "Add `writable=True` to the decorator",
+      "Define a setter method decorated with `@name.setter`",
+      "Use `@property.writable` instead",
+      "A property is always writable by default"
+    ],
+    answer: 1
+  },
+  {
+    q: "What is the first parameter of a `@classmethod`?",
+    options: [
+      "self — the instance",
+      "cls — the class itself",
+      "type — the metaclass",
+      "No parameter; it is implicit"
+    ],
+    answer: 1
+  },
+  {
+    q: "When is `@staticmethod` the right choice?",
+    options: [
+      "When the method needs to access instance state",
+      "When the method needs to create new instances via cls()",
+      "When the method is a utility that does not need the instance or class",
+      "When you want the method to be inherited by subclasses differently"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="oop-data-model/properties" questions={quizProperties} />
+
+<ProgressTracker client:visible id="oop-data-model/properties" />

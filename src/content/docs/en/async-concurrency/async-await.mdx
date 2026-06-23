@@ -1,0 +1,246 @@
+---
+title: 'Async / Await and Tasks'
+description: 'asyncio.create_task, sequential vs concurrent execution with gather, and asyncio.sleep in Python 3.11+.'
+sidebar:
+  order: 3
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Sequential vs concurrent awaiting
+
+The key insight in async programming is the difference between awaiting coroutines **sequentially**
+and scheduling them to run **concurrently**.
+
+Awaiting one coroutine at a time is sequential — each coroutine must finish before the next starts:
+
+```python
+import asyncio
+
+async def fetch(label: str, delay: float) -> str:
+    await asyncio.sleep(delay)
+    return f"{label} result"
+
+async def sequential() -> None:
+    a = await fetch("A", 0.3)   # waits 0.3 s
+    b = await fetch("B", 0.2)   # waits 0.2 s after A finishes
+    print(a, b)
+    # Total: ~0.5 s
+
+asyncio.run(sequential())
+```
+
+Using `asyncio.gather` runs them concurrently — total time equals the slowest, not the sum:
+
+```python
+import asyncio
+
+async def fetch(label: str, delay: float) -> str:
+    await asyncio.sleep(delay)
+    return f"{label} result"
+
+async def concurrent() -> None:
+    a, b = await asyncio.gather(
+        fetch("A", 0.3),
+        fetch("B", 0.2),
+    )
+    print(a, b)
+    # Total: ~0.3 s
+
+asyncio.run(concurrent())
+```
+
+## `asyncio.create_task` — explicit task scheduling
+
+`asyncio.create_task(coro)` wraps a coroutine in a `Task` and immediately schedules it on the
+running event loop. Unlike calling a coroutine directly, the task starts running as soon as the
+current coroutine yields control.
+
+```python
+import asyncio
+
+async def worker(name: str, delay: float) -> str:
+    print(f"{name}: starting")
+    await asyncio.sleep(delay)
+    print(f"{name}: done")
+    return f"{name}-result"
+
+async def main() -> None:
+    # Schedule both tasks immediately — they run concurrently
+    task_a = asyncio.create_task(worker("A", 0.3))
+    task_b = asyncio.create_task(worker("B", 0.1))
+
+    # Await them to collect results
+    result_a = await task_a
+    result_b = await task_b
+    print(result_a, result_b)
+
+asyncio.run(main())
+# A: starting
+# B: starting
+# B: done
+# A: done
+# A-result B-result
+```
+
+Observe that "B: done" appears before "A: done" even though we `await task_a` first —
+the tasks run concurrently and B finishes sooner.
+
+## Task cancellation
+
+A running `Task` can be cancelled. Cancellation injects `asyncio.CancelledError` into the coroutine
+at the next `await` point.
+
+```python
+import asyncio
+
+async def long_running() -> None:
+    try:
+        print("working...")
+        await asyncio.sleep(10)
+        print("done")
+    except asyncio.CancelledError:
+        print("cancelled — cleaning up")
+        raise    # always re-raise CancelledError
+
+async def main() -> None:
+    task = asyncio.create_task(long_running())
+    await asyncio.sleep(0.05)   # let it start
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        print("task is cancelled")
+
+asyncio.run(main())
+# working...
+# cancelled — cleaning up
+# task is cancelled
+```
+
+Always re-raise `CancelledError` after cleanup. Swallowing it breaks structured cancellation.
+
+## `asyncio.sleep` as a cooperative yield
+
+`await asyncio.sleep(0)` is the minimal yield — it suspends the current coroutine for zero seconds,
+letting other ready tasks run. Use it to avoid starving the event loop in compute-heavy async code.
+
+```python
+import asyncio
+
+async def progress_bar(total: int) -> None:
+    for i in range(total):
+        print(f"\r[{'#' * (i + 1)}{' ' * (total - i - 1)}]", end="", flush=True)
+        await asyncio.sleep(0)   # yield between steps
+    print()
+
+asyncio.run(progress_bar(20))
+```
+
+## Python 3.11+: `asyncio.TaskGroup`
+
+`asyncio.TaskGroup` is the structured-concurrency primitive introduced in Python 3.11.
+It automatically cancels all sibling tasks if any one raises an exception.
+
+```python
+import asyncio
+
+async def step(label: str, delay: float) -> str:
+    await asyncio.sleep(delay)
+    return f"{label} complete"
+
+async def main() -> None:
+    async with asyncio.TaskGroup() as tg:
+        task_a = tg.create_task(step("A", 0.2))
+        task_b = tg.create_task(step("B", 0.1))
+        task_c = tg.create_task(step("C", 0.3))
+    # All three tasks complete (or the group raises ExceptionGroup)
+    print(task_a.result())
+    print(task_b.result())
+    print(task_c.result())
+
+asyncio.run(main())
+# A complete
+# B complete
+# C complete
+```
+
+Prefer `TaskGroup` over `gather` in Python 3.11+ — it enforces structured lifetimes and propagates
+errors cleanly via `ExceptionGroup`.
+
+## Timeouts with `asyncio.wait_for`
+
+`asyncio.wait_for(coro, timeout)` cancels the coroutine if it does not complete within the given
+number of seconds.
+
+```python
+import asyncio
+
+async def slow_op() -> str:
+    await asyncio.sleep(5)
+    return "done"
+
+async def main() -> None:
+    try:
+        result = await asyncio.wait_for(slow_op(), timeout=0.1)
+    except asyncio.TimeoutError:
+        print("operation timed out")
+
+asyncio.run(main())
+# operation timed out
+```
+
+<Callout title="Run asyncio programs locally">
+All examples on this page use `asyncio.run(main())`.
+The in-browser runner has an event loop already running, so `asyncio.run()` raises `RuntimeError`.
+Paste any snippet into a `.py` file and run with `python3 async_await.py` to see the output.
+</Callout>
+
+export const quizAsyncAwait = [
+  {
+    q: "What is the total elapsed time when `await fetch('A', 0.3)` and `await fetch('B', 0.2)` are called sequentially (one after the other)?",
+    options: [
+      "Approximately 0.3 s — only the slowest matters",
+      "Approximately 0.2 s — only the fastest matters",
+      "Approximately 0.5 s — both delays are incurred",
+      "Approximately 0.0 s — asyncio is instantaneous"
+    ],
+    answer: 2
+  },
+  {
+    q: "What does `asyncio.create_task(coro)` do that plain `await coro` does not?",
+    options: [
+      "It runs the coroutine synchronously",
+      "It schedules the coroutine immediately on the event loop so it can run concurrently",
+      "It creates a new OS thread for the coroutine",
+      "It disables cancellation for that coroutine"
+    ],
+    answer: 1
+  },
+  {
+    q: "What happens if you swallow `asyncio.CancelledError` instead of re-raising it?",
+    options: [
+      "The task runs to completion normally",
+      "The event loop raises RuntimeError on the next await",
+      "Structured cancellation breaks — parent tasks may hang waiting for the task to finish",
+      "Nothing; asyncio retries the cancellation automatically"
+    ],
+    answer: 2
+  },
+  {
+    q: "Which Python 3.11+ feature provides structured concurrency with automatic sibling-task cancellation on failure?",
+    options: [
+      "asyncio.gather with return_exceptions=True",
+      "asyncio.TaskGroup",
+      "asyncio.shield",
+      "asyncio.wait"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="async-concurrency/async-await" questions={quizAsyncAwait} />
+
+<ProgressTracker client:visible id="async-concurrency/async-await" />

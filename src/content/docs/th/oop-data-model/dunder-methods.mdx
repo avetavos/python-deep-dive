@@ -1,0 +1,180 @@
+---
+title: Dunder Methods
+description: 'Python Data Model: __repr__, __str__, __eq__, __len__, __getitem__ และ operator overloading ด้วย __add__'
+sidebar:
+  order: 3
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Dunder methods คืออะไร?
+
+**Dunder methods** (ย่อมาจาก *double-underscore*) เป็น special methods เช่น `__repr__`, `__eq__` และ `__add__` ที่ Python เรียกอัตโนมัติเพื่อตอบสนองต่อ built-in syntax และฟังก์ชัน
+สิ่งเหล่านี้เป็นกลไกเบื้องหลัง **Python Data Model** — สัญญาที่ทำให้ object ของคุณทำงานเหมือน built-in types
+
+## `__repr__` และ `__str__`
+
+ทั้งคู่สร้าง string representation แต่เพื่อกลุ่มเป้าหมายต่างกัน:
+
+| Method | เมื่อไหร่ถูกเรียก | วัตถุประสงค์ |
+|---|---|---|
+| `__repr__` | `repr(obj)`, interactive shell | Representation ที่ชัดเจนสำหรับนักพัฒนา |
+| `__str__` | `str(obj)`, `print(obj)` | การแสดงผลที่อ่านง่ายสำหรับมนุษย์ |
+
+ถ้ากำหนดเฉพาะ `__repr__` Python จะใช้มันสำหรับทั้งสองกรณี
+Convention สำหรับ `__repr__` คือ return string ที่ถ้าส่งผ่าน `eval()` จะสร้าง object ขึ้นมาใหม่ได้
+
+```python
+class Point:
+    def __init__(self, x: float, y: float) -> None:
+        self.x = x
+        self.y = y
+
+    def __repr__(self) -> str:
+        return f"Point({self.x}, {self.y})"
+
+    def __str__(self) -> str:
+        return f"({self.x}, {self.y})"
+```
+
+## `__eq__` — equality
+
+Python เรียก `__eq__` เมื่อเขียน `a == b`
+หากไม่มีมัน `==` จะ fallback ไปใช้ identity comparison (`is`) — สอง instance แยกกันที่มีข้อมูลเหมือนกันจะไม่เท่ากันเลย
+
+```python
+def __eq__(self, other: object) -> bool:
+    if not isinstance(other, Point):
+        return NotImplemented
+    return self.x == other.x and self.y == other.y
+```
+
+Return `NotImplemented` (ไม่ใช่ `False`) เมื่อ type ไม่เข้ากัน — เพื่อให้ Python ลอง reflected operation บน operand อีกตัว
+
+## `__len__` และ `__getitem__`
+
+Implement `__len__` เพื่อรองรับ `len(obj)`
+Implement `__getitem__` เพื่อรองรับ `obj[index]` subscript access
+ทั้งคู่รวมกันทำให้ object iterable ผ่าน `for` loop ด้วย (Python เรียก `__getitem__` ด้วย 0, 1, 2, ... จนถึง `IndexError`)
+
+```python
+def __len__(self) -> int:
+    return 2
+
+def __getitem__(self, index: int) -> float:
+    return (self.x, self.y)[index]
+```
+
+## Operator overloading ด้วย `__add__`
+
+Arithmetic operators map ไปยัง dunder methods:
+
+| Operator | Method |
+|---|---|
+| `a + b` | `a.__add__(b)` |
+| `a - b` | `a.__sub__(b)` |
+| `a * b` | `a.__mul__(b)` |
+| `a == b` | `a.__eq__(b)` |
+| `a < b` | `a.__lt__(b)` |
+
+```python
+def __add__(self, other: "Vector") -> "Vector":
+    return Vector(self.x + other.x, self.y + other.y)
+```
+
+## Demo รันได้จริง
+
+export const dunderCode = `
+class Vector:
+    def __init__(self, x: float, y: float) -> None:
+        self.x = x
+        self.y = y
+
+    def __repr__(self) -> str:
+        return f"Vector({self.x}, {self.y})"
+
+    def __str__(self) -> str:
+        return f"({self.x}, {self.y})"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Vector):
+            return NotImplemented
+        return self.x == other.x and self.y == other.y
+
+    def __add__(self, other: "Vector") -> "Vector":
+        return Vector(self.x + other.x, self.y + other.y)
+
+    def __len__(self) -> int:
+        return 2
+
+    def __getitem__(self, index: int) -> float:
+        return (self.x, self.y)[index]
+
+
+v1 = Vector(1, 2)
+v2 = Vector(3, 4)
+print(repr(v1))
+print(str(v1))
+print(v1 == Vector(1, 2))
+print(v1 + v2)
+print(len(v1))
+print(v1[0], v1[1])
+`.trim();
+
+<Playground client:visible code={dunderCode} />
+
+<Callout title="Dunder methods hook into built-in syntax and functions">
+คุณไม่เรียก `v1.__add__(v2)` โดยตรงใน application code — แค่เขียน `v1 + v2` และ Python resolve dunder method ให้
+นี่คือสิ่งที่ทำให้ user-defined objects รู้สึกเป็นธรรมชาติ: `len(v)`, `v[0]`, `v1 == v2` และ `print(v)` ทำงานได้ทันทีเมื่อกำหนด dunder ที่สอดคล้องกัน
+รายการทั้งหมดอยู่ใน Python Data Model reference — มี dunders สำหรับ context managers, iteration, attribute access และอีกมากมาย
+</Callout>
+
+export const quizDunder = [
+  {
+    q: "ความแตกต่างระหว่าง `__repr__` และ `__str__` คืออะไร?",
+    options: [
+      "ไม่มีความแตกต่าง เป็น alias กัน",
+      "__repr__ สำหรับนักพัฒนา (ชัดเจน), __str__ สำหรับผู้ใช้ (อ่านง่าย)",
+      "__str__ สำหรับนักพัฒนา, __repr__ สำหรับผู้ใช้",
+      "__repr__ ใช้เฉพาะใน f-string"
+    ],
+    answer: 1
+  },
+  {
+    q: "`__eq__` ควร return `NotImplemented` แทน `False` เมื่อใด?",
+    options: [
+      "เมื่อทั้งสอง operand เท่ากัน",
+      "เมื่อ operand อีกตัวมี type ที่ไม่เข้ากัน",
+      "เมื่อ self เป็น None",
+      "เมื่อการเปรียบเทียบจะ raise exception"
+    ],
+    answer: 1
+  },
+  {
+    q: "`v1 + v2` เรียก dunder method ใดบน `v1`?",
+    options: [
+      "__plus__",
+      "__sum__",
+      "__add__",
+      "__combine__"
+    ],
+    answer: 2
+  },
+  {
+    q: "ถ้า class implement `__len__` และ `__getitem__` Python จะอนุญาตให้ทำอะไรได้อีกอัตโนมัติ?",
+    options: [
+      "Pickle serialisation",
+      "Iteration ด้วย for loop (index-based fallback)",
+      "Hashing ด้วย hash()",
+      "Comparison ด้วย <"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="oop-data-model/dunder-methods" questions={quizDunder} />
+
+<ProgressTracker client:visible id="oop-data-model/dunder-methods" />

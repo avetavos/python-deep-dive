@@ -1,0 +1,179 @@
+---
+title: Strings
+description: 'String methods, slicing, f-strings, join/split, and immutability in Python.'
+sidebar:
+  order: 5
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Strings are sequences of Unicode characters
+
+Python 3 strings (`str`) are immutable sequences of Unicode code points.
+Single quotes and double quotes are interchangeable — choose one and be consistent.
+Triple quotes (`"""` or `'''`) allow multi-line strings.
+
+```python
+a = "Hello"
+b = 'World'
+c = """This spans
+multiple lines."""
+```
+
+## Common string methods
+
+Strings ship with dozens of methods.
+These are the ones you will use constantly:
+
+```python
+s = "  Hello, Python!  "
+print(s.strip())          # "Hello, Python!"
+print(s.upper())          # "  HELLO, PYTHON!  "
+print(s.lower())          # "  hello, python!  "
+print(s.replace("Python", "World"))  # "  Hello, World!  "
+print(s.startswith("  H"))  # True
+print(s.endswith("!  "))    # True
+print(len(s))               # 18
+```
+
+Methods return new strings — they never modify the original.
+
+## Slicing
+
+Strings support the same slicing syntax as lists: `s[start:stop:step]`.
+Negative indices count from the end.
+
+```python
+s = "Hello, Python!"
+print(s[0:5])    # Hello
+print(s[7:])     # Python!
+print(s[-7:])    # Python!
+print(s[::-1])   # !nohtyP ,olleH  (reversed)
+print(s[::2])    # Hlo,Pto!
+```
+
+## f-strings (formatted string literals)
+
+f-strings, introduced in Python 3.6, are the standard way to embed expressions in strings.
+Prefix the string with `f` and place any Python expression inside `{}`.
+
+```python
+name = "Alice"
+age = 30
+pi = 3.14159
+
+print(f"Name: {name}, Age: {age}")
+print(f"Pi to 2dp: {pi:.2f}")
+print(f"2 + 2 = {2 + 2}")
+print(f"Upper: {name.upper()}")
+```
+
+Format specifiers after `:` control alignment, precision, and type — the same mini-language used by `str.format()`.
+
+## `join()` and `split()`
+
+`str.split(sep)` breaks a string into a list.
+`sep.join(iterable)` joins a list of strings into one.
+They are inverses of each other.
+
+```python
+csv = "one,two,three,four"
+parts = csv.split(",")       # ['one', 'two', 'three', 'four']
+rejoined = " | ".join(parts) # 'one | two | three | four'
+print(parts)
+print(rejoined)
+```
+
+Always join with a string method (`", ".join(items)`), never concatenate in a loop — loop concatenation creates O(n²) intermediate strings.
+
+## Full runnable demo
+
+export const stringsCode = `
+s = "Hello, Python!"
+print(s.upper())
+print(s.lower())
+print(s.replace("Python", "World"))
+print(s.startswith("Hello"))
+print(len(s))
+
+print(s[0:5])
+print(s[-7:])
+print(s[::2])
+
+name = "Alice"
+age = 30
+pi = 3.14159
+print(f"Name: {name}, Age: {age}")
+print(f"Pi to 2dp: {pi:.2f}")
+
+words = ["one", "two", "three"]
+joined = ", ".join(words)
+print(joined)
+parts = "a:b:c:d".split(":")
+print(parts)
+
+try:
+    s[0] = "h"
+except TypeError as e:
+    print(f"TypeError: {e}")
+`.trim();
+
+<Playground client:visible code={stringsCode} />
+
+<Callout title="Strings are immutable">
+Once a string object is created, its characters cannot be changed.
+Every string method returns a **new** string; the original is never modified.
+This makes strings safe to share across multiple variables without unexpected mutations.
+If you need to build a string incrementally (e.g., inside a loop), collect pieces in a list
+and call `"".join(pieces)` at the end — this is O(n) instead of O(n²).
+</Callout>
+
+export const quizStrings = [
+  {
+    q: "What does `\"Hello, World!\"[7:]` return?",
+    options: [
+      "\"Hello, \"",
+      "\"World!\"",
+      "\"orld!\"",
+      "\"W\""
+    ],
+    answer: 1
+  },
+  {
+    q: "Which method is the idiomatic way to concatenate a list of strings?",
+    options: [
+      "str.concat(items)",
+      "sum(items, \"\")",
+      "\"\".join(items)",
+      "reduce(lambda a, b: a + b, items)"
+    ],
+    answer: 2
+  },
+  {
+    q: "What does the `f` prefix in `f\"Hello {name}\"` do?",
+    options: [
+      "Formats the string as a floating-point number",
+      "Evaluates expressions inside {} at runtime",
+      "Creates a frozen (immutable) string constant",
+      "Enables multi-line string syntax"
+    ],
+    answer: 1
+  },
+  {
+    q: "Why are strings described as immutable in Python?",
+    options: [
+      "They cannot be passed to functions",
+      "Their characters cannot be changed after creation; methods return new strings",
+      "They cannot be stored in lists",
+      "They are compiled to bytecode and cannot be read at runtime"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="basics/strings" questions={quizStrings} />
+
+<ProgressTracker client:visible id="basics/strings" />

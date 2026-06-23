@@ -1,0 +1,130 @@
+---
+title: 'พื้นฐานและไวยากรณ์'
+description: 'ปรัชญาการออกแบบ Python, หลักการอ่านง่าย, และสคริปต์แรกที่รันได้จริง'
+sidebar:
+  order: 1
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ปรัชญาการออกแบบของ Python
+
+Python ถูกออกแบบมาบนหลักการเดียว: โค้ดควรอ่านได้เหมือนภาษาอังกฤษธรรมดา
+Guido van Rossum ผู้สร้าง Python เลือกสละความยืดหยุ่นบางส่วนเพื่อแลกกับความอ่านง่าย
+
+ปรัชญานี้ถูกบันทึกไว้ใน **PEP 20** หรือที่รู้จักกันว่า *The Zen of Python*
+รัน `import this` ในเซสชัน Python ใดก็ได้เพื่อดู
+สามบรรทัดที่กำหนดทิศทางทุกอย่าง:
+
+- *Beautiful is better than ugly.* — สวยงามดีกว่าน่าเกลียด
+- *Explicit is better than implicit.* — ชัดเจนดีกว่าซ่อนเร้น
+- *There should be one — and preferably only one — obvious way to do it.* — ควรมีวิธีเดียวที่ชัดเจน
+
+บรรทัดสุดท้ายสำคัญที่สุดสำหรับการเรียนรู้: เมื่อคุณค้นหาวิธีทำสิ่งใดสิ่งหนึ่งใน Python มักจะมีคำตอบที่ได้รับการยอมรับอยู่เสมอ
+
+## การเยื้องบรรทัดที่มีความหมาย
+
+Python ใช้ **การเยื้อง** (4 ช่องว่างต่อระดับ ตามมาตรฐาน) เพื่อกำหนดบล็อกโค้ด
+ไม่มีวงเล็บปีกกาและไม่มีเครื่องหมายเซมิโคลอน
+
+```python
+def is_even(n: int) -> bool:
+    if n % 2 == 0:
+        return True
+    return False
+
+for i in range(5):
+    if is_even(i):
+        print(i, "is even")
+```
+
+การผสม tab กับ space จะทำให้เกิด `TabError`
+มาตรฐานของชุมชน (PEP 8) คือ **4 ช่องว่าง** — ตั้งค่า editor ครั้งเดียวแล้วลืมได้เลย
+
+## เนื้อหาในโมดูลนี้
+
+| บทเรียน | แนวคิดหลัก |
+|---|---|
+| **Variables & Types** | Dynamic typing, ชนิดข้อมูลพื้นฐาน, truthiness |
+| **Control Flow** | `if`/`elif`/`else`, `for`, `while`, walrus `:=` |
+| **Functions** | `def`, พารามิเตอร์, ค่าที่คืน, LEGB scope |
+| **Strings** | Methods, slicing, f-strings, immutability |
+
+แต่ละบทเรียนเป็นอิสระและจบด้วย playground ที่รันได้, callout, แบบทดสอบ, และจุดตรวจสอบความก้าวหน้า
+
+## สคริปต์ Python แรกของคุณ
+
+สคริปต์ด้านล่างแสดงไวยากรณ์หลักที่คุณจะพบในทุกบทเรียน: ตัวแปร, ฟังก์ชัน, ลูป, และ f-string
+
+export const basicsIndexCode = `
+def describe(value: int) -> str:
+    """Return a short description of a number."""
+    if value < 0:
+        label = "negative"
+    elif value == 0:
+        label = "zero"
+    else:
+        label = "positive"
+    return f"{value} is {label}"
+
+numbers = [-3, 0, 7, 42]
+for n in numbers:
+    print(describe(n))
+
+total = sum(numbers)
+print(f"Sum: {total}")
+print("First program complete.")
+`.trim();
+
+<Playground client:visible code={basicsIndexCode} />
+
+<Callout title="Python เป็น Object-Oriented อย่างสมบูรณ์">
+ทุกสิ่งใน Python คือออบเจกต์ — ตัวเลขจำนวนเต็ม, สตริง, ฟังก์ชัน, คลาส, และแม้แต่โมดูล
+หมายความว่าทุกค่ามีชนิดข้อมูล (`type(42)` คืนค่า `int`), ชุด attributes, และชุด methods
+คุณไม่จำเป็นต้อง "box" ค่าพื้นฐานไว้ใน wrapper class อย่างที่ทำใน Java
+</Callout>
+
+export const quizBasicsIndex = [
+  {
+    q: "PEP 20 หรือ 'The Zen of Python' เน้นอะไรมากที่สุด?",
+    options: [
+      "ประสิทธิภาพสูงสุดเหนือความชัดเจน",
+      "การอ่านง่ายและการมีวิธีเดียวที่ชัดเจน",
+      "ความเข้ากันได้กับ C และ C++",
+      "การกำหนดชนิดข้อมูลแบบ static ตลอดเวลา"
+    ],
+    answer: 1
+  },
+  {
+    q: "Python กำหนดขอบเขตของบล็อกโค้ด เช่น ฟังก์ชันและ if-statement อย่างไร?",
+    options: [
+      "วงเล็บปีกกา {}",
+      "คำสำคัญ BEGIN / END",
+      "การเยื้องบรรทัดที่สม่ำเสมอ",
+      "เครื่องหมายเซมิโคลอนท้ายบรรทัด"
+    ],
+    answer: 2
+  },
+  {
+    q: "PEP ใดกำหนด style guide ของชุมชน Python (เยื้อง 4 ช่องว่าง, ความยาวบรรทัด ฯลฯ)?",
+    options: ["PEP 8", "PEP 20", "PEP 3000", "PEP 484"],
+    answer: 0
+  },
+  {
+    q: "ใน Python, ข้อใดถูกต้องเกี่ยวกับจำนวนเต็ม, สตริง, และฟังก์ชัน?",
+    options: [
+      "เป็น primitive ที่ไม่มี methods",
+      "ทั้งหมดคือออบเจกต์ที่มี type, attributes, และ methods",
+      "เฉพาะฟังก์ชันเท่านั้นที่เป็นออบเจกต์; จำนวนเต็มเป็น primitive",
+      "ต้องประกาศก่อนใช้งาน"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="basics/index" questions={quizBasicsIndex} />
+
+<ProgressTracker client:visible id="basics/index" />

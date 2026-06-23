@@ -1,0 +1,237 @@
+---
+title: 'asyncio Basics'
+description: 'The event loop, async def coroutines, await, asyncio.run, and asyncio.gather — the foundation of async Python.'
+sidebar:
+  order: 2
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The event loop
+
+`asyncio` runs on an **event loop**: a scheduler that keeps a queue of coroutines and callbacks,
+executes them one at a time, and switches between them whenever one suspends at an `await` expression.
+
+No OS threads are created. The concurrency is **cooperative** — a coroutine must voluntarily yield
+control with `await` for other coroutines to progress.
+
+```python
+import asyncio
+
+async def say(message: str, delay: float) -> None:
+    await asyncio.sleep(delay)
+    print(message)
+
+async def main() -> None:
+    await say("Hello", 0.1)
+    await say("World", 0.1)
+
+asyncio.run(main())
+# Hello
+# World
+```
+
+In this sequential example, `say("World", …)` does not start until `say("Hello", …)` finishes.
+
+## `async def` and coroutines
+
+A function defined with `async def` is a **coroutine function**. Calling it does not execute the body
+— it returns a **coroutine object**. The body only runs when the coroutine is awaited or scheduled
+on the event loop.
+
+```python
+import asyncio
+
+async def greet(name: str) -> str:
+    return f"Hello, {name}!"
+
+# Calling greet() returns a coroutine object — nothing runs yet
+coro = greet("Python")
+print(type(coro))          # <class 'coroutine'>
+
+# Await it to actually execute the body
+result = asyncio.run(greet("Python"))
+print(result)              # Hello, Python!
+```
+
+## `await` suspends and resumes
+
+The `await` keyword can only appear inside an `async def` function.
+It suspends the current coroutine and yields control back to the event loop.
+The event loop runs other ready coroutines and returns to this one when the awaited object completes.
+
+```python
+import asyncio
+
+async def fetch_data(label: str) -> str:
+    print(f"  {label}: starting fetch")
+    await asyncio.sleep(0.05)          # suspends here
+    print(f"  {label}: fetch done")
+    return f"data-{label}"
+
+async def main() -> None:
+    result = await fetch_data("A")
+    print(result)
+
+asyncio.run(main())
+#   A: starting fetch
+#   A: fetch done
+# data-A
+```
+
+## `asyncio.run` — entry point
+
+`asyncio.run(coro)` creates a new event loop, runs the coroutine to completion, closes the loop,
+and returns the result. It is the standard entry point for async programs.
+
+```python
+import asyncio
+
+async def compute(x: int) -> int:
+    await asyncio.sleep(0)     # yield to event loop once
+    return x ** 2
+
+result = asyncio.run(compute(7))
+print(result)    # 49
+```
+
+Call `asyncio.run` exactly once per program, at the top level. Do not nest calls to `asyncio.run`
+— the inner call will raise `RuntimeError: This event loop is already running`.
+
+## `asyncio.gather` — running coroutines concurrently
+
+`asyncio.gather(*coroutines)` schedules all coroutines concurrently and awaits all of them.
+Results are returned in the same order as the input coroutines.
+
+```python
+import asyncio
+
+async def step(label: str, delay: float) -> str:
+    await asyncio.sleep(delay)
+    return f"{label} done"
+
+async def main() -> None:
+    results = await asyncio.gather(
+        step("A", 0.3),
+        step("B", 0.1),
+        step("C", 0.2),
+    )
+    print(results)
+    # ['A done', 'B done', 'C done']   — always input order
+    # Total time ≈ 0.3 s, not 0.6 s
+
+asyncio.run(main())
+```
+
+Results are always in **input order**, regardless of completion order.
+This mirrors JavaScript's `Promise.all`.
+
+## Handling failures with `return_exceptions=True`
+
+By default, if any coroutine raises, `gather` propagates the first exception and cancels the rest.
+Pass `return_exceptions=True` to collect exceptions as values instead (like `Promise.allSettled`).
+
+```python
+import asyncio
+
+async def risky(n: int) -> int:
+    if n == 2:
+        raise ValueError(f"n={n} is bad")
+    return n * 10
+
+async def main() -> None:
+    results = await asyncio.gather(
+        risky(1),
+        risky(2),
+        risky(3),
+        return_exceptions=True,
+    )
+    for r in results:
+        if isinstance(r, Exception):
+            print(f"Error: {r}")
+        else:
+            print(f"OK: {r}")
+
+asyncio.run(main())
+# OK: 10
+# Error: n=2 is bad
+# OK: 30
+```
+
+## Python 3.11+: `asyncio.TaskGroup`
+
+`asyncio.TaskGroup` (3.11+) is the structured-concurrency alternative to `gather`.
+If any task raises, the group cancels all remaining tasks automatically.
+
+```python
+import asyncio
+
+async def work(label: str, delay: float) -> str:
+    await asyncio.sleep(delay)
+    return f"{label} complete"
+
+async def main() -> None:
+    async with asyncio.TaskGroup() as tg:
+        task_a = tg.create_task(work("A", 0.2))
+        task_b = tg.create_task(work("B", 0.1))
+    # Both tasks are done here; exceptions are re-raised automatically
+    print(task_a.result())
+    print(task_b.result())
+
+asyncio.run(main())
+```
+
+<Callout title="Run asyncio programs locally">
+The code examples on this page use `asyncio.run(main())` — the standard idiomatic entry point.
+The in-browser runner has an event loop already running, so `asyncio.run()` raises `RuntimeError` there.
+To run these examples, paste them into a `.py` file and execute with `python3 asyncio_basics.py`.
+</Callout>
+
+export const quizAsyncioBasics = [
+  {
+    q: "What does calling an `async def` function return before you `await` it?",
+    options: [
+      "The return value of the function body",
+      "A coroutine object",
+      "A Future",
+      "None"
+    ],
+    answer: 1
+  },
+  {
+    q: "What is the standard entry point for running a top-level async coroutine?",
+    options: [
+      "loop.run_until_complete(coro)",
+      "asyncio.run(coro)",
+      "await coro at module level",
+      "asyncio.start(coro)"
+    ],
+    answer: 1
+  },
+  {
+    q: "What does `asyncio.gather(a(), b(), c())` guarantee about the order of results?",
+    options: [
+      "Results are in completion order — fastest coroutine first",
+      "Results are in input order regardless of which coroutine finished first",
+      "Results are sorted alphabetically by coroutine name",
+      "Order is non-deterministic"
+    ],
+    answer: 1
+  },
+  {
+    q: "Which argument to `asyncio.gather` makes it return exceptions as values instead of propagating them?",
+    options: [
+      "ignore_errors=True",
+      "safe_mode=True",
+      "return_exceptions=True",
+      "collect_errors=True"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="async-concurrency/asyncio-basics" questions={quizAsyncioBasics} />
+
+<ProgressTracker client:visible id="async-concurrency/asyncio-basics" />

@@ -1,0 +1,160 @@
+---
+title: Classes and Inheritance
+description: 'class, __init__, instance vs class attributes, methods, self, and inheritance with super() in Python.'
+sidebar:
+  order: 2
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Defining a class
+
+The `class` keyword defines a new type.
+The body contains **methods** (functions defined inside a class) and optionally **class attributes** (shared by all instances).
+
+```python
+class Dog:
+    species: str = "Canis lupus familiaris"   # class attribute
+
+    def __init__(self, name: str, age: int) -> None:
+        self.name = name   # instance attribute
+        self.age = age     # instance attribute
+
+    def bark(self) -> str:
+        return f"{self.name} says woof!"
+```
+
+## `self` — the instance reference
+
+Every instance method receives the **instance** as its first argument, conventionally named `self`.
+Python passes it automatically; you never pass it yourself:
+
+```python
+rex = Dog("Rex", 3)
+rex.bark()   # Python calls Dog.bark(rex) under the hood
+```
+
+`self` is not a keyword — you could name it anything — but `self` is the universal Python convention and deviating from it confuses every reader and every tool.
+
+## Instance vs class attributes
+
+| | Instance attribute | Class attribute |
+|---|---|---|
+| Where defined | Inside `__init__`, on `self` | Directly in the class body |
+| Where stored | On each individual object | On the class itself |
+| Access | `obj.attr` | `ClassName.attr` or `obj.attr` (fallback) |
+
+Mutating a class attribute through an instance creates a *shadow* instance attribute and does **not** change the class attribute for other instances.
+Use class attributes only for constants or shared state that truly belongs to the class.
+
+## Inheritance and `super()`
+
+A subclass inherits all methods from its parent.
+Use `super()` to call the parent's method — most commonly `super().__init__()` to initialise the parent's state.
+
+```python
+class Animal:
+    def __init__(self, name: str, sound: str) -> None:
+        self.name = name
+        self.sound = sound
+
+    def speak(self) -> str:
+        return f"{self.name} says {self.sound}"
+
+
+class Dog(Animal):
+    def __init__(self, name: str) -> None:
+        super().__init__(name, "woof")   # delegate to Animal.__init__
+
+    def fetch(self, item: str) -> str:
+        return f"{self.name} fetches the {item}!"
+```
+
+`super()` without arguments works in Python 3 — no need to pass the class or instance explicitly.
+
+## Full runnable demo
+
+export const classesCode = `
+class Animal:
+    kingdom: str = "Animalia"
+
+    def __init__(self, name: str, sound: str) -> None:
+        self.name = name
+        self.sound = sound
+
+    def speak(self) -> str:
+        return f"{self.name} says {self.sound}"
+
+
+class Dog(Animal):
+    def __init__(self, name: str) -> None:
+        super().__init__(name, "woof")
+
+    def fetch(self, item: str) -> str:
+        return f"{self.name} fetches the {item}!"
+
+
+dog = Dog("Rex")
+print(dog.speak())
+print(dog.fetch("ball"))
+print(Dog.kingdom)
+print(isinstance(dog, Animal))
+`.trim();
+
+<Playground client:visible code={classesCode} />
+
+<Callout title="self is explicit in Python">
+Unlike many other languages where the instance reference is implicit (`this` in JavaScript/Java), Python requires every instance method to declare `self` as its first parameter.
+This is intentional — Python's philosophy is that explicit is better than implicit.
+The `self` parameter makes it immediately clear that a function operates on an instance, and it allows Python's method resolution to work without hidden magic.
+</Callout>
+
+export const quizClasses = [
+  {
+    q: "What is the purpose of `__init__` in a Python class?",
+    options: [
+      "It creates a new class object",
+      "It initialises a newly created instance by setting its attributes",
+      "It is called when the instance is deleted",
+      "It defines class-level constants"
+    ],
+    answer: 1
+  },
+  {
+    q: "You define `species = 'Canis'` directly in the class body. What kind of attribute is it?",
+    options: [
+      "An instance attribute",
+      "A local variable",
+      "A class attribute shared by all instances",
+      "A private attribute"
+    ],
+    answer: 2
+  },
+  {
+    q: "Inside an instance method, what does `self` refer to?",
+    options: [
+      "The class itself",
+      "The current module",
+      "The specific instance the method was called on",
+      "The parent class"
+    ],
+    answer: 2
+  },
+  {
+    q: "What does `super().__init__(name, sound)` do inside a subclass?",
+    options: [
+      "Creates a second instance of the parent class",
+      "Calls the parent class __init__ to set up inherited state",
+      "Overrides the parent __init__ completely",
+      "Raises TypeError if the parent has no __init__"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="oop-data-model/classes" questions={quizClasses} />
+
+<ProgressTracker client:visible id="oop-data-model/classes" />

@@ -1,0 +1,184 @@
+---
+title: Exceptions
+description: 'try/except/else/finally, raising exceptions, catching specific types, and exception chaining in Python 3.11+.'
+sidebar:
+  order: 3
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## What exceptions are
+
+An **exception** is a signal that something went wrong during execution.
+When Python raises an exception, it unwinds the call stack until it finds a matching `except` clause or terminates the program.
+
+Exceptions are objects — instances of classes that inherit from `BaseException`. The ones you will work with in normal code almost always inherit from `Exception`.
+
+## The full try statement
+
+Python's try statement has four optional clauses:
+
+```python
+try:
+    result = risky_operation()
+except SomeError as e:
+    # runs only if SomeError (or a subclass) was raised
+    handle(e)
+else:
+    # runs only if NO exception was raised in try
+    use(result)
+finally:
+    # ALWAYS runs — exception or not
+    cleanup()
+```
+
+The `else` clause is a useful Python feature: it lets you distinguish "the operation succeeded" from "we are in cleanup." Code in `else` only runs on the happy path.
+
+## Catching specific exception types
+
+Always catch the most specific exception type you can. Catching `Exception` is a last resort; catching bare `except:` silently swallows `KeyboardInterrupt` and `SystemExit` as well.
+
+```python
+try:
+    n = int(user_input)
+except ValueError:
+    print("Not a valid integer")
+except TypeError:
+    print("Expected a string, not None")
+```
+
+To catch multiple types in one clause, use a tuple:
+
+```python
+except (ValueError, TypeError) as e:
+    print(f"Input error: {e}")
+```
+
+## Raising exceptions
+
+Use `raise` to signal an error explicitly:
+
+```python
+def divide(a: float, b: float) -> float:
+    if b == 0:
+        raise ValueError("divisor cannot be zero")
+    return a / b
+```
+
+Re-raise the current exception inside an `except` block with a bare `raise`:
+
+```python
+except ValueError:
+    log_error()
+    raise   # re-raises the same exception unchanged
+```
+
+## Exception chaining with `raise ... from`
+
+When you catch one exception and raise another, use `raise NewError(...) from original` to preserve the original as the cause. This keeps the full traceback in the error chain.
+
+```python
+try:
+    value = int(raw_string)
+except ValueError as original:
+    raise RuntimeError("Failed to parse config") from original
+```
+
+The `__cause__` attribute on the new exception holds the original. Python displays both tracebacks automatically.
+
+To explicitly discard the cause (suppress the chained traceback), use `raise ... from None`.
+
+## Full runnable demo
+
+export const exceptionsCode = `
+def safe_divide(a: float, b: float) -> float:
+    """Divide a by b, raising ValueError if b is zero."""
+    if b == 0:
+        raise ValueError("divisor cannot be zero")
+    return a / b
+
+# --- try / except / else / finally ---
+print("=== basic try/except/else/finally ===")
+for b in [2.0, 0]:
+    try:
+        result = safe_divide(10.0, b)
+    except ValueError as e:
+        print(f"  ValueError: {e}")
+    else:
+        print(f"  Result: {result}")
+    finally:
+        print("  finally ran")
+
+# --- catching specific types ---
+print("\\n=== specific exception types ===")
+for val in ["42", "abc", None]:
+    try:
+        n = int(val)
+        print(f"  parsed {val!r} -> {n}")
+    except (TypeError, ValueError) as e:
+        print(f"  {type(e).__name__} for {val!r}: {e}")
+
+# --- exception chaining ---
+print("\\n=== exception chaining ===")
+try:
+    try:
+        raw = "not-a-number"
+        value = int(raw)
+    except ValueError as original:
+        raise RuntimeError("Failed to parse config value") from original
+except RuntimeError as e:
+    print(f"  RuntimeError: {e}")
+    print(f"  __cause__: {e.__cause__}")
+`.trim();
+
+<Playground client:visible code={exceptionsCode} />
+
+<Callout title="Always catch specific exceptions">
+Bare `except:` (with no type) catches everything — including `KeyboardInterrupt` (Ctrl+C) and `SystemExit`. This makes your program impossible to interrupt and hides bugs.
+Catch `Exception` only at the very top of a call stack (e.g., a global error handler), and always log the exception before swallowing it.
+</Callout>
+
+export const quizExceptions = [
+  {
+    q: "When does the `else` block in a try statement run?",
+    options: [
+      "Always, after the try block finishes",
+      "Only when an exception was caught",
+      "Only when no exception was raised in the try block",
+      "Only when the finally block is present"
+    ],
+    answer: 2
+  },
+  {
+    q: "What does `raise RuntimeError('msg') from original` do?",
+    options: [
+      "Raises RuntimeError and discards the original exception",
+      "Raises RuntimeError and stores the original as its __cause__",
+      "Re-raises the original exception with a new message",
+      "Raises both exceptions simultaneously"
+    ],
+    answer: 1
+  },
+  {
+    q: "Which clause in a try statement ALWAYS runs, even if an exception is raised?",
+    options: ["except", "else", "finally", "raise"],
+    answer: 2
+  },
+  {
+    q: "What is the problem with bare `except:` (no exception type)?",
+    options: [
+      "It is a syntax error in Python 3",
+      "It only catches Exception, not subclasses",
+      "It also catches KeyboardInterrupt and SystemExit, preventing normal program exit",
+      "It cannot access the exception object with `as e`"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="typing-errors/exceptions" questions={quizExceptions} />
+
+<ProgressTracker client:visible id="typing-errors/exceptions" />

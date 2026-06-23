@@ -1,0 +1,183 @@
+---
+title: Lists and Tuples
+description: 'Mutable lists with sort and slice vs immutable tuples with unpacking and named indexing in Python 3.11+.'
+sidebar:
+  order: 2
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Lists — ordered, mutable sequences
+
+A **list** is Python's workhorse container.
+It holds an ordered sequence of any objects and supports in-place mutation.
+
+```python
+fruits = ['apple', 'banana', 'cherry']
+fruits.append('date')        # add to end
+fruits.insert(1, 'avocado')  # insert before index 1
+fruits.remove('banana')      # remove first occurrence
+print(fruits)                # ['apple', 'avocado', 'cherry', 'date']
+```
+
+### Common list methods
+
+| Method | Description |
+|--------|-------------|
+| `append(x)` | Add `x` to the end |
+| `insert(i, x)` | Insert `x` before index `i` |
+| `remove(x)` | Remove first occurrence of `x` |
+| `pop(i=-1)` | Remove and return item at index `i` |
+| `sort(key=None, reverse=False)` | Sort in place |
+| `reverse()` | Reverse in place |
+| `index(x)` | Return index of first occurrence of `x` |
+| `count(x)` | Count occurrences of `x` |
+
+### Sorting
+
+`list.sort()` sorts in place and returns `None`.
+Pass a `key` function to sort by an arbitrary criterion.
+
+```python
+numbers = [5, 2, 8, 1, 9, 3]
+numbers.sort()
+print(numbers)  # [1, 2, 3, 5, 8, 9]
+
+words = ['banana', 'apple', 'cherry']
+words.sort(key=len)
+print(words)    # ['apple', 'banana', 'cherry']
+```
+
+Use `sorted(iterable)` instead of `.sort()` when you need a new list and want to leave the original unchanged.
+
+## Tuples — ordered, immutable sequences
+
+A **tuple** is like a list but cannot be modified after creation.
+Use tuples to represent fixed records where position carries meaning.
+
+```python
+rgb = (255, 128, 0)   # an orange colour
+point = (3.0, 4.0)    # a 2-D coordinate
+row = (1, 'Alice', 42)  # a database row
+```
+
+### Tuple unpacking
+
+Python lets you unpack a tuple (or any iterable) directly into variables.
+The number of variables must match the length — unless you use `*` to capture the rest.
+
+```python
+coords = (10.5, 20.3, 30.1)
+x, y, z = coords
+print(x, y, z)           # 10.5 20.3 30.1
+
+first, *rest = [1, 2, 3, 4, 5]
+print(first)             # 1
+print(rest)              # [2, 3, 4, 5]
+```
+
+### Accessing tuple fields by index
+
+Without a name, tuple fields are accessed by integer index.
+Assign constants for readability:
+
+```python
+RGB = (255, 128, 0)
+RED   = 0
+GREEN = 1
+BLUE  = 2
+
+print(RGB[RED])    # 255
+print(RGB[GREEN])  # 128
+print(RGB[BLUE])   # 0
+```
+
+For a more ergonomic approach, use `collections.namedtuple` or `typing.NamedTuple`.
+
+## Full runnable demo
+
+export const listsTuplesCode = `
+# --- list mutation and sorting ---
+fruits = ['apple', 'banana', 'cherry']
+fruits.append('date')
+fruits.insert(1, 'avocado')
+print('after insert:', fruits)
+
+fruits.remove('banana')
+print('after remove:', fruits)
+
+numbers = [5, 2, 8, 1, 9, 3]
+numbers.sort()
+print('sorted:', numbers)
+
+words = ['banana', 'apple', 'cherry']
+words.sort(key=len)
+print('by length:', words)
+
+# --- tuple unpacking ---
+coords = (10.5, 20.3, 30.1)
+x, y, z = coords
+print('unpacked:', x, y, z)
+
+first, *rest = [1, 2, 3, 4, 5]
+print('first:', first)
+print('rest:', rest)
+
+# --- named fields via index constants ---
+RGB = (255, 128, 0)
+print('red:', RGB[0], 'green:', RGB[1], 'blue:', RGB[2])
+`.trim();
+
+<Playground client:visible code={listsTuplesCode} />
+
+<Callout title="Tuples are immutable — use them for fixed records">
+Once created, a tuple cannot be changed.
+Attempting `my_tuple[0] = 99` raises `TypeError: 'tuple' object does not support item assignment`.
+This immutability makes tuples safe to use as dictionary keys and in sets — they are hashable as long as every element is hashable.
+Use tuples whenever the data represents a fixed record and mutation would be a bug.
+</Callout>
+
+export const quizListsTuples = [
+    {
+        q: "Which method adds an element to the END of a list?",
+        options: ["insert()", "extend()", "append()", "add()"],
+        answer: 2
+    },
+    {
+        q: "What does `list.sort()` return?",
+        options: [
+            "A new sorted list",
+            "None — it sorts the list in place",
+            "The first element",
+            "The length of the list"
+        ],
+        answer: 1
+    },
+    {
+        q: "Which of these is a valid tuple unpacking?",
+        options: [
+            "x, y = (1, 2, 3)",
+            "x, y, z = (1, 2, 3)",
+            "x = (1, 2, 3)[0, 1]",
+            "x, y, z = [1, 2]"
+        ],
+        answer: 1
+    },
+    {
+        q: "Why can tuples be used as dictionary keys but lists cannot?",
+        options: [
+            "Tuples are faster to iterate",
+            "Tuples are immutable and therefore hashable",
+            "Tuples support the __hash__ attribute by default",
+            "Both B and C"
+        ],
+        answer: 3
+    }
+];
+
+<Quiz client:visible id="data-structures/lists-tuples" questions={quizListsTuples} />
+
+<ProgressTracker client:visible id="data-structures/lists-tuples" />

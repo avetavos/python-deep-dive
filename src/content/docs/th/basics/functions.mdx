@@ -1,0 +1,199 @@
+---
+title: Functions
+description: 'การกำหนดฟังก์ชันด้วย def, พารามิเตอร์และค่าที่คืน, การคืนหลายค่าผ่าน tuple, docstrings, และ LEGB scope'
+sidebar:
+  order: 4
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## การกำหนดฟังก์ชัน
+
+ใช้ `def` ตามด้วยชื่อฟังก์ชัน, รายการพารามิเตอร์ในวงเล็บ, และเครื่องหมายโคลอน
+Body ของฟังก์ชันเยื้อง 4 ช่องว่าง
+Type hints เป็นสิ่งเสริม แต่แนะนำอย่างยิ่ง — ช่วยบอกเจตนาและเปิดใช้การวิเคราะห์แบบ static
+
+```python
+def greet(name: str, greeting: str = "Hello") -> str:
+    """Return a greeting string for the given name."""
+    return f"{greeting}, {name}!"
+
+print(greet("Alice"))              # Hello, Alice!
+print(greet("Bob", greeting="Hi")) # Hi, Bob!
+```
+
+พารามิเตอร์ที่สองมี **ค่าเริ่มต้น** — ผู้เรียกสามารถละเว้นได้
+ค่าเริ่มต้นถูกประเมินครั้งเดียวตอนกำหนดฟังก์ชัน ไม่ใช่ตอนเรียก
+
+## พารามิเตอร์และรูปแบบการเรียก
+
+Python มีพารามิเตอร์สี่ประเภท:
+
+```python
+def demo(pos, /, normal, *, kw_only):
+    print(pos, normal, kw_only)
+
+demo(1, 2, kw_only=3)        # OK
+demo(1, normal=2, kw_only=3) # OK
+```
+
+- **Positional-only** (ก่อน `/`): ไม่สามารถส่งผ่าน keyword ได้
+- **Normal**: positional หรือ keyword
+- **Keyword-only** (หลัง `*`): ต้องส่งผ่าน keyword เท่านั้น
+
+## การคืนหลายค่า
+
+ฟังก์ชันสามารถคืนค่าหลายค่าโดยคั่นด้วยคอมมา
+Python จะรวมไว้ใน tuple อัตโนมัติ
+
+```python
+def min_max(numbers: list) -> tuple:
+    """Return (minimum, maximum) of a list."""
+    return min(numbers), max(numbers)
+
+low, high = min_max([3, 1, 4, 1, 5, 9])
+print(f"min={low}, max={high}")   # min=1, max=9
+```
+
+**Tuple unpacking** ทางซ้ายของการกำหนดค่าจะแจกจ่ายค่าที่คืนไปยังตัวแปรแยกกัน
+
+## Docstrings
+
+**Docstring** คือ string literal ที่วางทันทีหลัง `def`
+มันบันทึกว่าฟังก์ชันทำอะไร, พารามิเตอร์, และค่าที่คืน
+เข้าถึงได้ผ่าน `help(fn)` หรือ `fn.__doc__`
+
+```python
+def add(a: int, b: int) -> int:
+    """Return the sum of a and b.
+
+    Args:
+        a: First operand.
+        b: Second operand.
+
+    Returns:
+        The integer sum.
+    """
+    return a + b
+```
+
+## กฎ LEGB Scope
+
+Python ค้นหาชื่อใน scope สี่ระดับ ตามลำดับ:
+
+1. **L**ocal — ภายในฟังก์ชันปัจจุบัน
+2. **E**nclosing — ฟังก์ชันที่ครอบ (สำหรับฟังก์ชันซ้อน)
+3. **G**lobal — ระดับโมดูล
+4. **B**uilt-in — ชื่อ built-in ของ Python (`len`, `print` ฯลฯ)
+
+```python
+x = 10  # global
+
+def outer():
+    y = 20  # enclosing
+    def inner():
+        z = 30  # local
+        return x + y + z   # ค้นหา x จาก global, y จาก enclosing, z จาก local
+    return inner()
+
+print(outer())  # 60
+```
+
+ใช้ `global name` เพื่อ rebind ตัวแปรระดับโมดูลจากภายในฟังก์ชัน
+ใช้ `nonlocal name` เพื่อ rebind ตัวแปรจาก scope ที่ครอบ (ที่ไม่ใช่ global)
+
+## Demo ที่รันได้จริง
+
+export const functionsCode = `
+def greet(name: str, greeting: str = "Hello") -> str:
+    """Return a greeting string."""
+    return f"{greeting}, {name}!"
+
+def min_max(numbers: list) -> tuple:
+    """Return (minimum, maximum) of a list."""
+    return min(numbers), max(numbers)
+
+x = 10
+
+def outer():
+    y = 20
+    def inner():
+        z = 30
+        return x + y + z
+    return inner()
+
+print(greet("Alice"))
+print(greet("Bob", greeting="Hi"))
+
+low, high = min_max([3, 1, 4, 1, 5, 9])
+print(f"min={low}, max={high}")
+
+print(f"LEGB sum: {outer()}")
+
+def no_return():
+    pass
+
+result = no_return()
+print(f"no_return() gives: {result}")
+`.trim();
+
+<Playground client:visible code={functionsCode} />
+
+<Callout title="ฟังก์ชันคืน None โดยค่าเริ่มต้น">
+ถ้า body ของฟังก์ชันจบโดยไม่มี `return` statement หรือมีแค่ `return` เปล่าๆ โดยไม่มีค่า
+Python จะคืน `None` อัตโนมัติ
+นี่ไม่ใช่ข้อผิดพลาด — เป็นพฤติกรรมที่กำหนดไว้
+ข้อผิดพลาดที่พบบ่อยที่สุดคือการรับผลลัพธ์จากฟังก์ชันที่แก้ไขข้อมูล in-place
+(เช่น `list.sort()`): ตัวแปรจะได้รับ `None` ไม่ใช่ list ที่แก้ไขแล้ว
+ใช้ `sorted(lst)` (คืน list ใหม่) เมื่อต้องการค่าที่คืน
+</Callout>
+
+export const quizFunctions = [
+  {
+    q: "ฟังก์ชัน Python คืนค่าอะไรถ้าไม่มี `return` statement?",
+    options: [
+      "0",
+      "สตริงว่าง",
+      "None",
+      "จะ raise RuntimeError"
+    ],
+    answer: 2
+  },
+  {
+    q: "ให้ `def f(a, b=5): ...`, การเรียกใดถูกต้อง?",
+    options: [
+      "f()",
+      "f(1)",
+      "f(b=3)",
+      "f(1, 2, 3)"
+    ],
+    answer: 1
+  },
+  {
+    q: "ใน LEGB rule, 'E' ย่อมาจากอะไร?",
+    options: [
+      "External scope",
+      "Enclosing function scope",
+      "Exported module scope",
+      "Exception handler scope"
+    ],
+    answer: 1
+  },
+  {
+    q: "ผลลัพธ์ของ `low, high = min_max([3, 1, 4])` คืออะไร?",
+    options: [
+      "low=3, high=4",
+      "low=1, high=4",
+      "low=1, high=3",
+      "tuple (1, 4) ถูกกำหนดให้กับ low"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="basics/functions" questions={quizFunctions} />
+
+<ProgressTracker client:visible id="basics/functions" />

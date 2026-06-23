@@ -1,0 +1,155 @@
+---
+title: 'Async & Concurrency'
+description: 'ภาพรวมของ Concurrency ใน Python: asyncio สำหรับงาน I/O-bound, threads ที่ถูกจำกัดด้วย GIL และ multiprocessing สำหรับงาน CPU-bound'
+sidebar:
+  order: 1
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## เครื่องมือสามตัว สำหรับสามปัญหา
+
+Python มีโมเดล concurrency ที่แตกต่างกันถึงสามแบบ แต่ละแบบเหมาะกับประเภทของงานที่ต่างกัน:
+
+| โมเดล | เหมาะกับ | กลไก |
+|---|---|---|
+| **asyncio** | งาน I/O-bound (เครือข่าย, ไฟล์, DB) | Single thread, cooperative multitasking |
+| **threading** | งาน I/O-bound ที่ใช้ไลบรารีแบบ blocking | OS threads, ถูกจำกัดด้วย GIL |
+| **multiprocessing** | งาน CPU-bound (การคำนวณ, การแยกวิเคราะห์) | Separate processes, parallelism จริง |
+
+การเลือกโมเดลผิดเป็นสาเหตุของบั๊กด้านประสิทธิภาพที่พบบ่อยที่สุดใน Python
+การเรียก database แบบ blocking ใน `threading.Thread` อาจดูปกติ แต่การเรียกแบบเดียวกันนั้นใน asyncio coroutine จะทำให้ event loop ทั้งหมดหยุดทำงาน
+
+## เหตุใด asyncio จึงครองตลาด Python ยุคใหม่
+
+งานฝั่งเซิร์ฟเวอร์ส่วนใหญ่เป็น I/O-bound: รอ database, HTTP API, หรือการอ่านไฟล์
+`asyncio` จัดการการรอพร้อมกันหลายพันรายการใน **OS thread เดียว** โดยรัน event loop ที่สลับการควบคุมระหว่าง coroutines เมื่อตัวใดตัวหนึ่งรอ I/O
+
+```python
+import asyncio
+
+async def fetch(url: str) -> str:
+    await asyncio.sleep(0.1)   # จำลองความล่าช้าของเครือข่าย
+    return f"Response from {url}"
+
+async def main():
+    results = await asyncio.gather(
+        fetch("https://api.example.com/a"),
+        fetch("https://api.example.com/b"),
+    )
+    for r in results:
+        print(r)
+
+asyncio.run(main())
+```
+
+การเรียกทั้งสองทำงานพร้อมกัน — ไม่มีตัวไหนบล็อกตัวอื่น
+เวลารวมประมาณ 0.1 วินาที ไม่ใช่ 0.2 วินาที
+
+## GIL และ Threads
+
+CPython มี mutex ที่เรียกว่า **Global Interpreter Lock (GIL)** ซึ่งอนุญาตให้ thread เดียวเรียกใช้ Python bytecode ได้ในช่วงเวลาใดเวลาหนึ่ง
+สำหรับงาน I/O-bound นี้ไม่ใช่ปัญหา — threads จะปล่อย GIL ขณะรอ OS — แต่สำหรับงาน CPU-bound การเพิ่ม threads ไม่ได้ให้ความเร็วเพิ่มขึ้นเลย
+
+```python
+import threading
+
+def count_down(n: int) -> None:
+    while n > 0:
+        n -= 1
+
+# สอง threads — ยังคงรันบน core เดียวเพราะ GIL
+t1 = threading.Thread(target=count_down, args=(5_000_000,))
+t2 = threading.Thread(target=count_down, args=(5_000_000,))
+t1.start(); t2.start()
+t1.join();  t2.join()
+```
+
+## Multiprocessing สำหรับ parallelism จริง
+
+`multiprocessing` สร้าง OS processes แยกกัน แต่ละ process มี Python interpreter และ GIL ของตัวเอง
+งาน CPU-bound จึงสามารถใช้ทุก core ที่มีได้
+
+```python
+from multiprocessing import Pool
+
+def square(x: int) -> int:
+    return x * x
+
+with Pool(processes=4) as pool:
+    results = pool.map(square, range(10))
+
+print(results)
+```
+
+## สิ่งที่โมดูลนี้ครอบคลุม
+
+| บทเรียน | แนวคิดหลัก |
+|---|---|
+| **asyncio Basics** | Event loop, `async def`, `await`, `asyncio.run`, `asyncio.gather` |
+| **Async / Await** | Tasks, `create_task`, การทำงานแบบ sequential vs concurrent |
+| **GIL & Threads** | GIL, `threading`, `ThreadPoolExecutor`, I/O vs CPU-bound |
+| **Multiprocessing** | Processes vs threads, `ProcessPoolExecutor`, `Pool.map` |
+
+แต่ละบทเรียนสามารถเรียนได้อิสระ เริ่มด้วย asyncio หากสร้าง network services หรือข้ามไปที่ multiprocessing หากต้องการ parallelize งาน CPU-bound
+
+<Callout title="Python 3.11+ task groups">
+Python 3.11 นำเสนอ `asyncio.TaskGroup` เป็นวิธีแนะนำในการรัน coroutines หลายตัวพร้อมกัน
+มันมี structured concurrency พร้อม automatic cancellation เมื่อเกิด failure — ควรใช้แทน `gather` แบบเปลือยในโค้ดใหม่
+
+```python
+async with asyncio.TaskGroup() as tg:
+    task_a = tg.create_task(fetch("https://a.example.com"))
+    task_b = tg.create_task(fetch("https://b.example.com"))
+# ทั้งสอง task รับประกันว่าเสร็จสิ้นที่นี่
+```
+</Callout>
+
+export const quizIndex = [
+  {
+    q: "โมเดล concurrency ใดของ Python เหมาะที่สุดสำหรับงาน CPU-bound เช่น การคำนวณเชิงตัวเลข?",
+    options: [
+      "asyncio — ใช้ event loop",
+      "threading — OS threads รันแบบ parallel",
+      "multiprocessing — separate processes ข้าม GIL ได้",
+      "ทั้งสามแบบเทียบเท่ากันสำหรับงาน CPU-bound"
+    ],
+    answer: 2
+  },
+  {
+    q: "เหตุใด asyncio จึงจัดการการรอ I/O พร้อมกันหลายพันรายการได้อย่างมีประสิทธิภาพใน single thread?",
+    options: [
+      "มันคอมไพล์ coroutines เป็น native machine code",
+      "Event loop สลับระหว่าง coroutines เมื่อตัวใดตัวหนึ่ง await I/O",
+      "ใช้ GIL ในการ time-slice ระหว่าง coroutines",
+      "แต่ละ coroutine รันใน subprocess ของตัวเอง"
+    ],
+    answer: 1
+  },
+  {
+    q: "Global Interpreter Lock (GIL) คืออะไร?",
+    options: [
+      "Mutex ที่ป้องกันไม่ให้สอง threads รัน Python bytecode พร้อมกัน",
+      "Lock ที่ป้องกัน asyncio จากการรันในโหมด multi-core",
+      "Global variable ที่ติดตามจำนวน threads ที่กำลังรัน",
+      "C extension ที่เร่งความเร็วโค้ด Python แบบ I/O-bound"
+    ],
+    answer: 0
+  },
+  {
+    q: "ข้อความใดเกี่ยวกับ threading และงาน CPU-bound ใน Python ที่ถูกต้อง?",
+    options: [
+      "Threads ใช้ CPU cores ทั้งหมดได้อย่างเต็มที่สำหรับ compute-intensive loops",
+      "Threads ปล่อย GIL ระหว่าง pure Python computation",
+      "การเพิ่ม threads ใน CPU-bound loop แทบไม่ได้ความเร็วเพิ่มขึ้นเพราะ GIL",
+      "GIL ใช้กับ I/O operations เท่านั้น ไม่ใช่การคำนวณ"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="async-concurrency/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="async-concurrency/index" />

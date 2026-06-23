@@ -1,0 +1,196 @@
+---
+title: Type Hints
+description: 'การ annotate ตัวแปร, พารามิเตอร์, และค่าที่คืนใน Python 3.11+ — Optional, Union, type alias และ syntax |'
+sidebar:
+  order: 2
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Type hints คืออะไร
+
+**Type hint** คือ annotation ที่แนบไปกับตัวแปร, พารามิเตอร์ หรือค่าที่คืนออกมา เพื่อประกาศว่าควรเป็นประเภทใด
+Python เก็บ annotation เหล่านี้ไว้ใน `__annotations__` แต่ไม่เคยนำไปใช้ตอน runtime — เป็นเพียง metadata สำหรับ static analysis tool และผู้อ่านโค้ด
+
+```python
+x: int = 10
+name: str = "Alice"
+```
+
+`: int` และ `: str` ไม่มีผลต่อการรันโค้ดเลย มีไว้เพื่อสื่อสาร intent เท่านั้น
+
+## Annotate signature ของฟังก์ชัน
+
+สถานที่ที่มีประโยชน์ที่สุดสำหรับ type hints คือ function signature — ช่วยบอก contract ของทุก callable
+
+```python
+def add(a: int, b: int) -> int:
+    return a + b
+
+def repeat(text: str, times: int = 1) -> str:
+    return text * times
+```
+
+`-> int` annotate ประเภทที่คืน ส่วน default value อยู่หลัง type annotation: `times: int = 1`
+
+## Built-in generic types
+
+Python 3.9+ ให้ใช้ collection type โดยตรงเป็น generic ได้เลย ไม่ต้อง import
+
+```python
+scores: list[int] = [95, 87, 92]
+mapping: dict[str, int] = {"a": 1, "b": 2}
+pair: tuple[str, int] = ("Alice", 30)
+unique: set[str] = {"red", "green", "blue"}
+```
+
+ก่อน Python 3.9 ต้องเขียน `List[int]`, `Dict[str, int]` จาก `typing` แนะนำให้ใช้ lowercase built-in form ใน Python 3.9+
+
+## Optional — ค่าที่อาจเป็น None
+
+`Optional[T]` หมายความว่าค่าเป็น `T` หรือ `None` ก็ได้ ย่อมาจาก `Union[T, None]`
+
+```python
+from typing import Optional
+
+def find_user(user_id: int) -> Optional[str]:
+    users = {1: "Alice", 2: "Bob"}
+    return users.get(user_id)   # คืน str หรือ None
+```
+
+ใน Python 3.10+ เขียนเป็น `str | None` ได้เลย:
+
+```python
+def find_user(user_id: int) -> str | None:
+    users = {1: "Alice", 2: "Bob"}
+    return users.get(user_id)
+```
+
+ทั้งสองรูปแบบเทียบเท่ากัน แนะนำ `X | None` ใน Python สมัยใหม่
+
+## Union — หนึ่งในหลายประเภท
+
+`Union[X, Y]` หมายถึงค่าอาจเป็น `X` หรือ `Y` ก็ได้ ใน Python 3.10+ ใช้ operator `|` ได้โดยตรง
+
+```python
+from typing import Union
+
+def process(value: Union[int, str]) -> str:
+    return str(value)
+
+# Python 3.10+ shorthand:
+def process_modern(value: int | str) -> str:
+    return str(value)
+```
+
+## Type aliases
+
+Type alias ตั้งชื่อให้กับ annotation ที่ซับซ้อน ทำให้ signature อ่านง่ายขึ้น
+
+```python
+Vector = list[float]
+UserId = int
+UserMap = dict[UserId, str]
+
+def scale(v: Vector, factor: float) -> Vector:
+    return [x * factor for x in v]
+```
+
+Python 3.12+ มี `type` statement:
+
+```python
+type Vector = list[float]   # Python 3.12+
+```
+
+## Demo แบบ runnable เต็มรูปแบบ
+
+export const typeHintsCode = `
+from typing import Optional, Union
+
+# --- variable annotations ---
+x: int = 10
+name: str = "Alice"
+scores: list[int] = [95, 87, 92]
+mapping: dict[str, int] = {"a": 1, "b": 2}
+
+# --- function signatures ---
+def add(a: int, b: int) -> int:
+    return a + b
+
+def repeat(text: str, times: int = 1) -> str:
+    return text * times
+
+# --- Optional / X | None ---
+def find_user(user_id: int) -> Optional[str]:
+    users = {1: "Alice", 2: "Bob"}
+    return users.get(user_id)
+
+# --- Union / | ---
+def process(value: Union[int, str]) -> str:
+    return str(value)
+
+# --- type alias ---
+Vector = list[float]
+
+def scale(v: Vector, factor: float) -> Vector:
+    return [x * factor for x in v]
+
+# --- run it ---
+print(add(3, 4))
+print(repeat("Hi", 3))
+print(find_user(1))
+print(find_user(99))
+print(process(42))
+print(process("hello"))
+print(scale([1.0, 2.0, 3.0], 2.5))
+
+# hints do NOT restrict runtime behaviour
+print(add("oops", " still works"))  # Python does not enforce at runtime
+`.trim();
+
+<Playground client:visible code={typeHintsCode} />
+
+<Callout title="Type hints ไม่บังคับใช้ตอน runtime — ใช้ mypy">
+บรรทัดสุดท้ายใน demo ส่ง string ไปยัง `add` ที่คาดว่าจะได้ `int` Python รันได้ปกติโดยไม่มี error
+Type hints ถูกบังคับใช้เฉพาะโดย static checker อย่าง **mypy** หรือ **pyright** เท่านั้น รัน `mypy yourfile.py` เพื่อดัก type violation ก่อนที่จะกลายเป็น bug ในโปรดักชัน
+</Callout>
+
+export const quizTypeHints = [
+  {
+    q: "Syntax ของ Python 3.10+ สำหรับ 'str หรือ None' คืออะไร?",
+    options: ["Optional[str]", "str | None", "Union[str, None]", "Nullable[str]"],
+    answer: 1
+  },
+  {
+    q: "Python ทำอะไรถ้าส่ง string ไปยังพารามิเตอร์ที่ annotate เป็น `int`?",
+    options: [
+      "Raise TypeError ทันที",
+      "แปลง string เป็น int อัตโนมัติ",
+      "รันโค้ดตามปกติ — type hints ไม่บังคับใช้ตอน runtime",
+      "Log DeprecationWarning"
+    ],
+    answer: 2
+  },
+  {
+    q: "การ annotate list ของ integer ที่ถูกต้องใน Python 3.9+ คืออะไร?",
+    options: ["List[int]", "list[int]", "Array[int]", "int[]"],
+    answer: 1
+  },
+  {
+    q: "Type alias คืออะไร?",
+    options: [
+      "Runtime cast ที่แปลงค่า",
+      "การตั้งชื่อให้กับ type annotation ที่ซับซ้อนเพื่อให้อ่านง่ายขึ้น",
+      "Decorator ที่บังคับใช้ type ตอน runtime",
+      "Class พิเศษที่โมดูล `typing` มีให้"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="typing-errors/type-hints" questions={quizTypeHints} />
+
+<ProgressTracker client:visible id="typing-errors/type-hints" />

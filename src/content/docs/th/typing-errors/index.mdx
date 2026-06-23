@@ -1,0 +1,141 @@
+---
+title: 'Typing & Errors'
+description: 'ภาพรวมของ type hints และโมเดล exception ใน Python — ทำงานอย่างไร ใช้ร่วมกันอย่างไร และควรเรียนอะไรต่อ'
+sidebar:
+  order: 1
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## สองระบบ เป้าหมายเดียว: โค้ดที่เชื่อถือได้
+
+Python มีเครื่องมือสองตัวที่ทำงานเสริมกันเพื่อเขียนโค้ดที่ "พังดัง" แทนที่จะ "พังเงียบ":
+
+1. **Type hints** — annotation ที่บอกว่าตัวแปร, พารามิเตอร์ หรือค่าที่คืนออกมาควรเป็นประเภทใด ตรวจสอบโดย tool อย่าง mypy หรือ pyright แบบ static ไม่ใช่ตอน runtime
+2. **Exceptions** — กลไกส่งสัญญาณที่หยุดการทำงานปกติเมื่อเกิดสิ่งที่ไม่คาดคิด ทำให้เราจับและจัดการข้อผิดพลาดได้ หรือส่งต่อขึ้นไปยัง call stack
+
+เมื่อใช้ร่วมกัน type hints และ exceptions ช่วยให้สื่อสาร intent ได้ชัดเจนและรับมือกับความผิดพลาดได้อย่างสง่างาม
+
+## Type hints ในหนึ่งบรรทัด
+
+```python
+def greet(name: str, count: int = 1) -> str:
+    return (name + "! ") * count
+```
+
+`name: str`, `count: int`, และ `-> str` คือ type hints Python ไม่สนใจสิ่งเหล่านี้ตอน runtime — มีไว้เพื่อ static checker และผู้อ่านโค้ดเท่านั้น ไม่ทำให้ `greet("Alice")` ช้าหรือเร็วขึ้นแต่อย่างใด
+
+## โมเดล exception ในหนึ่งบรรทัด
+
+```python
+try:
+    result = int("abc")
+except ValueError as e:
+    print(f"Caught: {e}")
+finally:
+    print("Always runs")
+```
+
+`try` ครอบโค้ดที่อาจล้มเหลว `except` จับ exception ตามประเภทที่ระบุ `finally` ทำงานเสมอไม่ว่าจะเกิด exception หรือไม่
+
+## ความสัมพันธ์ระหว่างสองระบบ
+
+Type hints และ exceptions ไม่ได้ขัดแย้งกัน — ต่างทำงานต่างช่วง:
+
+| ช่วง | เครื่องมือ |
+|------|-----------|
+| Static analysis (ก่อนรัน) | Type hints + mypy/pyright |
+| ความผิดพลาดตอน runtime (ระหว่างรัน) | Exceptions |
+
+Signature ของฟังก์ชันบอก caller ว่าต้องการประเภทใด ส่วน exception บอกว่ารันไปแล้วอาจเจออะไรได้บ้าง
+
+## แผนที่โมดูล
+
+| บทเรียน | สิ่งที่จะได้เรียนรู้ |
+|---------|---------------------|
+| [Type Hints](./type-hints) | Annotate ตัวแปร, พารามิเตอร์, ค่าที่คืน; `Optional`, `Union`, type alias |
+| [Exceptions](./exceptions) | `try/except/else/finally`, `raise`, exception chaining |
+| [Context Managers](./context-managers) | `with`, `__enter__/__exit__`, `contextlib` |
+| [Custom Errors](./custom-errors) | Subclass `Exception`, custom attributes, exception hierarchy |
+
+## Demo ภาพรวมแบบ runnable
+
+export const indexCode = `
+from typing import Optional
+
+def find_item(items: list[str], target: str) -> Optional[int]:
+    """Return the index of target in items, or None if not found."""
+    for i, item in enumerate(items):
+        if item == target:
+            return i
+    return None
+
+fruits = ["apple", "banana", "cherry"]
+
+# type hints describe intent — no runtime enforcement
+index = find_item(fruits, "banana")
+print(f"Found at index: {index}")
+
+missing = find_item(fruits, "mango")
+print(f"Not found: {missing}")
+
+# exceptions signal runtime failures
+try:
+    value = fruits[10]
+except IndexError as e:
+    print(f"IndexError: {e}")
+
+# the else clause runs only when no exception was raised
+try:
+    value = fruits[1]
+except IndexError:
+    print("Out of range")
+else:
+    print(f"Got: {value}")
+`.trim();
+
+<Playground client:visible code={indexCode} />
+
+<Callout title="Type hints มีไว้สำหรับมนุษย์และ tool ไม่ใช่สำหรับ Python">
+ตอน runtime Python ไม่ตรวจสอบหรือบังคับใช้ type hints เลย คุณสามารถส่ง string ไปยังพารามิเตอร์ที่ annotate ว่า `int` และ Python จะไม่ร้องเรียน — มันจะรันโค้ดตามปกติกับค่านั้น ใช้ mypy หรือ pyright เป็น step แยกต่างหากเพื่อดัก type error ก่อนที่จะกลายเป็น bug ในโปรดักชัน
+</Callout>
+
+export const quizIndex = [
+  {
+    q: "Python ทำอะไรกับ type hints ตอน runtime?",
+    options: [
+      "Raise TypeError ทันทีถ้าส่งประเภทผิด",
+      "ไม่สนใจเลย — มีไว้สำหรับ static checker และผู้อ่านโค้ด",
+      "แปลงค่าให้เป็นประเภทที่ annotate ไว้อัตโนมัติ",
+      "Log warning ไปยัง stderr"
+    ],
+    answer: 1
+  },
+  {
+    q: "Block ใดใน try statement ที่ทำงานเสมอไม่ว่าจะเกิด exception หรือไม่?",
+    options: ["except", "else", "finally", "raise"],
+    answer: 2
+  },
+  {
+    q: "Block `else` ใน try statement ทำงานเมื่อใด?",
+    options: [
+      "ทุกครั้ง หลัง try block จบ",
+      "เฉพาะเมื่อเกิด exception และถูก catch",
+      "เฉพาะเมื่อไม่มี exception เกิดขึ้นใน try block",
+      "เฉพาะเมื่อไม่มี finally block"
+    ],
+    answer: 2
+  },
+  {
+    q: "Tool ใดตรวจสอบ Python type hints แบบ static?",
+    options: ["Python เอง ตอน runtime", "mypy หรือ pyright", "pytest", "โมดูล `typing`"],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="typing-errors/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="typing-errors/index" />

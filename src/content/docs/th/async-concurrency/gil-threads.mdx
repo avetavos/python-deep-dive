@@ -1,0 +1,239 @@
+---
+title: 'GIL และ Threading'
+description: 'Global Interpreter Lock, threading สำหรับงาน I/O-bound, ThreadPoolExecutor และเหตุใด threads ไม่เร่งความเร็วงาน CPU-bound ใน Python'
+sidebar:
+  order: 4
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Global Interpreter Lock
+
+CPython (Python interpreter มาตรฐาน) มี mutex ที่เรียกว่า **Global Interpreter Lock** (GIL)
+GIL รับประกันว่า **มีเพียง thread เดียวที่รัน Python bytecode ได้ในช่วงเวลาใดๆ** — แม้บนเครื่องที่มี CPU cores หลายตัว
+
+GIL มีอยู่เพราะเหตุผลเชิงปฏิบัติ: memory management ของ CPython (reference counting) ไม่ใช่ thread-safe
+แทนที่จะเพิ่ม fine-grained locks ให้ทุก object, CPython developers เลือกวิธีที่ง่ายกว่าคือ single global lock
+
+**ผลที่ตามมา:**
+
+- โค้ด Python แบบ CPU-bound ที่รันใน threads หลายตัวไม่รันแบบ parallel — threads สลับกัน
+- I/O-bound threads *ได้ประโยชน์* จาก threading เพราะ GIL ถูกปล่อยขณะรอ OS I/O call
+
+<Callout title="Python 3.13 และ no-GIL build">
+Python 3.13 นำเสนอ **free-threaded** (no-GIL) build แบบ experimental ที่เปิดใช้งานเมื่อ compile ด้วย `--disable-gil`
+สิ่งนี้อนุญาตให้มี true CPU-level parallelism ระหว่าง threads แต่อาจทำให้ C extensions ที่สมมติว่ามี GIL ป้องกันพัง
+คาดว่าจะนำมาใช้กระแสหลักใน 3.14+
+</Callout>
+
+## CPU-bound threads: ไม่มีความเร็วเพิ่มขึ้น
+
+```python
+import threading
+import time
+
+def count_down(n: int) -> None:
+    while n > 0:
+        n -= 1
+
+N = 50_000_000
+
+# Single thread
+start = time.perf_counter()
+count_down(N)
+single = time.perf_counter() - start
+
+# สอง threads — งานรวมเท่าเดิม แบ่งระหว่าง threads
+start = time.perf_counter()
+t1 = threading.Thread(target=count_down, args=(N // 2,))
+t2 = threading.Thread(target=count_down, args=(N // 2,))
+t1.start(); t2.start()
+t1.join();  t2.join()
+threaded = time.perf_counter() - start
+
+print(f"Single thread: {single:.2f}s")
+print(f"Two threads:   {threaded:.2f}s")
+# สอง threads มักช้ากว่าเพราะ GIL contention และ context-switch overhead
+```
+
+## I/O-bound threads: concurrency จริง
+
+เมื่อ threads บล็อกบน I/O, GIL ถูกปล่อย ทำให้ threads อื่นรัน Python code ได้
+นี่คือเหตุผลที่ threading ยังมีประโยชน์สำหรับงาน I/O-bound เช่น HTTP requests หรือการอ่านไฟล์
+
+```python
+import threading
+import time
+
+def simulate_io(label: str, delay: float) -> None:
+    time.sleep(delay)   # ปล่อย GIL — threads อื่นรันได้อย่างอิสระ
+    print(f"{label} complete after {delay}s")
+
+# Sequential: ~0.6 วินาทีรวม
+# Threaded:   ~0.2 วินาทีรวม (ทั้งสามรอพร้อมกัน)
+threads = [
+    threading.Thread(target=simulate_io, args=(f"task-{i}", 0.2))
+    for i in range(3)
+]
+for t in threads: t.start()
+for t in threads: t.join()
+```
+
+## `threading.Thread` — พื้นฐาน
+
+```python
+import threading
+
+def worker(name: str, count: int) -> None:
+    for i in range(count):
+        print(f"[{name}] step {i}")
+
+t = threading.Thread(target=worker, args=("background", 3))
+t.start()
+print("main thread continues here")
+t.join()   # รอ thread เสร็จ
+print("background thread done")
+```
+
+`t.join()` บล็อก calling thread จนกว่า `t` จะเสร็จสิ้น
+หากไม่มี `join()`, main thread อาจออกขณะที่ background thread ยังรันอยู่
+
+## Thread safety ด้วย `threading.Lock`
+
+Shared mutable state ต้องการ synchronization ที่ชัดเจน
+`threading.Lock` รับประกันว่ามีเพียง thread เดียวที่แก้ไข shared data ได้ในช่วงเวลาเดียว
+
+```python
+import threading
+
+counter: int = 0
+lock = threading.Lock()
+
+def increment(n: int) -> None:
+    global counter
+    for _ in range(n):
+        with lock:
+            counter += 1
+
+threads = [threading.Thread(target=increment, args=(100_000,)) for _ in range(5)]
+for t in threads: t.start()
+for t in threads: t.join()
+
+print(counter)   # 500_000 ได้อย่างน่าเชื่อถือ
+```
+
+หากไม่มี lock, `counter += 1` คือสาม bytecode operations (LOAD, ADD, STORE) และสอง threads อาจสลับกันระหว่างนั้น ทำให้ยอดรวมต่ำกว่าที่ควร (**race condition**)
+
+## `ThreadPoolExecutor` — high-level API
+
+`concurrent.futures.ThreadPoolExecutor` จัดการ thread pool และคืน `Future` objects
+มัน integrate ได้ดีกับ `asyncio` ผ่าน `loop.run_in_executor`
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+import time
+
+def blocking_io(label: str) -> str:
+    time.sleep(0.1)    # จำลองการเรียกไลบรารีแบบ blocking
+    return f"{label} done"
+
+with ThreadPoolExecutor(max_workers=4) as executor:
+    futures = [executor.submit(blocking_io, f"job-{i}") for i in range(8)]
+    results = [f.result() for f in futures]
+
+print(results)
+```
+
+`executor.map(fn, iterable)` เป็น shorthand ที่สะดวกเมื่อทุก call ใช้ function เดียวกันและต้องการผลลัพธ์ตามลำดับ input
+
+## การเชื่อมต่อ threads กับ asyncio: `run_in_executor`
+
+เมื่อต้องเรียกไลบรารีแบบ blocking จาก async context โดยไม่บล็อก event loop:
+
+```python
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import time
+
+def blocking_call(x: int) -> int:
+    time.sleep(0.1)      # blocking library เช่น psycopg2, boto3 (sync)
+    return x * x
+
+async def main() -> None:
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = await asyncio.gather(
+            *[loop.run_in_executor(pool, blocking_call, i) for i in range(5)]
+        )
+    print(results)
+
+asyncio.run(main())
+```
+
+<Callout title="ไม่สามารถใช้งานใน in-browser runner">
+`threading` และ `concurrent.futures.ThreadPoolExecutor` ไม่สามารถใช้ได้ใน in-browser Python runner (Pyodide)
+รันตัวอย่างด้านบนบนเครื่องของคุณ:
+
+```bash
+python3 gil_threads.py
+```
+</Callout>
+
+## เมื่อใดควรใช้ threads vs asyncio
+
+| เกณฑ์ | ใช้ `asyncio` | ใช้ `threading` |
+|---|---|---|
+| I/O-bound, async-native libs | ใช่ | ไม่ |
+| I/O-bound, blocking libs (boto3, psycopg2) | `run_in_executor` | ใช่ |
+| งาน CPU-bound | ไม่ | ไม่ — ใช้ `multiprocessing` |
+| ต้องการ structured cancellation | ใช่ (TaskGroup) | ยากกว่า |
+| codebase แบบ synchronous เดิม | ไม่ | ใช่ |
+
+export const quizGilThreads = [
+  {
+    q: "เหตุใดการเพิ่ม threads จึงไม่เร่งความเร็วโค้ด Python แบบ CPU-bound ใน CPython?",
+    options: [
+      "Python threads ถูก emulate ใน software และไม่ใช้ OS threads",
+      "GIL อนุญาตให้มีเพียง thread เดียวที่รัน Python bytecode ได้ในช่วงเวลาเดียว",
+      "Python threads แชร์ stack เดียวกันและรัน parallel ไม่ได้",
+      "OS scheduler ป้องกัน Python threads จากการรันบน multiple cores"
+    ],
+    answer: 1
+  },
+  {
+    q: "Python thread ปล่อย GIL เมื่อใด?",
+    options: [
+      "เฉพาะเมื่อ thread เรียก `threading.release()`",
+      "เฉพาะระหว่าง garbage collection",
+      "ขณะรอ OS I/O call เสร็จสิ้น",
+      "ไม่เคย — GIL ถูกถือตลอดอายุการใช้งานของ thread"
+    ],
+    answer: 2
+  },
+  {
+    q: "จุดประสงค์ของ `threading.Lock` เมื่อ shared mutable state ถูกเข้าถึงจาก threads หลายตัวคืออะไร?",
+    options: [
+      "มันเร่งความเร็วการเข้าถึง shared state โดย caching",
+      "มันป้องกันไม่ให้สอง threads แก้ไข shared state พร้อมกัน หลีกเลี่ยง race conditions",
+      "มันคัดลอก shared state เข้าสู่ private memory ของแต่ละ thread",
+      "มัน serialize threads ทั้งหมดเป็น single thread เพื่อความปลอดภัย"
+    ],
+    answer: 1
+  },
+  {
+    q: "วิธีเรียกฟังก์ชัน synchronous แบบ blocking จากภายใน `async def` coroutine โดยไม่บล็อก event loop คือ?",
+    options: [
+      "เรียกมันโดยตรง — asyncio จัดการ blocking calls โดยอัตโนมัติ",
+      "ห่อมันใน `threading.Thread` และ await thread",
+      "ใช้ `loop.run_in_executor(pool, blocking_fn, *args)` เพื่อโอนไปยัง thread pool",
+      "ใช้ `asyncio.sleep(0)` ก่อนการเรียก"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="async-concurrency/gil-threads" questions={quizGilThreads} />
+
+<ProgressTracker client:visible id="async-concurrency/gil-threads" />

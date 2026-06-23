@@ -1,0 +1,130 @@
+---
+title: 'Basics & Syntax'
+description: 'Python''s design philosophy, readability principles, and your first runnable script.'
+sidebar:
+  order: 1
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Python's design philosophy
+
+Python was designed around a single guiding principle: code should read like plain English.
+Guido van Rossum, Python's creator, made explicit trade-offs in favour of readability — even when that meant restricting programmer freedom.
+
+The philosophy is captured in **PEP 20**, known as *The Zen of Python*.
+Run `import this` in any Python session to see it.
+Three lines that shape everything:
+
+- *Beautiful is better than ugly.*
+- *Explicit is better than implicit.*
+- *There should be one — and preferably only one — obvious way to do it.*
+
+That last point matters most for learning: when you look up how to do something in Python, there is almost always a canonical answer.
+
+## Significant whitespace
+
+Python uses **indentation** (4 spaces per level, by convention) to define blocks.
+There are no curly braces and no semicolons.
+
+```python
+def is_even(n: int) -> bool:
+    if n % 2 == 0:
+        return True
+    return False
+
+for i in range(5):
+    if is_even(i):
+        print(i, "is even")
+```
+
+Mixing tabs and spaces causes a `TabError`.
+The community standard (PEP 8) is **4 spaces** — configure your editor once and forget about it.
+
+## What this module covers
+
+| Lesson | Core concept |
+|---|---|
+| **Variables & Types** | Dynamic typing, built-in types, truthiness |
+| **Control Flow** | `if`/`elif`/`else`, `for`, `while`, walrus `:=` |
+| **Functions** | `def`, parameters, return values, LEGB scope |
+| **Strings** | Methods, slicing, f-strings, immutability |
+
+Each lesson is self-contained and ends with a runnable playground, a callout, a quiz, and a progress checkpoint.
+
+## Your first Python script
+
+The script below demonstrates the core syntax you will encounter in every lesson: variables, a function, a loop, and an f-string.
+
+export const basicsIndexCode = `
+def describe(value: int) -> str:
+    """Return a short description of a number."""
+    if value < 0:
+        label = "negative"
+    elif value == 0:
+        label = "zero"
+    else:
+        label = "positive"
+    return f"{value} is {label}"
+
+numbers = [-3, 0, 7, 42]
+for n in numbers:
+    print(describe(n))
+
+total = sum(numbers)
+print(f"Sum: {total}")
+print("First program complete.")
+`.trim();
+
+<Playground client:visible code={basicsIndexCode} />
+
+<Callout title="Python is fully object-oriented">
+Everything in Python is an object — integers, strings, functions, classes, and even modules.
+This means every value has a type (`type(42)` returns `int`), a set of attributes, and a set of methods.
+You never need to "box" a primitive into a wrapper class as you would in Java.
+</Callout>
+
+export const quizBasicsIndex = [
+  {
+    q: "What does PEP 20 ('The Zen of Python') emphasise most strongly?",
+    options: [
+      "Maximum performance over clarity",
+      "Readability and having one obvious way to do things",
+      "Compatibility with C and C++",
+      "Strict static typing at all times"
+    ],
+    answer: 1
+  },
+  {
+    q: "How does Python delimit code blocks such as function bodies and if-statements?",
+    options: [
+      "Curly braces {}",
+      "BEGIN / END keywords",
+      "Consistent indentation",
+      "Semicolons at the end of each line"
+    ],
+    answer: 2
+  },
+  {
+    q: "Which PEP defines Python's community style guide (4-space indentation, line length, etc.)?",
+    options: ["PEP 8", "PEP 20", "PEP 3000", "PEP 484"],
+    answer: 0
+  },
+  {
+    q: "In Python, what is true of integers, strings, and functions?",
+    options: [
+      "They are primitives that cannot have methods",
+      "They are all objects with a type, attributes, and methods",
+      "Only functions are objects; integers are primitives",
+      "They must be declared before use"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="basics/index" questions={quizBasicsIndex} />
+
+<ProgressTracker client:visible id="basics/index" />

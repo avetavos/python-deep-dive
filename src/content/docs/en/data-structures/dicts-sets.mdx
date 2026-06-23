@@ -1,0 +1,150 @@
+---
+title: Dicts and Sets
+description: 'dict insertion order, get/setdefault/items, dict comprehensions, and set algebra in Python 3.11+.'
+sidebar:
+  order: 3
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Dicts — fast key-value lookup
+
+A **dict** maps hashable keys to arbitrary values.
+Since Python 3.7 the insertion order of keys is guaranteed and preserved.
+
+```python
+scores = {'alice': 95, 'bob': 87}
+scores['carol'] = 92         # add a new key
+print(scores['alice'])       # 95
+del scores['bob']            # remove a key
+print(scores)                # {'alice': 95, 'carol': 92}
+```
+
+### Safe access: `get` and `setdefault`
+
+Accessing a missing key with `[]` raises `KeyError`.
+Use `.get()` for a safe read with an optional default, or `.setdefault()` to insert a default value when the key is absent.
+
+```python
+scores = {'alice': 95, 'bob': 87}
+unknown = scores.get('dave', 0)      # returns 0 — no KeyError
+scores.setdefault('eve', 88)         # inserts eve=88 only if absent
+print(scores)
+# {'alice': 95, 'bob': 87, 'eve': 88}
+```
+
+### Iterating with `.items()`
+
+`.items()` yields `(key, value)` pairs, which you can unpack directly in a `for` loop.
+
+```python
+for name, score in scores.items():
+    print(f'{name}: {score}')
+```
+
+You can also iterate over `.keys()` (default) or `.values()` independently.
+
+### Dict comprehensions
+
+Like list comprehensions, dict comprehensions build a new dict in one expression.
+
+```python
+squared = {n: n**2 for n in range(1, 6)}
+# {1: 1, 2: 4, 3: 9, 4: 16, 5: 25}
+```
+
+## Sets — unique elements and set algebra
+
+A **set** is an unordered collection of unique hashable elements.
+It is optimised for `in` membership tests (`O(1)` average) and supports mathematical set operations.
+
+```python
+a = {1, 2, 3, 4}
+b = {3, 4, 5, 6}
+
+print(a | b)   # union:            {1, 2, 3, 4, 5, 6}
+print(a & b)   # intersection:     {3, 4}
+print(a - b)   # difference:       {1, 2}
+print(a ^ b)   # symmetric diff:   {1, 2, 5, 6}
+```
+
+Use `frozenset` for an immutable set (hashable, usable as a dict key or set element).
+
+## Full runnable demo
+
+export const dictsSetsCode = `
+# --- dict safe access ---
+scores = {'alice': 95, 'bob': 87}
+scores['carol'] = 92
+print('scores:', scores)
+
+unknown = scores.get('dave', 0)
+print('dave score:', unknown)
+
+scores.setdefault('eve', 88)
+print('after setdefault:', scores)
+
+for name, score in scores.items():
+    print(f'  {name}: {score}')
+
+# --- dict comprehension ---
+squared = {n: n**2 for n in range(1, 6)}
+print('squared:', squared)
+
+# --- set algebra ---
+a = {1, 2, 3, 4}
+b = {3, 4, 5, 6}
+print('union:', sorted(a | b))
+print('intersection:', sorted(a & b))
+print('difference:', sorted(a - b))
+print('symmetric diff:', sorted(a ^ b))
+`.trim();
+
+<Playground client:visible code={dictsSetsCode} />
+
+<Callout title="dict preserves insertion order (3.7+); sets are unordered">
+Since Python 3.7, `dict` guarantees that `list(d.keys())` returns keys in the order they were first inserted.
+Sets have no ordering guarantee — `sorted()` is the safe way to produce a reproducible sequence from a set.
+Note also that an empty `{}` creates a **dict**, not a set.
+To create an empty set, write `set()`.
+</Callout>
+
+export const quizDictsSets = [
+    {
+        q: "What does `scores.get('dave', 0)` return when 'dave' is not in the dict?",
+        options: [
+            "Raises KeyError",
+            "Returns None",
+            "Returns 0",
+            "Returns an empty dict"
+        ],
+        answer: 2
+    },
+    {
+        q: "What does `scores.setdefault('eve', 88)` do when 'eve' is already in scores?",
+        options: [
+            "Raises KeyError",
+            "Overwrites the existing value with 88",
+            "Does nothing — the existing value is kept",
+            "Deletes the key"
+        ],
+        answer: 2
+    },
+    {
+        q: "Which set operation returns elements that are in BOTH sets?",
+        options: ["a | b", "a & b", "a - b", "a ^ b"],
+        answer: 1
+    },
+    {
+        q: "How do you create an empty set in Python?",
+        options: ["{}", "set()", "[]", "frozenset({})"],
+        answer: 1
+    }
+];
+
+<Quiz client:visible id="data-structures/dicts-sets" questions={quizDictsSets} />
+
+<ProgressTracker client:visible id="data-structures/dicts-sets" />

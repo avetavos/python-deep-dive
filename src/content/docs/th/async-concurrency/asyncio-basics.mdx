@@ -1,0 +1,233 @@
+---
+title: 'asyncio พื้นฐาน'
+description: 'Event loop, async def coroutines, await, asyncio.run และ asyncio.gather — รากฐานของ async Python'
+sidebar:
+  order: 2
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Event loop
+
+`asyncio` ทำงานบน **event loop**: ตัว scheduler ที่เก็บ queue ของ coroutines และ callbacks,
+รันทีละตัว และสลับระหว่างกันเมื่อตัวใดหยุดที่ expression `await`
+
+ไม่มีการสร้าง OS threads ใดๆ concurrency เป็นแบบ **cooperative** — coroutine ต้องยกการควบคุมโดยสมัครใจด้วย `await` เพื่อให้ coroutines อื่นทำงานได้
+
+```python
+import asyncio
+
+async def say(message: str, delay: float) -> None:
+    await asyncio.sleep(delay)
+    print(message)
+
+async def main() -> None:
+    await say("Hello", 0.1)
+    await say("World", 0.1)
+
+asyncio.run(main())
+# Hello
+# World
+```
+
+ในตัวอย่างแบบ sequential นี้ `say("World", …)` ยังไม่เริ่มจนกว่า `say("Hello", …)` จะเสร็จสิ้น
+
+## `async def` และ coroutines
+
+ฟังก์ชันที่กำหนดด้วย `async def` คือ **coroutine function** การเรียกมันไม่ได้รันเนื้อหา — มันคืน **coroutine object** เนื้อหาจะรันเฉพาะเมื่อ coroutine ถูก await หรือถูก schedule บน event loop เท่านั้น
+
+```python
+import asyncio
+
+async def greet(name: str) -> str:
+    return f"Hello, {name}!"
+
+# การเรียก greet() คืน coroutine object — ยังไม่มีอะไรรัน
+coro = greet("Python")
+print(type(coro))          # <class 'coroutine'>
+
+# Await มันเพื่อรันเนื้อหาจริง
+result = asyncio.run(greet("Python"))
+print(result)              # Hello, Python!
+```
+
+## `await` หยุดและกลับมาทำงาน
+
+keyword `await` ใช้ได้เฉพาะภายในฟังก์ชัน `async def` เท่านั้น
+มันหยุด coroutine ปัจจุบันและยกการควบคุมกลับไปยัง event loop
+event loop รัน coroutines อื่นที่พร้อมแล้วกลับมาที่ coroutine นี้เมื่อ awaited object เสร็จสิ้น
+
+```python
+import asyncio
+
+async def fetch_data(label: str) -> str:
+    print(f"  {label}: starting fetch")
+    await asyncio.sleep(0.05)          # หยุดที่นี่
+    print(f"  {label}: fetch done")
+    return f"data-{label}"
+
+async def main() -> None:
+    result = await fetch_data("A")
+    print(result)
+
+asyncio.run(main())
+#   A: starting fetch
+#   A: fetch done
+# data-A
+```
+
+## `asyncio.run` — จุดเข้าหลัก
+
+`asyncio.run(coro)` สร้าง event loop ใหม่, รัน coroutine จนเสร็จสมบูรณ์, ปิด loop และคืนค่าผลลัพธ์
+มันเป็น entry point มาตรฐานสำหรับโปรแกรม async
+
+```python
+import asyncio
+
+async def compute(x: int) -> int:
+    await asyncio.sleep(0)     # yield ให้ event loop ครั้งหนึ่ง
+    return x ** 2
+
+result = asyncio.run(compute(7))
+print(result)    # 49
+```
+
+เรียก `asyncio.run` ครั้งเดียวต่อโปรแกรม ที่ระดับบนสุด อย่า nest การเรียก `asyncio.run` — การเรียกภายในจะ raise `RuntimeError: This event loop is already running`
+
+## `asyncio.gather` — รัน coroutines แบบ concurrent
+
+`asyncio.gather(*coroutines)` กำหนด schedule coroutines ทั้งหมดพร้อมกันและรอทั้งหมด
+ผลลัพธ์คืนในลำดับเดียวกับ input coroutines
+
+```python
+import asyncio
+
+async def step(label: str, delay: float) -> str:
+    await asyncio.sleep(delay)
+    return f"{label} done"
+
+async def main() -> None:
+    results = await asyncio.gather(
+        step("A", 0.3),
+        step("B", 0.1),
+        step("C", 0.2),
+    )
+    print(results)
+    # ['A done', 'B done', 'C done']   — ลำดับ input เสมอ
+    # เวลารวม ≈ 0.3 วินาที ไม่ใช่ 0.6 วินาที
+
+asyncio.run(main())
+```
+
+ผลลัพธ์อยู่ใน **ลำดับ input เสมอ** ไม่ว่าจะเสร็จในลำดับใด
+ซึ่งเหมือนกับ `Promise.all` ของ JavaScript
+
+## การจัดการ failure ด้วย `return_exceptions=True`
+
+โดยค่าเริ่มต้น หาก coroutine ใด raise, `gather` จะส่งต่อ exception แรกและยกเลิกที่เหลือ
+ส่ง `return_exceptions=True` เพื่อรวบรวม exceptions เป็น values แทน (เหมือน `Promise.allSettled`)
+
+```python
+import asyncio
+
+async def risky(n: int) -> int:
+    if n == 2:
+        raise ValueError(f"n={n} is bad")
+    return n * 10
+
+async def main() -> None:
+    results = await asyncio.gather(
+        risky(1),
+        risky(2),
+        risky(3),
+        return_exceptions=True,
+    )
+    for r in results:
+        if isinstance(r, Exception):
+            print(f"Error: {r}")
+        else:
+            print(f"OK: {r}")
+
+asyncio.run(main())
+# OK: 10
+# Error: n=2 is bad
+# OK: 30
+```
+
+## Python 3.11+: `asyncio.TaskGroup`
+
+`asyncio.TaskGroup` (3.11+) เป็น structured-concurrency ทางเลือกแทน `gather`
+หาก task ใด raise, group จะยกเลิก tasks ที่เหลือทั้งหมดโดยอัตโนมัติ
+
+```python
+import asyncio
+
+async def work(label: str, delay: float) -> str:
+    await asyncio.sleep(delay)
+    return f"{label} complete"
+
+async def main() -> None:
+    async with asyncio.TaskGroup() as tg:
+        task_a = tg.create_task(work("A", 0.2))
+        task_b = tg.create_task(work("B", 0.1))
+    # ทั้งสอง task เสร็จสิ้นที่นี่ exceptions ถูก re-raise อัตโนมัติ
+    print(task_a.result())
+    print(task_b.result())
+
+asyncio.run(main())
+```
+
+<Callout title="รันโปรแกรม asyncio บนเครื่องของคุณ">
+โค้ดตัวอย่างในหน้านี้ใช้ `asyncio.run(main())` — entry point มาตรฐาน
+in-browser runner มี event loop รันอยู่แล้ว ดังนั้น `asyncio.run()` จะ raise `RuntimeError` ที่นั่น
+เพื่อรันตัวอย่างเหล่านี้ วาง code ลงในไฟล์ `.py` แล้วรันด้วย `python3 asyncio_basics.py`
+</Callout>
+
+export const quizAsyncioBasics = [
+  {
+    q: "การเรียกฟังก์ชัน `async def` คืนอะไรก่อนที่คุณจะ `await` มัน?",
+    options: [
+      "ค่า return ของ function body",
+      "coroutine object",
+      "Future",
+      "None"
+    ],
+    answer: 1
+  },
+  {
+    q: "entry point มาตรฐานสำหรับรัน top-level async coroutine คืออะไร?",
+    options: [
+      "loop.run_until_complete(coro)",
+      "asyncio.run(coro)",
+      "await coro ที่ระดับ module",
+      "asyncio.start(coro)"
+    ],
+    answer: 1
+  },
+  {
+    q: "`asyncio.gather(a(), b(), c())` รับประกันอะไรเกี่ยวกับลำดับผลลัพธ์?",
+    options: [
+      "ผลลัพธ์อยู่ในลำดับ completion — coroutine ที่เร็วสุดก่อน",
+      "ผลลัพธ์อยู่ในลำดับ input ไม่ว่า coroutine ไหนจะเสร็จก่อน",
+      "ผลลัพธ์เรียงตามตัวอักษรของชื่อ coroutine",
+      "ลำดับไม่แน่นอน"
+    ],
+    answer: 1
+  },
+  {
+    q: "argument ใดใน `asyncio.gather` ทำให้มันคืน exceptions เป็น values แทนการส่งต่อ?",
+    options: [
+      "ignore_errors=True",
+      "safe_mode=True",
+      "return_exceptions=True",
+      "collect_errors=True"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="async-concurrency/asyncio-basics" questions={quizAsyncioBasics} />
+
+<ProgressTracker client:visible id="async-concurrency/asyncio-basics" />

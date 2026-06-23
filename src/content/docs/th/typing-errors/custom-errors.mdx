@@ -1,0 +1,193 @@
+---
+title: Custom Errors
+description: 'การนิยาม exception class โดย subclass Exception, เพิ่ม custom attribute, และสร้าง exception hierarchy ใน Python 3.11+'
+sidebar:
+  order: 5
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ทำไม custom exception จึงสำคัญ
+
+Exception built-in ของ Python (`ValueError`, `TypeError`, `RuntimeError`, …) มีความหมายทั่วไปมาก
+เมื่อโค้ด raise `ValueError` caller ไม่รู้ว่ามาจาก input ของผู้ใช้, ไฟล์ config ที่เสีย, หรือ network response
+
+Custom exception class ให้ error ของคุณมีประเภทที่ชัดเจน ให้ caller จับได้ตามต้องการ, เพิ่ม attribute ที่มีโครงสร้าง (เช่น HTTP status code หรือชื่อ field), และบอกได้ว่าแต่ละส่วนของแอปพลิเคชันอาจเกิดอะไรขึ้น
+
+## การ subclass `Exception`
+
+Custom exception ขั้นต่ำคือ class ที่สืบทอดจาก `Exception`:
+
+```python
+class AppError(Exception):
+    """Base class for all application errors."""
+```
+
+แค่นี้ก็พอสำหรับ raise และ catch ตามชื่อได้:
+
+```python
+raise AppError("something went wrong")
+```
+
+## การเพิ่ม custom attribute
+
+Override `__init__` เพื่อแนบข้อมูลเพิ่มเติมกับ exception:
+
+```python
+class AppError(Exception):
+    def __init__(self, message: str, code: int = 0) -> None:
+        super().__init__(message)   # ส่ง message ให้ Exception
+        self.code = code
+```
+
+Caller สามารถอ่าน `err.code` เพื่อรับข้อมูลที่มีโครงสร้างโดยไม่ต้อง parse string ข้อความ
+
+## การสร้าง hierarchy
+
+สร้าง subclass สำหรับแต่ละหมวดหมู่ความผิดพลาด ทุก `NotFoundError` ก็เป็น `AppError` ด้วย ดังนั้น caller จับได้ที่ระดับความเฉพาะเจาะจงที่ต้องการ
+
+```python
+class ValidationError(AppError):
+    def __init__(self, field: str, message: str) -> None:
+        super().__init__(f'Validation failed on "{field}": {message}', code=400)
+        self.field = field
+
+class NotFoundError(AppError):
+    def __init__(self, resource: str, resource_id: int) -> None:
+        super().__init__(f"{resource} id={resource_id} not found", code=404)
+        self.resource = resource
+        self.resource_id = resource_id
+```
+
+การจับที่ระดับต่างกัน:
+
+```python
+try:
+    raise ValidationError("email", "must contain @")
+except ValidationError as e:
+    print(f"Field {e.field!r} invalid: {e}")   # เฉพาะเจาะจง
+except AppError as e:
+    print(f"App error [{e.code}]: {e}")          # กว้างกว่า
+```
+
+## `str(exception)` และ `repr(exception)`
+
+`str(e)` คืน message ที่ส่งให้ `super().__init__()` นี่คือสิ่งที่แสดงเมื่อ `print(e)` หรือใช้ใน f-string
+
+`repr(e)` คืน `ExceptionClass(message)` — ใช้สำหรับ logging
+
+## Demo แบบ runnable เต็มรูปแบบ
+
+export const customErrorsCode = `
+# --- base application error ---
+class AppError(Exception):
+    """Base class for all application errors."""
+    def __init__(self, message: str, code: int = 0) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+# --- specific subclasses ---
+class ValidationError(AppError):
+    """Raised when input validation fails."""
+    def __init__(self, field: str, message: str) -> None:
+        super().__init__(
+            f'Validation failed on field "{field}": {message}',
+            code=400,
+        )
+        self.field = field
+
+
+class NotFoundError(AppError):
+    """Raised when a requested resource does not exist."""
+    def __init__(self, resource: str, resource_id: int) -> None:
+        super().__init__(
+            f"{resource} with id={resource_id} not found",
+            code=404,
+        )
+        self.resource = resource
+        self.resource_id = resource_id
+
+
+# --- catching at different levels ---
+errors = [
+    ValidationError("email", "must contain @"),
+    NotFoundError("User", 42),
+    AppError("generic app failure", code=500),
+]
+
+for err in errors:
+    try:
+        raise err
+    except ValidationError as e:
+        print(f"[{e.code}] Validation on {e.field!r}: {e}")
+    except NotFoundError as e:
+        print(f"[{e.code}] {e.resource} not found (id={e.resource_id})")
+    except AppError as e:
+        print(f"[{e.code}] AppError: {e}")
+
+# --- isinstance hierarchy ---
+print()
+e = ValidationError("name", "too short")
+print(f"ValidationError? {isinstance(e, ValidationError)}")
+print(f"AppError?        {isinstance(e, AppError)}")
+print(f"Exception?       {isinstance(e, Exception)}")
+print(f"BaseException?   {isinstance(e, BaseException)}")
+`.trim();
+
+<Playground client:visible code={customErrorsCode} />
+
+<Callout title="Subclass Exception ไม่ใช่ BaseException สำหรับ application error">
+`BaseException` คือ root ของ hierarchy ทั้งหมดและรวมถึง `KeyboardInterrupt`, `SystemExit`, และ `GeneratorExit` — สัญญาณที่ควรหยุดโปรแกรม การจับ `BaseException` จะกลืนสัญญาณเหล่านั้นโดยไม่ตั้งใจ
+Subclass `Exception` สำหรับ error ระดับแอปพลิเคชันทุกอัน Subclass `BaseException` โดยตรงเฉพาะเมื่อเขียน framework-level code ที่ต้องการจับสัญญาณหยุดโปรแกรมจริงๆ เท่านั้น
+</Callout>
+
+export const quizCustomErrors = [
+  {
+    q: "ทำไม custom application exception จึงควร subclass `Exception` แทน `BaseException`?",
+    options: [
+      "Exception สร้าง instance ได้เร็วกว่า BaseException",
+      "BaseException รวมถึง KeyboardInterrupt และ SystemExit — การ subclass จากมันทำให้จับสัญญาณหยุดโปรแกรมโดยไม่ตั้งใจ",
+      "Exception รองรับ custom attribute แต่ BaseException ไม่รองรับ",
+      "BaseException ไม่สามารถ raise ด้วย message string"
+    ],
+    answer: 1
+  },
+  {
+    q: "กำหนด hierarchy `NotFoundError -> AppError -> Exception` clause `except` ใดที่จับ `NotFoundError` ได้?",
+    options: [
+      "เฉพาะ `except NotFoundError`",
+      "`except NotFoundError`, `except AppError`, และ `except Exception` ทั้งหมด match",
+      "เฉพาะ clause เฉพาะที่สุด (`except NotFoundError`) เท่านั้น",
+      "ไม่มีเลย — custom exception ต้องจับด้วย `except Exception`"
+    ],
+    answer: 1
+  },
+  {
+    q: "การเรียก `super().__init__(message)` ภายใน `__init__` ของ custom exception ทำอะไร?",
+    options: [
+      "ไม่ทำอะไร — เป็น optional และไม่มีผล",
+      "ส่ง message ให้ Exception เพื่อให้ str(err) คืน message นั้น",
+      "ลงทะเบียน exception ใน traceback",
+      "แปลง message เป็น bytes object"
+    ],
+    answer: 1
+  },
+  {
+    q: "มี `except ValidationError` ก่อน `except AppError` ใน try block และเกิด ValidationError ขึ้น clause ใดทำงาน?",
+    options: [
+      "ทั้งสอง clause ทำงานตามลำดับ",
+      "except AppError ทำงานเพราะกว้างกว่า",
+      "except ValidationError ทำงาน — Python ใช้ clause แรกที่ match",
+      "TypeError ถูก raise เพราะมีสอง clause ที่ match"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="typing-errors/custom-errors" questions={quizCustomErrors} />
+
+<ProgressTracker client:visible id="typing-errors/custom-errors" />

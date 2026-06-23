@@ -1,5 +1,112 @@
 ---
-title: Functions In Depth
-description: Arguments, closures, decorators, generators, and iterators.
+title: 'เจาะลึกเรื่อง Function'
+description: 'ใน Python นั้น function เป็น first-class object โมดูลนี้ครอบคลุมเรื่อง args/kwargs, closure, decorator และ generator'
+sidebar:
+  order: 1
 ---
-Coming soon.
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Function เป็น first-class object
+
+ใน Python นั้น function คือค่า (value) ตัวหนึ่ง ไม่ใช่ syntax พิเศษ และไม่ใช่ของชั้นรอง
+เราสามารถกำหนด function ให้กับตัวแปร เก็บไว้ใน list ส่งเป็น argument หรือ return ออกมาจากอีก function หนึ่งได้
+คุณสมบัตินี้เรียกว่าสถานะ **first-class** ซึ่งเป็นรากฐานของทุก pattern ขั้นสูงในโมดูลนี้
+
+```python
+def greet(name: str) -> str:
+    return f"Hello, {name}!"
+
+# Assign to a variable
+say_hi = greet
+
+# Pass as an argument
+def apply(fn, value):
+    return fn(value)
+
+result = apply(greet, "Python")
+print(result)  # Hello, Python!
+```
+
+เนื่องจาก `greet` เป็นแค่ object ตัวหนึ่ง `say_hi` และ `greet` จึงชี้ไปยัง function ตัวเดียวกัน
+การเรียก `say_hi("World")` จึงเหมือนกับการเรียก `greet("World")` ทุกประการ
+
+## โมดูลนี้ครอบคลุมอะไรบ้าง
+
+| บทเรียน | แนวคิดหลัก |
+|---|---|
+| **Args & Kwargs** | parameter แบบ positional, keyword, variadic และ keyword-only |
+| **Closures** | nested function, free variable และ `nonlocal` |
+| **Decorators** | function ที่ห่อ function อื่น; `functools.wraps` |
+| **Generators** | `yield`, lazy evaluation และ `StopIteration` |
+
+แต่ละบทเรียนนั้นจบในตัวเอง และต่อยอดจากรากฐานนี้ นั่นคือ function เป็น object ที่เราจัดการได้อย่างอิสระ
+
+## เดโมที่รันได้อันแรก
+
+โค้ดด้านล่างแสดงสองแนวคิดหลักพร้อมกัน ได้แก่ การส่ง function เป็น argument และการ return function เป็นค่ากลับมา
+
+export const indexDemoCode = `
+def make_multiplier(factor: int):
+    def multiply(x: int) -> int:
+        return x * factor
+    return multiply
+
+double = make_multiplier(2)
+triple = make_multiplier(3)
+
+numbers = [1, 2, 3, 4, 5]
+doubled = list(map(double, numbers))
+tripled = list(map(triple, numbers))
+
+print("doubled:", doubled)
+print("tripled:", tripled)
+
+# Functions are objects — we can store them in a list
+ops = [double, triple, make_multiplier(10)]
+for op in ops:
+    print(op(7))
+`.trim();
+
+<Playground client:visible code={indexDemoCode} />
+
+<Callout title="Function เป็น object">
+ทุก function ใน Python เป็น instance ของ built-in type ที่ชื่อ `function` เราสามารถตรวจสอบมันได้
+`type(greet)` จะคืนค่า `<class 'function'>` นี่คือเหตุผลว่าทำไมการส่ง function เข้าไปใน `map()`, `sorted()`
+และ `filter()` ถึงทำงานได้ เพราะมันแค่รับ callable object ใด ๆ ก็ได้
+</Callout>
+
+export const quizIndex = [
+  {
+    q: "คำว่า 'first-class function' ใน Python หมายความว่าอย่างไร?",
+    options: [
+      "Function ทำงานเร็วกว่า method",
+      "Function สามารถถูกส่งเป็น argument, return กลับ และ assign ให้ตัวแปรได้",
+      "Function ที่นิยามที่ระดับ module จะมี global scope",
+      "Function ถูก compile ก่อนการทำงาน"
+    ],
+    answer: 1
+  },
+  {
+    q: "Built-in function ตัวใดที่รับ function และ iterable เป็น argument?",
+    options: ["apply()", "map()", "call()", "exec()"],
+    answer: 1
+  },
+  {
+    q: "หลังจากเขียน `f = greet` แล้ว ข้อใดถูกต้อง?",
+    options: [
+      "f เป็นสำเนา (copy) ของ greet",
+      "f และ greet เป็นคนละ function กัน",
+      "f และ greet อ้างถึง function object ตัวเดียวกัน",
+      "f จะเรียกใช้ได้ก็ต่อเมื่อ greet ถูกลบทิ้งก่อน"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="functions-deep/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="functions-deep/index" />

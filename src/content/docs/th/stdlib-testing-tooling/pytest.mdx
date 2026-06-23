@@ -1,0 +1,160 @@
+---
+title: 'pytest — การทดสอบ Python สมัยใหม่'
+description: 'เขียนฟังก์ชันทดสอบ ใช้ assert แบบธรรมดา fixtures และ parametrize ด้วย pytest'
+sidebar:
+  order: 3
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+pytest คือมาตรฐานโดยพฤตินัยสำหรับการทดสอบโค้ด Python ต่างจากโมดูล `unittest` ที่มีอยู่ในตัว pytest ไม่ต้องการการสืบทอดคลาส ไม่ต้องการเมธอด assertion พิเศษ และไม่มี boilerplate — คุณเขียนแค่ฟังก์ชันธรรมดาและคำสั่ง `assert` ธรรมดา ระบบค้นหาเทส ผลลัพธ์เมื่อเกิดความล้มเหลวที่ละเอียด ระบบ fixture และระบบนิเวศปลั๊กอินทำให้ pytest เป็นเครื่องมือแรกที่ควรหยิบใช้ในทุกโปรเจกต์ Python
+
+## การเขียนฟังก์ชันทดสอบ
+
+pytest ค้นหาไฟล์ทดสอบที่มีชื่อขึ้นต้นด้วย `test_` หรือลงท้ายด้วย `_test.py` และภายในนั้น ฟังก์ชันที่มีชื่อขึ้นต้นด้วย `test_` ไม่จำเป็นต้องมีคลาส — ฟังก์ชันระดับโมดูลก็เพียงพอ
+
+```python
+# math_utils.py
+def add(a: int, b: int) -> int:
+    return a + b
+
+def divide(a: float, b: float) -> float:
+    if b == 0:
+        raise ValueError("Cannot divide by zero")
+    return a / b
+```
+
+```python
+# test_math_utils.py
+from math_utils import add, divide
+import pytest
+
+def test_add_positive():
+    assert add(2, 3) == 5
+
+def test_add_negative():
+    assert add(-1, -2) == -3
+
+def test_divide_normal():
+    assert divide(10, 2) == 5.0
+
+def test_divide_by_zero():
+    with pytest.raises(ValueError, match="Cannot divide by zero"):
+        divide(1, 0)
+```
+
+## การรันการทดสอบ
+
+```bash
+# run all tests
+python -m pytest
+
+# verbose output
+python -m pytest -v
+
+# run only tests matching a keyword
+python -m pytest -k "divide"
+```
+
+## Fixtures
+
+Fixture คือฟังก์ชัน setup (และ teardown) ที่นำกลับมาใช้ซ้ำได้ pytest จะส่งผ่านเข้าสู่ฟังก์ชันทดสอบตามชื่อพารามิเตอร์ — ไม่ต้องมีคลาสฐาน ไม่ต้องมีเมธอด `setUp` ใช้ `yield` เพื่อแยกส่วน setup ออกจาก teardown
+
+```python
+import pytest
+
+@pytest.fixture
+def sample_data():
+    """Provide a list of numbers for testing."""
+    return [1, 2, 3, 4, 5]
+
+def test_sum(sample_data):
+    assert sum(sample_data) == 15
+
+def test_length(sample_data):
+    assert len(sample_data) == 5
+
+@pytest.fixture
+def db_connection():
+    """Setup and teardown a fake DB connection."""
+    conn = {"connected": True}   # imagine a real DB here
+    yield conn
+    conn["connected"] = False    # teardown runs after test
+
+def test_db(db_connection):
+    assert db_connection["connected"] is True
+```
+
+## Parametrize
+
+`@pytest.mark.parametrize` รันฟังก์ชันทดสอบเดียวกันหลายครั้งด้วยชุดข้อมูล input ที่แตกต่างกัน ทำให้ test suite กระชับและเพิ่ม edge case ได้ง่าย
+
+```python
+import pytest
+from math_utils import add
+
+@pytest.mark.parametrize("a, b, expected", [
+    (1, 2, 3),
+    (0, 0, 0),
+    (-1, 1, 0),
+    (100, -50, 50),
+])
+def test_add_parametrized(a, b, expected):
+    assert add(a, b) == expected
+```
+
+## conftest.py — shared fixtures
+
+การวาง fixture ไว้ในไฟล์ `conftest.py` ทำให้ fixture นั้นใช้ได้กับไฟล์ทดสอบทั้งหมดในไดเรกทอรีเดียวกันและไดเรกทอรีย่อย โดยไม่ต้อง import เพิ่มเติม
+
+```python
+# conftest.py  (place in project root or test dir)
+import pytest
+
+@pytest.fixture(scope="session")
+def app_config():
+    return {"debug": True, "db_url": "sqlite:///:memory:"}
+```
+
+<Callout title="assert แบบธรรมดาของ pytest ฉลาดกว่าที่คิด">
+pytest เขียนใหม่คำสั่ง `assert` ในขั้นตอน collection เมื่อ assertion ล้มเหลว pytest จะแสดงค่าจริงเทียบกับค่าที่คาดหวัง diff สำหรับ collection และ expression เต็มรูปแบบ — โดยที่คุณไม่ต้องเขียน `assertEqual(a, b)` นี่คือเหตุผลหลักที่ควรเลือกใช้ pytest แทน `unittest`
+</Callout>
+
+export const quizPytest = [
+    {
+        q: "ข้อตกลงการตั้งชื่อใดที่ไฟล์ทดสอบและฟังก์ชันทดสอบต้องปฏิบัติตามเพื่อให้ pytest ค้นพบ?",
+        options: [
+            "ชื่ออะไรก็ได้ pytest สแกนไฟล์ .py ทั้งหมด",
+            "ไฟล์ต้องขึ้นต้นด้วย test_ หรือลงท้ายด้วย _test.py; ฟังก์ชันต้องขึ้นต้นด้วย test_",
+            "ฟังก์ชันต้องอยู่ในคลาสที่สืบทอด TestCase",
+            "ไฟล์ต้องชื่อว่า tests.py",
+        ],
+        answer: 1,
+    },
+    {
+        q: "`@pytest.fixture` ทำอะไร?",
+        options: [
+            "ทำเครื่องหมายการทดสอบว่าคาดว่าจะล้มเหลว",
+            "กำหนดฟังก์ชัน setup ที่นำกลับมาใช้ซ้ำได้และถูกส่งเข้าสู่การทดสอบตามชื่อพารามิเตอร์",
+            "ป้องกันไม่ให้การทดสอบรันใน CI",
+            "แทนที่ assert ด้วย assertEqual",
+        ],
+        answer: 1,
+    },
+    {
+        q: "`@pytest.mark.parametrize` ทำอะไรได้?",
+        options: [
+            "รันการทดสอบเพียงครั้งเดียวด้วยค่าเริ่มต้น",
+            "รันฟังก์ชันทดสอบเดียวกันหลายครั้งด้วยชุด input/expected ที่แตกต่างกัน",
+            "ข้ามการทดสอบหากไม่มีการตั้งค่า flag",
+            "ทำเครื่องหมายการทดสอบว่าช้า",
+        ],
+        answer: 1,
+    },
+];
+
+<Quiz client:visible id="stdlib-testing-tooling/pytest" questions={quizPytest} />
+
+<ProgressTracker client:visible id="stdlib-testing-tooling/pytest" />
