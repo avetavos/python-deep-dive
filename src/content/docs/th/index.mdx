@@ -1,6 +1,60 @@
 ---
 title: Python Deep Dive
-description: Master the Python language from the ground up.
+description: เชี่ยวชาญภาษา Python ตั้งแต่พื้นฐาน — syntax, data model, ฟังก์ชัน, typing, async และ standard library
 template: splash
+hero:
+  tagline: คอร์สเจาะลึกตัวภาษา Python แบบ standalone ตัวอย่างส่วนใหญ่รันสดในเบราว์เซอร์ด้วย Pyodide — แก้แล้วรันใหม่ได้ ไม่ต้องติดตั้ง สร้างความเชี่ยวชาญให้แน่นก่อนจะไปใช้เฟรมเวิร์กใด ๆ
+  actions:
+    - text: เริ่มที่นี่
+      link: /python-deep-dive/th/basics/
+      icon: right-arrow
+      variant: primary
+    - text: ข้ามไปที่ Functions In Depth
+      link: /python-deep-dive/th/functions-deep/
+      icon: rocket
 ---
-Coming soon.
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## สิ่งที่คุณจะได้เรียน
+
+<CardGrid>
+  <Card title="Basics & Syntax" icon="seti:python">
+    ตัวแปร &amp; type, control flow, ฟังก์ชัน, string &amp; f-string [เริ่ม →](/python-deep-dive/th/basics/)
+  </Card>
+  <Card title="Data Structures" icon="list-format">
+    list &amp; tuple, dict &amp; set, comprehension, slicing [สำรวจ →](/python-deep-dive/th/data-structures/)
+  </Card>
+  <Card title="OOP & the Data Model" icon="setting">
+    class, dunder method, property, dataclass [สร้างโมเดล →](/python-deep-dive/th/oop-data-model/)
+  </Card>
+  <Card title="Functions In Depth" icon="rocket">
+    args &amp; kwargs, closure, decorator, generator [เจาะลึก →](/python-deep-dive/th/functions-deep/)
+  </Card>
+  <Card title="Typing & Errors" icon="approve-check">
+    type hint, exception, context manager, custom error [เรียน →](/python-deep-dive/th/typing-errors/)
+  </Card>
+  <Card title="Async & Concurrency" icon="bars">
+    asyncio, async/await, GIL &amp; thread, multiprocessing [คอนเคอร์เรนซี →](/python-deep-dive/th/async-concurrency/)
+  </Card>
+  <Card title="Stdlib, Testing & Tooling" icon="open-book">
+    ทัวร์ standard library, pytest, venv &amp; pip, packaging [ส่งงานจริง →](/python-deep-dive/th/stdlib-testing-tooling/)
+  </Card>
+</CardGrid>
+
+## คอร์สนี้ทำงานยังไง
+
+<CardGrid>
+  <Card title="รันในเบราว์เซอร์" icon="rocket">
+    ตัวอย่าง Python รันสดด้วย Pyodide (WebAssembly) — แก้และรันใหม่ได้ ไม่ต้องติดตั้ง
+  </Card>
+  <Card title="เน้นตัวภาษา" icon="seti:python">
+    เจาะลึกตัวภาษาและ standard library — เป็นพื้นฐานก่อนไปเฟรมเวิร์กเว็บใด ๆ
+  </Card>
+  <Card title="แบบทดสอบ & ความคืบหน้า" icon="bars">
+    ทบทวนความเข้าใจหลังแต่ละบท ความคืบหน้าถูกบันทึกไว้ในเครื่อง
+  </Card>
+  <Card title="สองภาษา" icon="translate">
+    มีทั้งภาษาอังกฤษและไทย — สลับได้ตลอดจากแถบด้านบน
+  </Card>
+</CardGrid>

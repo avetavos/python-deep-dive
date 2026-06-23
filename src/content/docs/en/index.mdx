@@ -1,6 +1,60 @@
 ---
 title: Python Deep Dive
-description: Master the Python language from the ground up.
+description: Master the Python language from the ground up — syntax, data model, functions, typing, async, and the standard library.
 template: splash
+hero:
+  tagline: A standalone, language-core course on Python itself. Most examples run live in your browser via Pyodide — edit and re-run, no install. Build deep fluency before reaching for any framework.
+  actions:
+    - text: Start here
+      link: /python-deep-dive/en/basics/
+      icon: right-arrow
+      variant: primary
+    - text: Jump to Functions In Depth
+      link: /python-deep-dive/en/functions-deep/
+      icon: rocket
 ---
-Coming soon.
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## What you'll learn
+
+<CardGrid>
+  <Card title="Basics & Syntax" icon="seti:python">
+    Variables &amp; types, control flow, functions, strings &amp; f-strings. [Start →](/python-deep-dive/en/basics/)
+  </Card>
+  <Card title="Data Structures" icon="list-format">
+    Lists &amp; tuples, dicts &amp; sets, comprehensions, slicing. [Explore →](/python-deep-dive/en/data-structures/)
+  </Card>
+  <Card title="OOP & the Data Model" icon="setting">
+    Classes, dunder methods, properties, dataclasses. [Model →](/python-deep-dive/en/oop-data-model/)
+  </Card>
+  <Card title="Functions In Depth" icon="rocket">
+    Args &amp; kwargs, closures, decorators, generators. [Go deep →](/python-deep-dive/en/functions-deep/)
+  </Card>
+  <Card title="Typing & Errors" icon="approve-check">
+    Type hints, exceptions, context managers, custom errors. [Learn →](/python-deep-dive/en/typing-errors/)
+  </Card>
+  <Card title="Async & Concurrency" icon="bars">
+    asyncio, async/await, the GIL &amp; threads, multiprocessing. [Concurrency →](/python-deep-dive/en/async-concurrency/)
+  </Card>
+  <Card title="Stdlib, Testing & Tooling" icon="open-book">
+    The standard library tour, pytest, venv &amp; pip, packaging. [Ship it →](/python-deep-dive/en/stdlib-testing-tooling/)
+  </Card>
+</CardGrid>
+
+## How this course works
+
+<CardGrid>
+  <Card title="Runs in your browser" icon="rocket">
+    Python examples execute live via Pyodide (WebAssembly) — editable and re-runnable, no setup.
+  </Card>
+  <Card title="Language-core focus" icon="seti:python">
+    The language and the standard library in depth — a foundation before any web framework.
+  </Card>
+  <Card title="Quizzes & progress" icon="bars">
+    Check your understanding after each lesson; your progress is saved locally.
+  </Card>
+  <Card title="Bilingual" icon="translate">
+    Available in English and ไทย — switch anytime from the top bar.
+  </Card>
+</CardGrid>
