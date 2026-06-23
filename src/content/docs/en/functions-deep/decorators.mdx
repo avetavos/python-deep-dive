@@ -1,0 +1,233 @@
+---
+title: Decorators
+description: 'Functions that wrap functions — logging decorators, functools.wraps, and parameterized decorators in Python.'
+sidebar:
+  order: 4
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Functions that transform functions
+
+A **decorator** is a function that takes a function as its argument and returns a new function.
+Because functions are first-class objects in Python, a decorator is just an ordinary function — there is no special syntax involved until you add `@`.
+
+```python
+def my_decorator(func):
+    def wrapper(*args, **kwargs):
+        print("Before")
+        result = func(*args, **kwargs)
+        print("After")
+        return result
+    return wrapper
+
+def say_hello():
+    print("Hello!")
+
+say_hello = my_decorator(say_hello)   # manual decoration
+say_hello()
+# Before
+# Hello!
+# After
+```
+
+## The `@` syntax
+
+The `@decorator` syntax is shorthand — it applies the decorator automatically right after the function is defined.
+These two are exactly equivalent:
+
+```python
+@my_decorator
+def say_hello():
+    print("Hello!")
+
+# is identical to:
+def say_hello():
+    print("Hello!")
+say_hello = my_decorator(say_hello)
+```
+
+## Preserving metadata with `functools.wraps`
+
+Without `functools.wraps`, the wrapper function replaces the original's `__name__`, `__doc__`, and other attributes.
+This breaks introspection, logging, and documentation tools.
+
+```python
+import functools
+
+def my_decorator(func):
+    @functools.wraps(func)    # copies __name__, __doc__, __annotations__, etc.
+    def wrapper(*args, **kwargs):
+        print(f"Calling {func.__name__}")
+        return func(*args, **kwargs)
+    return wrapper
+
+@my_decorator
+def add(a: int, b: int) -> int:
+    """Return the sum of a and b."""
+    return a + b
+
+print(add.__name__)   # add  (not 'wrapper')
+print(add.__doc__)    # Return the sum of a and b.
+```
+
+Always apply `@functools.wraps(func)` to the inner `wrapper` function in every decorator you write.
+
+## A practical logging decorator
+
+```python
+import functools
+import time
+
+def timed(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        elapsed = time.perf_counter() - start
+        print(f"{func.__name__} finished in {elapsed:.6f}s")
+        return result
+    return wrapper
+
+@timed
+def compute(n: int) -> int:
+    return sum(range(n))
+```
+
+## Decorators that take arguments
+
+To pass arguments to a decorator, add one more level of nesting: a factory function that accepts the arguments and returns the actual decorator.
+
+```python
+import functools
+
+def retry(max_attempts: int = 3):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as exc:
+                    if attempt == max_attempts:
+                        raise
+                    print(f"Attempt {attempt} failed: {exc}. Retrying...")
+        return wrapper
+    return decorator
+
+@retry(max_attempts=3)
+def fetch(url: str) -> str:
+    # would call an HTTP client here
+    return f"Response from {url}"
+```
+
+`@retry(max_attempts=3)` first calls `retry(max_attempts=3)`, which returns `decorator`.
+Python then applies `decorator` to `fetch` — so the full call chain is `fetch = retry(3)(fetch)`.
+
+## Full runnable demo
+
+export const decoratorsCode = `
+import functools
+
+def log_calls(level: str = "INFO"):
+    """Decorator factory: log calls at the given level."""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            arg_str = ", ".join(
+                [repr(a) for a in args] +
+                [f"{k}={v!r}" for k, v in kwargs.items()]
+            )
+            print(f"[{level}] {func.__name__}({arg_str}) called")
+            result = func(*args, **kwargs)
+            print(f"[{level}] {func.__name__} returned {result!r}")
+            return result
+        return wrapper
+    return decorator
+
+
+@log_calls(level="DEBUG")
+def add(a: int, b: int) -> int:
+    """Return the sum of a and b."""
+    return a + b
+
+
+@log_calls()
+def greet(name: str, greeting: str = "Hello") -> str:
+    return f"{greeting}, {name}!"
+
+
+print("--- add ---")
+add(3, 4)
+
+print("--- greet ---")
+greet("Alice")
+greet("Bob", greeting="Hi")
+
+print("--- metadata preserved ---")
+print(add.__name__)
+print(add.__doc__)
+`.trim();
+
+<Playground client:visible code={decoratorsCode} />
+
+<Callout title="@deco is sugar for func = deco(func)">
+The `@` syntax is pure syntactic sugar — there is no special protocol behind it.
+`@my_decorator` applied to `def f(): ...` is exactly `f = my_decorator(f)`.
+This means decorators compose from bottom to top:
+
+```python
+@a
+@b
+@c
+def f(): ...
+# equivalent to: f = a(b(c(f)))
+```
+
+The innermost decorator (`c`) is applied first, then `b`, then `a`.
+</Callout>
+
+export const quizDecorators = [
+  {
+    q: "What does `@my_decorator` above a function definition do?",
+    options: [
+      "Creates a subclass of the function",
+      "Applies my_decorator(func) and rebinds the name to the result",
+      "Calls the function immediately at import time",
+      "Marks the function as deprecated"
+    ],
+    answer: 1
+  },
+  {
+    q: "Why should you use `@functools.wraps(func)` inside a decorator?",
+    options: [
+      "It makes the wrapper function run faster",
+      "It preserves the original function's __name__, __doc__, and other metadata",
+      "It prevents the decorator from being applied more than once",
+      "It is required for the decorator syntax to work"
+    ],
+    answer: 1
+  },
+  {
+    q: "Given `@retry(max_attempts=3)` above `def fetch(): ...`, what is the call order?",
+    options: [
+      "fetch = retry(fetch, max_attempts=3)",
+      "fetch = retry(max_attempts=3)(fetch)",
+      "fetch = retry(fetch)(max_attempts=3)",
+      "fetch = max_attempts(retry(fetch, 3))"
+    ],
+    answer: 1
+  },
+  {
+    q: "If decorators are stacked `@a` then `@b` then `@c` on `def f()`, which is applied first?",
+    options: ["a", "b", "c", "All at the same time"],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="functions-deep/decorators" questions={quizDecorators} />
+
+<ProgressTracker client:visible id="functions-deep/decorators" />

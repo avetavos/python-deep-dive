@@ -1,5 +1,112 @@
 ---
-title: Functions In Depth
-description: Arguments, closures, decorators, generators, and iterators.
+title: 'Functions In Depth'
+description: 'Functions are first-class objects in Python. This module covers args/kwargs, closures, decorators, and generators.'
+sidebar:
+  order: 1
 ---
-Coming soon.
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Functions are first-class objects
+
+In Python, functions are values — not special syntax, not second-class constructs.
+A function can be assigned to a variable, stored in a list, passed as an argument, or returned from another function.
+This property is called **first-class** status, and it is the foundation of every advanced pattern in this module.
+
+```python
+def greet(name: str) -> str:
+    return f"Hello, {name}!"
+
+# Assign to a variable
+say_hi = greet
+
+# Pass as an argument
+def apply(fn, value):
+    return fn(value)
+
+result = apply(greet, "Python")
+print(result)  # Hello, Python!
+```
+
+Because `greet` is just an object, `say_hi` and `greet` point to the same function.
+Calling `say_hi("World")` is identical to calling `greet("World")`.
+
+## What this module covers
+
+| Lesson | Core concept |
+|---|---|
+| **Args & Kwargs** | Positional, keyword, variadic, and keyword-only parameters |
+| **Closures** | Nested functions, free variables, and `nonlocal` |
+| **Decorators** | Functions that wrap other functions; `functools.wraps` |
+| **Generators** | `yield`, lazy evaluation, and `StopIteration` |
+
+Each lesson is self-contained and builds on this foundation: functions are objects you can manipulate freely.
+
+## A first runnable demo
+
+The snippet below demonstrates two core ideas simultaneously: passing a function as an argument, and returning a function as a value.
+
+export const indexDemoCode = `
+def make_multiplier(factor: int):
+    def multiply(x: int) -> int:
+        return x * factor
+    return multiply
+
+double = make_multiplier(2)
+triple = make_multiplier(3)
+
+numbers = [1, 2, 3, 4, 5]
+doubled = list(map(double, numbers))
+tripled = list(map(triple, numbers))
+
+print("doubled:", doubled)
+print("tripled:", tripled)
+
+# Functions are objects — we can store them in a list
+ops = [double, triple, make_multiplier(10)]
+for op in ops:
+    print(op(7))
+`.trim();
+
+<Playground client:visible code={indexDemoCode} />
+
+<Callout title="Functions are objects">
+Every Python function is an instance of the built-in `function` type. You can inspect it:
+`type(greet)` returns `<class 'function'>`. This is why passing functions to `map()`, `sorted()`,
+and `filter()` works — they just accept any callable object.
+</Callout>
+
+export const quizIndex = [
+  {
+    q: "What does 'first-class function' mean in Python?",
+    options: [
+      "Functions run faster than methods",
+      "Functions can be passed as arguments, returned, and assigned to variables",
+      "Functions defined at module level have global scope",
+      "Functions are compiled before execution"
+    ],
+    answer: 1
+  },
+  {
+    q: "Which built-in function accepts a function and an iterable as arguments?",
+    options: ["apply()", "map()", "call()", "exec()"],
+    answer: 1
+  },
+  {
+    q: "After writing `f = greet`, which statement is true?",
+    options: [
+      "f is a copy of greet",
+      "f and greet are two different functions",
+      "f and greet reference the same function object",
+      "f is only callable if greet is deleted first"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="functions-deep/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="functions-deep/index" />

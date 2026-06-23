@@ -1,0 +1,163 @@
+---
+title: Closures
+description: 'Nested functions, free variables, nonlocal, and the late-binding gotcha in Python closures.'
+sidebar:
+  order: 3
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Nested functions
+
+Python allows you to define a function inside another function.
+The inner function has access to variables in the enclosing (outer) function's scope.
+
+```python
+def outer():
+    message = "Hello from outer"
+
+    def inner():
+        print(message)   # accesses the enclosing scope
+
+    inner()
+
+outer()  # Hello from outer
+```
+
+## Free variables and closures
+
+When an inner function **references a variable from its enclosing scope** and is then **returned** to the outside world,
+Python creates a **closure** — the inner function "closes over" the variable and keeps it alive even after `outer` has finished executing.
+
+```python
+def make_greeter(greeting: str):
+    def greet(name: str) -> str:
+        return f"{greeting}, {name}!"   # greeting is a free variable
+    return greet
+
+hello = make_greeter("Hello")
+hi    = make_greeter("Hi")
+
+print(hello("Alice"))   # Hello, Alice!
+print(hi("Bob"))        # Hi, Bob!
+```
+
+`greeting` is a **free variable** in `greet` — it is not defined inside `greet` and not a global; it lives in `make_greeter`'s local scope.
+The closure keeps the value of `greeting` alive for as long as `hello` or `hi` exist.
+
+You can inspect a closure's captured variables via `__closure__`:
+
+```python
+print(hello.__closure__[0].cell_contents)   # Hello
+```
+
+## The `nonlocal` keyword
+
+Inside a nested function, you can **read** a free variable without any special keyword.
+But to **reassign** it, you need `nonlocal` — otherwise Python treats the name as a new local variable.
+
+```python
+def make_counter(start: int = 0):
+    count = start
+
+    def increment(step: int = 1) -> int:
+        nonlocal count        # tells Python: reuse the enclosing 'count'
+        count += step
+        return count
+
+    def reset() -> None:
+        nonlocal count
+        count = start
+
+    return increment, reset
+
+inc, rst = make_counter()
+print(inc())    # 1
+print(inc())    # 2
+print(inc(5))   # 7
+rst()
+print(inc())    # 1
+```
+
+Without `nonlocal count`, the line `count += step` would raise `UnboundLocalError` because Python sees the assignment and treats `count` as a local variable that has not been assigned yet.
+
+## Factory functions — a practical closure
+
+export const closuresCode = `
+def make_validator(min_val: int, max_val: int):
+    """Return a validator function for the given range."""
+    def validate(value: int) -> bool:
+        return min_val <= value <= max_val
+
+    validate.__doc__ = f"Return True if value is in [{min_val}, {max_val}]."
+    return validate
+
+is_valid_age    = make_validator(0, 120)
+is_valid_score  = make_validator(0, 100)
+is_valid_port   = make_validator(1, 65535)
+
+tests = [
+    ("age 25",     is_valid_age(25)),
+    ("age 200",    is_valid_age(200)),
+    ("score 95",   is_valid_score(95)),
+    ("score 101",  is_valid_score(101)),
+    ("port 8080",  is_valid_port(8080)),
+    ("port 0",     is_valid_port(0)),
+]
+for label, result in tests:
+    print(f"{label}: {result}")
+`.trim();
+
+<Playground client:visible code={closuresCode} />
+
+<Callout title="Closures capture variables, not values">
+The late-binding gotcha: closures capture the **variable** itself, not the value it held when the closure was created.
+In a loop this bites hard:
+
+```python
+# WRONG — all functions capture the same variable i
+funcs = [lambda: i for i in range(3)]
+print([f() for f in funcs])   # [2, 2, 2]  (all see the final i)
+
+# RIGHT — bind the current value as a default argument
+funcs = [lambda i=i: i for i in range(3)]
+print([f() for f in funcs])   # [0, 1, 2]
+```
+
+The default-argument trick `i=i` evaluates `i` at **definition time**, creating a fresh binding for each function.
+</Callout>
+
+export const quizClosures = [
+  {
+    q: "A 'closure' in Python is:",
+    options: [
+      "A function with no return value",
+      "An inner function that captures variables from its enclosing scope",
+      "A class that overrides __call__",
+      "A function decorated with @staticmethod"
+    ],
+    answer: 1
+  },
+  {
+    q: "What keyword must you use to reassign a free variable from an enclosing scope inside a nested function?",
+    options: ["global", "outer", "nonlocal", "free"],
+    answer: 2
+  },
+  {
+    q: "Why does `[lambda: i for i in range(3)]` produce `[2, 2, 2]` when called?",
+    options: [
+      "Lambdas do not support loops",
+      "All lambdas capture the same variable i, which equals 2 after the loop ends",
+      "Python evaluates lambda bodies at definition time",
+      "range(3) only produces [2, 2, 2]"
+    ],
+    answer: 1
+  }
+];
+
+<Quiz client:visible id="functions-deep/closures" questions={quizClosures} />
+
+<ProgressTracker client:visible id="functions-deep/closures" />

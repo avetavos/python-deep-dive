@@ -1,0 +1,202 @@
+---
+title: Generators
+description: 'yield, generator functions, lazy evaluation, generator expressions, and StopIteration in Python.'
+sidebar:
+  order: 5
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## What is a generator?
+
+A **generator** is a function that can pause its execution and resume from where it left off.
+Instead of computing all values and returning them in a list, a generator produces values **one at a time** — only when asked.
+This is called **lazy evaluation**.
+
+The key ingredient is the `yield` keyword.
+When Python encounters `yield`, it pauses the function, hands the value to the caller, and freezes the local state (variables, the instruction pointer).
+The next call to `next()` resumes from that exact line.
+
+```python
+def count_up(start: int, stop: int):
+    current = start
+    while current <= stop:
+        yield current       # pause here and emit current
+        current += 1        # resume here on the next next() call
+
+gen = count_up(1, 4)
+print(next(gen))   # 1
+print(next(gen))   # 2
+print(next(gen))   # 3
+print(next(gen))   # 4
+# next(gen) would now raise StopIteration
+```
+
+## Generator functions vs regular functions
+
+| Aspect | Regular function | Generator function |
+|---|---|---|
+| Returns | Once, with `return` | Many times, with `yield` |
+| State | Discarded after return | Frozen between yields |
+| Memory | Builds full result | One value at a time |
+| Type | The return value | A `generator` object |
+
+A function becomes a generator function the moment it contains even one `yield` statement.
+Calling it does not execute any code — it returns a generator object immediately.
+
+## `iter()` and `next()`
+
+Every generator object implements the **iterator protocol**: it has `__iter__()` and `__next__()` methods.
+
+- `next(gen)` advances to the next `yield` and returns that value.
+- When there are no more values, `next(gen)` raises `StopIteration`.
+- A `for` loop calls `next()` automatically and catches `StopIteration` to stop.
+
+```python
+def three_words():
+    yield "Python"
+    yield "is"
+    yield "expressive"
+
+# Equivalent — for loop handles next() and StopIteration for you
+for word in three_words():
+    print(word)
+```
+
+## Generator expressions
+
+Just as list comprehensions build lists, **generator expressions** build generators — using parentheses instead of brackets.
+They are memory-efficient because no list is materialised.
+
+```python
+squares_list = [x ** 2 for x in range(1_000_000)]   # allocates a list
+squares_gen  = (x ** 2 for x in range(1_000_000))   # allocates almost nothing
+
+# Consume lazily
+for sq in squares_gen:
+    if sq > 25:
+        break
+```
+
+Generator expressions compose naturally with built-ins that accept iterables:
+
+```python
+total = sum(x ** 2 for x in range(10))   # no brackets needed inside sum()
+```
+
+## Infinite generators
+
+Because generators are lazy, you can define sequences that never end — as long as the consumer stops asking.
+
+```python
+def fibonacci():
+    a, b = 0, 1
+    while True:        # infinite loop — but never blocks
+        yield a
+        a, b = b, a + b
+```
+
+## Full runnable demo
+
+export const generatorsCode = `
+from itertools import islice
+
+def fibonacci():
+    """Infinite Fibonacci sequence generator."""
+    a, b = 0, 1
+    while True:
+        yield a
+        a, b = b, a + b
+
+# Take only the first 10 values — safe because islice stops early
+first_10 = list(islice(fibonacci(), 10))
+print("First 10 Fibonacci numbers:")
+print(first_10)
+
+# Generator expression: squares of even numbers
+even_squares = (x * x for x in range(1, 11) if x % 2 == 0)
+print("\\nSquares of even numbers 1-10:")
+for val in even_squares:
+    print(val, end=" ")
+print()
+
+# Demonstrate single-use nature
+gen = (x * 3 for x in range(5))
+print("\\nFirst pass:", list(gen))
+print("Second pass:", list(gen))   # exhausted — empty list
+
+# Manual next() / StopIteration
+counter = iter(range(3))
+print("\\nManual iteration:")
+print(next(counter))
+print(next(counter))
+print(next(counter))
+try:
+    print(next(counter))
+except StopIteration:
+    print("StopIteration raised — generator exhausted")
+`.trim();
+
+<Playground client:visible code={generatorsCode} />
+
+<Callout title="Generators are lazy and single-use">
+Two important properties to remember:
+
+**Lazy:** A generator computes the next value only when `next()` is called.
+A generator expression `(heavy_compute(x) for x in data)` does zero work until you start iterating.
+
+**Single-use:** Once a generator is exhausted, it stays exhausted.
+Iterating over it a second time produces nothing.
+If you need to iterate multiple times, convert to a `list` or call the generator function again to get a fresh generator.
+
+```python
+gen = (x for x in range(3))
+print(list(gen))   # [0, 1, 2]
+print(list(gen))   # []  — already exhausted
+```
+</Callout>
+
+export const quizGenerators = [
+  {
+    q: "What happens when Python encounters `yield` inside a function?",
+    options: [
+      "The function raises an exception",
+      "The function exits permanently",
+      "The function pauses, emits the value, and resumes on the next next() call",
+      "The function runs in a separate thread"
+    ],
+    answer: 2
+  },
+  {
+    q: "What exception signals that a generator has no more values to produce?",
+    options: ["GeneratorExit", "StopIteration", "IndexError", "RuntimeError"],
+    answer: 1
+  },
+  {
+    q: "What is the main advantage of a generator expression over a list comprehension?",
+    options: [
+      "Generator expressions run faster in all cases",
+      "Generator expressions produce values lazily, using much less memory",
+      "Generator expressions support more Python syntax",
+      "Generator expressions can be iterated multiple times"
+    ],
+    answer: 1
+  },
+  {
+    q: "After iterating a generator to exhaustion, what does iterating it again produce?",
+    options: [
+      "It restarts from the beginning",
+      "It raises RuntimeError",
+      "It produces no values — the generator stays exhausted",
+      "It repeats the last value indefinitely"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="functions-deep/generators" questions={quizGenerators} />
+
+<ProgressTracker client:visible id="functions-deep/generators" />

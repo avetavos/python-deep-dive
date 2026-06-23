@@ -1,0 +1,172 @@
+---
+title: 'Args, Kwargs & Parameters'
+description: 'Positional args, keyword args, default values, *args, **kwargs, and keyword-only parameters in Python.'
+sidebar:
+  order: 2
+---
+
+import Playground from '../../../../components/Playground.tsx';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Parameters and arguments
+
+Python distinguishes between **parameters** (names in the function definition) and **arguments** (values passed at call time).
+Python gives you fine-grained control over how callers can supply those values.
+
+## Positional and keyword arguments
+
+By default, every parameter can be supplied positionally or by keyword name.
+
+```python
+def connect(host: str, port: int, timeout: int = 30) -> str:
+    return f"{host}:{port} (timeout={timeout}s)"
+
+# Positional
+connect("localhost", 5432)
+
+# Keyword — order does not matter
+connect(port=5432, host="localhost")
+
+# Mixed — positional first, then keyword
+connect("localhost", port=5432, timeout=60)
+```
+
+`timeout` has a **default value** of `30`, making it optional.
+Positional arguments must always come before keyword arguments at the call site.
+
+## Variadic positional args: `*args`
+
+Prefix a parameter with `*` to collect any number of positional arguments into a **tuple**.
+
+```python
+def total(*amounts: float) -> float:
+    return sum(amounts)
+
+print(total(10.0, 20.5, 5.0))  # 35.5
+print(total())                  # 0.0
+```
+
+## Variadic keyword args: `**kwargs`
+
+Prefix a parameter with `**` to collect any number of keyword arguments into a **dict**.
+
+```python
+def log_event(event: str, **metadata) -> None:
+    parts = [f"event={event}"]
+    for key, value in metadata.items():
+        parts.append(f"{key}={value}")
+    print(", ".join(parts))
+
+log_event("login", user_id=42, ip="127.0.0.1")
+# event=login, user_id=42, ip=127.0.0.1
+```
+
+## Keyword-only parameters
+
+Any parameter listed **after a bare `*`** (or after `*args`) can only be supplied by keyword — never positionally.
+This makes APIs self-documenting and prevents argument order mistakes.
+
+```python
+def send_email(to: str, subject: str, *, cc: str = "", bcc: str = "") -> None:
+    print(f"To: {to} | Subject: {subject} | CC: {cc} | BCC: {bcc}")
+
+send_email("alice@example.com", "Hello", cc="bob@example.com")
+# Calling send_email("a@b.com", "Hi", "c@d.com") would raise TypeError
+```
+
+## Full parameter order
+
+The order of parameter kinds in a definition must always be:
+
+1. Positional-or-keyword (`x`, `y`)
+2. `*args` (or bare `*`)
+3. Keyword-only (`key=value` after `*`)
+4. `**kwargs`
+
+export const argsKwargsCode = `
+def describe(
+    name: str,
+    *adjectives: str,
+    separator: str = ", ",
+    **extras
+) -> str:
+    adj_str = separator.join(adjectives) if adjectives else "no adjectives"
+    extra_str = ", ".join(f"{k}={v}" for k, v in extras.items())
+    result = f"{name}: {adj_str}"
+    if extra_str:
+        result += f" ({extra_str})"
+    return result
+
+print(describe("Python"))
+print(describe("Python", "fast", "readable"))
+print(describe("Python", "fast", "readable", separator=" | "))
+print(describe("Python", "fast", separator=" + ", version="3.11", typed=True))
+`.trim();
+
+<Playground client:visible code={argsKwargsCode} />
+
+<Callout title="The mutable default argument trap">
+Never use a mutable object (list, dict, set) as a default argument value.
+Default values are evaluated **once** at function definition time — not on each call.
+All callers share the same object:
+
+```python
+# WRONG — all calls share the same list
+def add_item(item, container=[]):
+    container.append(item)
+    return container
+
+# RIGHT — use None and create inside
+def add_item(item, container=None):
+    if container is None:
+        container = []
+    container.append(item)
+    return container
+```
+
+The `None` sentinel pattern is the standard Python idiom for mutable defaults.
+</Callout>
+
+export const quizArgsKwargs = [
+  {
+    q: "What type does *args collect arguments into?",
+    options: ["list", "tuple", "dict", "set"],
+    answer: 1
+  },
+  {
+    q: "A parameter defined after a bare `*` in a function signature is:",
+    options: [
+      "A variadic positional parameter",
+      "A keyword-only parameter",
+      "A positional-only parameter",
+      "A required parameter"
+    ],
+    answer: 1
+  },
+  {
+    q: "Why is `def f(items=[])` dangerous?",
+    options: [
+      "Lists are not valid default values in Python",
+      "The default list is shared across all calls because it is created once",
+      "The function cannot accept any other argument",
+      "Python copies the list on every call, wasting memory"
+    ],
+    answer: 1
+  },
+  {
+    q: "What is the correct order of parameter kinds in a Python function signature?",
+    options: [
+      "**kwargs, *args, keyword-only, positional",
+      "positional, keyword-only, *args, **kwargs",
+      "positional, *args, keyword-only, **kwargs",
+      "*args, positional, **kwargs, keyword-only"
+    ],
+    answer: 2
+  }
+];
+
+<Quiz client:visible id="functions-deep/args-kwargs" questions={quizArgsKwargs} />
+
+<ProgressTracker client:visible id="functions-deep/args-kwargs" />
