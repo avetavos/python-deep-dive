@@ -6,6 +6,7 @@ sidebar:
 ---
 
 import Callout from '../../../../components/Callout.astro';
+import Mermaid from '../../../../components/Mermaid.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
@@ -15,19 +16,19 @@ A **Python package** is a directory of modules that can be installed, versioned,
 
 A clean src-layout keeps your source isolated from tests and tooling, preventing accidental imports of uninstalled code.
 
-```
-mypackage/
-├── src/
-│   └── mypackage/
-│       ├── __init__.py
-│       ├── core.py
-│       └── utils.py
-├── tests/
-│   ├── conftest.py
-│   └── test_core.py
-├── pyproject.toml
-└── README.md
-```
+export const packageLayoutDiagram = `flowchart TD
+  root["mypackage/"] --> src["src/"]
+  src --> pkg["mypackage/"]
+  pkg --> init["__init__.py"]
+  pkg --> core["core.py"]
+  pkg --> utils["utils.py"]
+  root --> tests["tests/"]
+  tests --> conftest["conftest.py"]
+  tests --> testcore["test_core.py"]
+  root --> pyproj["pyproject.toml"]
+  root --> readme["README.md"]`;
+
+<Mermaid code={packageLayoutDiagram} title="Clean src-layout package structure" />
 
 ## pyproject.toml
 

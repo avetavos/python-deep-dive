@@ -6,6 +6,7 @@ sidebar:
 ---
 
 import Callout from '../../../../components/Callout.astro';
+import Mermaid from '../../../../components/Mermaid.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
@@ -77,15 +78,15 @@ deactivate
 
 A conventional Python project keeps the virtual environment at the root alongside source, tests, and dependency files.
 
-```
-.
-├── .venv/           # never commit this — add to .gitignore
-├── src/
-│   └── myapp/
-├── tests/
-├── requirements.txt
-└── pyproject.toml
-```
+export const projectLayoutDiagram = `flowchart TD
+  root["project root"] --> venv[".venv/ (never commit — add to .gitignore)"]
+  root --> src["src/"]
+  src --> myapp["myapp/"]
+  root --> tests["tests/"]
+  root --> reqs["requirements.txt"]
+  root --> pyproj["pyproject.toml"]`;
+
+<Mermaid code={projectLayoutDiagram} title="Typical Python project layout" />
 
 <Callout title="Always use a virtual environment per project">
 Never install packages into the global Python environment. Each project should have its own `.venv` so dependency versions are isolated. Add `.venv/` to `.gitignore`. Modern projects use `pyproject.toml` with `pip install -e .` for editable installs — see the Packaging lesson.

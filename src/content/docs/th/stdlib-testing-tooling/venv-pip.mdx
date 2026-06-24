@@ -6,6 +6,7 @@ sidebar:
 ---
 
 import Callout from '../../../../components/Callout.astro';
+import Mermaid from '../../../../components/Mermaid.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
@@ -77,15 +78,15 @@ deactivate
 
 โปรเจกต์ Python ตามมาตรฐานจะเก็บ virtual environment ไว้ที่ root ควบคู่กับ source, tests และไฟล์ dependencies
 
-```
-.
-├── .venv/           # never commit this — add to .gitignore
-├── src/
-│   └── myapp/
-├── tests/
-├── requirements.txt
-└── pyproject.toml
-```
+export const projectLayoutDiagram = `flowchart TD
+  root["project root"] --> venv[".venv/ (never commit — add to .gitignore)"]
+  root --> src["src/"]
+  src --> myapp["myapp/"]
+  root --> tests["tests/"]
+  root --> reqs["requirements.txt"]
+  root --> pyproj["pyproject.toml"]`;
+
+<Mermaid code={projectLayoutDiagram} title="Typical Python project layout" />
 
 <Callout title="ใช้ virtual environment แยกสำหรับแต่ละโปรเจกต์เสมอ">
 อย่าติดตั้งแพ็กเกจใน Python environment ระดับ global แต่ละโปรเจกต์ควรมี `.venv` ของตัวเองเพื่อแยก dependency versions ออกจากกัน เพิ่ม `.venv/` ลงใน `.gitignore` โปรเจกต์สมัยใหม่ใช้ `pyproject.toml` ร่วมกับ `pip install -e .` สำหรับ editable installs — ดูที่บทเรียน Packaging
