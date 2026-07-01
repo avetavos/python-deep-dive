@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -105,7 +105,7 @@ print(describe("Python", "fast", "readable", separator=" | "))
 print(describe("Python", "fast", separator=" + ", version="3.11", typed=True))
 `.trim();
 
-<Playground client:visible code={argsKwargsCode} />
+<Playground code={argsKwargsCode} />
 
 <Callout title="กับดักของ mutable default argument">
 อย่าใช้ mutable object (list, dict, set) เป็นค่า default argument เด็ดขาด

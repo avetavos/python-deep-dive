@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -103,7 +103,7 @@ print('difference:', sorted(a - b))
 print('symmetric diff:', sorted(a ^ b))
 `.trim();
 
-<Playground client:visible code={dictsSetsCode} />
+<Playground code={dictsSetsCode} />
 
 <Callout title="dict preserves insertion order (3.7+); sets are unordered">
 Since Python 3.7, `dict` guarantees that `list(d.keys())` returns keys in the order they were first inserted.

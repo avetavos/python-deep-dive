@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -125,7 +125,7 @@ print(t2.celsius)
 print(Temperature.absolute_zero())
 `.trim();
 
-<Playground client:visible code={propertiesCode} />
+<Playground code={propertiesCode} />
 
 <Callout title="Prefer @property over getX/setX methods">
 Java and older Python code uses explicit getter/setter methods like `get_celsius()` and `set_celsius(value)`.

@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -140,7 +140,7 @@ result = no_return()
 print(f"no_return() gives: {result}")
 `.trim();
 
-<Playground client:visible code={functionsCode} />
+<Playground code={functionsCode} />
 
 <Callout title="ฟังก์ชันคืน None โดยค่าเริ่มต้น">
 ถ้า body ของฟังก์ชันจบโดยไม่มี `return` statement หรือมีแค่ `return` เปล่าๆ โดยไม่มีค่า

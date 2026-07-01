@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -99,7 +99,7 @@ unique_lens = {len(word) for word in ['apple', 'banana', 'cherry', 'date']}
 print('unique lengths:', sorted(unique_lens))
 `.trim();
 
-<Playground client:visible code={comprehensionsCode} />
+<Playground code={comprehensionsCode} />
 
 <Callout title="Comprehensions are idiomatic and fast — avoid side effects">
 Comprehensions communicate intent clearly: "build this collection by transforming that iterable."

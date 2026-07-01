@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -97,7 +97,7 @@ else:
     print(f"Got: {value}")
 `.trim();
 
-<Playground client:visible code={indexCode} />
+<Playground code={indexCode} />
 
 <Callout title="Type hints are for humans and tools, not for Python">
 At runtime, Python does not check or enforce type hints. You can pass a string where an `int` was annotated and Python will not complain — it will simply do whatever the code does with that value. Run mypy or pyright as a separate step to catch type errors before they become runtime surprises.

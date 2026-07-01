@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -104,7 +104,7 @@ print(Dog.kingdom)
 print(isinstance(dog, Animal))
 `.trim();
 
-<Playground client:visible code={classesCode} />
+<Playground code={classesCode} />
 
 <Callout title="self is explicit in Python">
 Unlike many other languages where the instance reference is implicit (`this` in JavaScript/Java), Python requires every instance method to declare `self` as its first parameter.

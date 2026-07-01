@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -97,7 +97,7 @@ else:
     print(f"Got: {value}")
 `.trim();
 
-<Playground client:visible code={indexCode} />
+<Playground code={indexCode} />
 
 <Callout title="Type hints มีไว้สำหรับมนุษย์และ tool ไม่ใช่สำหรับ Python">
 ตอน runtime Python ไม่ตรวจสอบหรือบังคับใช้ type hints เลย คุณสามารถส่ง string ไปยังพารามิเตอร์ที่ annotate ว่า `int` และ Python จะไม่ร้องเรียน — มันจะรันโค้ดตามปกติกับค่านั้น ใช้ mypy หรือ pyright เป็น step แยกต่างหากเพื่อดัก type error ก่อนที่จะกลายเป็น bug ในโปรดักชัน

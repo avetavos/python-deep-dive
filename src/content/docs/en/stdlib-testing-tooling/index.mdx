@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -58,7 +58,7 @@ data = json.loads(payload)
 print("Parsed:", data["lang"], "batteries:", data["batteries"])
 `.trim();
 
-<Playground client:visible code={stdlibIntroCode} />
+<Playground code={stdlibIntroCode} />
 
 <Callout title="The stdlib is vast — learn it before adding dependencies">
 Python ships with more than 200 modules covering the vast majority of everyday programming tasks.

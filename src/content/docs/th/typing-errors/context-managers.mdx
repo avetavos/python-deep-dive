@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -134,7 +134,7 @@ except RuntimeError as e:
     print(f"  caught: {e}")
 `.trim();
 
-<Playground client:visible code={contextManagersCode} />
+<Playground code={contextManagersCode} />
 
 <Callout title="Context manager รับประกัน cleanup แม้จะเกิด error">
 Block `finally` ภายใน generator ของ `@contextlib.contextmanager` ทำงานเสมอ แม้ body ของ `with` จะ raise exception นี่คือวิธีมาตรฐานในการเขียนโค้ดที่รับประกัน cleanup ใน Python ใช้ `with` เสมอแทนการเรียก `close()`, `release()`, หรือ `stop()` ด้วยตนเอง — exception ที่ไม่ถูก handle เพียงอันเดียวก็ทำให้ข้ามการเรียกเหล่านั้นได้

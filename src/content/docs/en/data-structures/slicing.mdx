@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -113,7 +113,7 @@ print('original:', original)
 print('copy:', copy)
 `.trim();
 
-<Playground client:visible code={slicingCode} />
+<Playground code={slicingCode} />
 
 <Callout title="Slicing returns a new object; [::-1] reverses">
 Every slice expression creates a new list (or string, or tuple) — it never modifies the source.

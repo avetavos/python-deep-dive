@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -140,7 +140,7 @@ except StopIteration:
     print("StopIteration raised — generator exhausted")
 `.trim();
 
-<Playground client:visible code={generatorsCode} />
+<Playground code={generatorsCode} />
 
 <Callout title="Generators are lazy and single-use">
 Two important properties to remember:

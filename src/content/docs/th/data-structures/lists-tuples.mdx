@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -130,7 +130,7 @@ RGB = (255, 128, 0)
 print('red:', RGB[0], 'green:', RGB[1], 'blue:', RGB[2])
 `.trim();
 
-<Playground client:visible code={listsTuplesCode} />
+<Playground code={listsTuplesCode} />
 
 <Callout title="Tuple เปลี่ยนแปลงไม่ได้ — ใช้สำหรับ record ที่คงที่">
 เมื่อสร้าง tuple แล้วจะไม่สามารถแก้ไขได้

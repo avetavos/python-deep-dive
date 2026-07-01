@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -172,7 +172,7 @@ print(add.__name__)
 print(add.__doc__)
 `.trim();
 
-<Playground client:visible code={decoratorsCode} />
+<Playground code={decoratorsCode} />
 
 <Callout title="@deco คือรูปแบบย่อของ func = deco(func)">
 syntax `@` เป็น syntactic sugar ล้วน ๆ ไม่มี protocol พิเศษอะไรซ่อนอยู่เบื้องหลัง

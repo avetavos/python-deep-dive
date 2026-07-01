@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -121,7 +121,7 @@ except TypeError as e:
     print(f"TypeError: {e}")
 `.trim();
 
-<Playground client:visible code={stringsCode} />
+<Playground code={stringsCode} />
 
 <Callout title="Strings เปลี่ยนแปลงไม่ได้">
 เมื่อสร้าง string object แล้ว ตัวอักษรของมันไม่สามารถเปลี่ยนได้

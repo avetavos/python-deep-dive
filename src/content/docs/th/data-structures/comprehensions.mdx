@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -99,7 +99,7 @@ unique_lens = {len(word) for word in ['apple', 'banana', 'cherry', 'date']}
 print('unique lengths:', sorted(unique_lens))
 `.trim();
 
-<Playground client:visible code={comprehensionsCode} />
+<Playground code={comprehensionsCode} />
 
 <Callout title="Comprehension เป็น idiomatic และเร็ว — หลีกเลี่ยงการใช้เพื่อ side effect">
 Comprehension สื่อสาร intent ได้ชัดเจน: "สร้าง collection นี้โดยแปลง iterable นั้น"

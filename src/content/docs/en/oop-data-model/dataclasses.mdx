@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -137,7 +137,7 @@ print(red)
 print(red == Color(255, 0, 0))
 `.trim();
 
-<Playground client:visible code={dataclassesCode} />
+<Playground code={dataclassesCode} />
 
 <Callout title="Dataclasses remove boilerplate for record-like classes">
 Use `@dataclass` whenever your class is primarily a container for data fields — configuration objects, DTOs, value objects, named tuples with methods.

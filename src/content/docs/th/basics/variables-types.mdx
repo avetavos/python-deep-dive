@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -111,7 +111,7 @@ for v in falsy_values:
     print(f"bool({v!r}) = {bool(v)}")
 `.trim();
 
-<Playground client:visible code={variablesTypesCode} />
+<Playground code={variablesTypesCode} />
 
 <Callout title="ทุกอย่างคือออบเจกต์">
 ใน Python, `42` ไม่ใช่ primitive — มันคือ instance ของคลาส `int`

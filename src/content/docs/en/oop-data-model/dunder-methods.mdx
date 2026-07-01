@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -124,7 +124,7 @@ print(len(v1))
 print(v1[0], v1[1])
 `.trim();
 
-<Playground client:visible code={dunderCode} />
+<Playground code={dunderCode} />
 
 <Callout title="Dunder methods hook into built-in syntax and functions">
 You never call `v1.__add__(v2)` directly in application code — you write `v1 + v2` and Python resolves the dunder method for you.

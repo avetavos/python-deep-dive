@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -138,7 +138,7 @@ print(f"Exception?       {isinstance(e, Exception)}")
 print(f"BaseException?   {isinstance(e, BaseException)}")
 `.trim();
 
-<Playground client:visible code={customErrorsCode} />
+<Playground code={customErrorsCode} />
 
 <Callout title="Subclass Exception, not BaseException, for application errors">
 `BaseException` is the root of the entire hierarchy and includes `KeyboardInterrupt`, `SystemExit`, and `GeneratorExit` — signals that should terminate the process. Catching `BaseException` accidentally swallows those.

@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -71,7 +71,7 @@ for op in ops:
     print(op(7))
 `.trim();
 
-<Playground client:visible code={indexDemoCode} />
+<Playground code={indexDemoCode} />
 
 <Callout title="Function เป็น object">
 ทุก function ใน Python เป็น instance ของ built-in type ที่ชื่อ `function` เราสามารถตรวจสอบมันได้

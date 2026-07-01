@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -134,7 +134,7 @@ except RuntimeError as e:
     print(f"  caught: {e}")
 `.trim();
 
-<Playground client:visible code={contextManagersCode} />
+<Playground code={contextManagersCode} />
 
 <Callout title="Context managers guarantee cleanup even on error">
 The `finally` clause inside a `@contextlib.contextmanager` generator always runs, even when the `with` body raises an exception. This is the canonical way to write cleanup-guaranteed code in Python. Always prefer `with` over manually calling `close()`, `release()`, or `stop()` — one unhandled exception will skip those manual calls.

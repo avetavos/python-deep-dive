@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -132,7 +132,7 @@ except RuntimeError as e:
     print(f"  __cause__: {e.__cause__}")
 `.trim();
 
-<Playground client:visible code={exceptionsCode} />
+<Playground code={exceptionsCode} />
 
 <Callout title="จับ exception เฉพาะประเภทเสมอ">
 `except:` เปล่า (ไม่ระบุประเภท) จับทุกอย่าง — รวมถึง `KeyboardInterrupt` (Ctrl+C) และ `SystemExit` ทำให้โปรแกรมหยุดไม่ได้และซ่อน bug ไว้

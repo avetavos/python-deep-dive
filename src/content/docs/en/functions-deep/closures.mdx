@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -111,7 +111,7 @@ for label, result in tests:
     print(f"{label}: {result}")
 `.trim();
 
-<Playground client:visible code={closuresCode} />
+<Playground code={closuresCode} />
 
 <Callout title="Closures capture variables, not values">
 The late-binding gotcha: closures capture the **variable** itself, not the value it held when the closure was created.

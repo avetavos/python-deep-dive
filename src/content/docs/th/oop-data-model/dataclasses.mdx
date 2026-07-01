@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -137,7 +137,7 @@ print(red)
 print(red == Color(255, 0, 0))
 `.trim();
 
-<Playground client:visible code={dataclassesCode} />
+<Playground code={dataclassesCode} />
 
 <Callout title="Dataclasses remove boilerplate for record-like classes">
 ใช้ `@dataclass` เมื่อ class เป็น container สำหรับข้อมูลเป็นหลัก — configuration objects, DTOs, value objects, named tuples ที่มี methods

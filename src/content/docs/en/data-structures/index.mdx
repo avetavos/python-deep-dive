@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -60,7 +60,7 @@ p = Point(3, 4)
 print('namedtuple:', p.x, p.y)
 `.trim();
 
-<Playground client:visible code={dataStructuresIndexCode} />
+<Playground code={dataStructuresIndexCode} />
 
 <Callout title="collections module extends the built-ins">
 The standard library `collections` module adds `namedtuple`, `deque`, `defaultdict`, `Counter`, and `OrderedDict` on top of the four core types.

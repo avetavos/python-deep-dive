@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -134,7 +134,7 @@ except RuntimeError as e:
     print(f"  __cause__: {e.__cause__}")
 `.trim();
 
-<Playground client:visible code={exceptionsCode} />
+<Playground code={exceptionsCode} />
 
 <Callout title="Always catch specific exceptions">
 Bare `except:` (with no type) catches everything — including `KeyboardInterrupt` (Ctrl+C) and `SystemExit`. This makes your program impossible to interrupt and hides bugs.

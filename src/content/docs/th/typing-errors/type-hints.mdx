@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import Playground from '../../../../components/Playground.tsx';
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
@@ -151,7 +151,7 @@ print(scale([1.0, 2.0, 3.0], 2.5))
 print(add("oops", " still works"))  # Python does not enforce at runtime
 `.trim();
 
-<Playground client:visible code={typeHintsCode} />
+<Playground code={typeHintsCode} />
 
 <Callout title="Type hints ไม่บังคับใช้ตอน runtime — ใช้ mypy">
 บรรทัดสุดท้ายใน demo ส่ง string ไปยัง `add` ที่คาดว่าจะได้ `int` Python รันได้ปกติโดยไม่มี error
