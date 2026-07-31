@@ -13,7 +13,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 ## Exception คืออะไร
 
 **Exception** คือสัญญาณที่บอกว่ามีบางอย่างผิดพลาดระหว่างการรัน
-เมื่อ Python raise exception มันจะ unwind call stack จนกว่าจะเจอ `except` clause ที่ตรงกัน หรือหยุดโปรแกรม
+เมื่อ Python raise exception จะ unwind call stack จนกว่าจะเจอ `except` clause ที่ตรงกัน หรือหยุดโปรแกรม
 
 Exception คือ object — instance ของ class ที่สืบทอดจาก `BaseException` Exception ที่ใช้งานในโค้ดทั่วไปมักสืบทอดจาก `Exception`
 
@@ -136,7 +136,7 @@ except RuntimeError as e:
 
 <Callout title="จับ exception เฉพาะประเภทเสมอ">
 `except:` เปล่า (ไม่ระบุประเภท) จับทุกอย่าง — รวมถึง `KeyboardInterrupt` (Ctrl+C) และ `SystemExit` ทำให้โปรแกรมหยุดไม่ได้และซ่อน bug ไว้
-จับ `Exception` เฉพาะที่ด้านบนสุดของ call stack (เช่น global error handler) เท่านั้น และต้อง log exception ก่อนเสมอถ้าจะกลืนมัน
+จับ `Exception` เฉพาะที่ด้านบนสุดของ call stack (เช่น global error handler) เท่านั้น และต้อง log exception ก่อนเสมอถ้าจะกลืน exception นั้น
 </Callout>
 
 export const quizExceptions = [

@@ -17,7 +17,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 สิ่งนี้เรียกว่า **lazy evaluation**
 
 หัวใจสำคัญคือ keyword `yield`
-เมื่อ Python เจอ `yield` มันจะหยุด function ชั่วคราว ส่งค่ากลับไปให้ผู้เรียก แล้วแช่แข็ง state ภายในไว้ (ตัวแปรต่าง ๆ และตำแหน่งของ instruction pointer)
+เมื่อ Python เจอ `yield` จะหยุด function ชั่วคราว ส่งค่ากลับไปให้ผู้เรียก แล้วแช่แข็ง state ภายในไว้ (ตัวแปรต่าง ๆ และตำแหน่งของ instruction pointer)
 การเรียก `next()` ครั้งถัดไปจะทำงานต่อจากบรรทัดนั้นเป๊ะ ๆ
 
 ```python
@@ -44,12 +44,12 @@ print(next(gen))   # 4
 | Memory | สร้างผลลัพธ์ทั้งก้อน | ทีละค่า |
 | Type | คือค่าที่ return | เป็น object ชนิด `generator` |
 
-function จะกลายเป็น generator function ทันทีที่มันมีคำสั่ง `yield` แม้เพียงตัวเดียว
-การเรียกมันจะไม่ทำให้โค้ดทำงานเลย แต่จะ return generator object ออกมาทันที
+function จะกลายเป็น generator function ทันทีที่มีคำสั่ง `yield` แม้เพียงตัวเดียว
+การเรียก generator function จะไม่ทำให้โค้ดทำงานเลย แต่จะ return generator object ออกมาทันที
 
 ## `iter()` และ `next()`
 
-ทุก generator object ทำตาม **iterator protocol** นั่นคือมันมี method `__iter__()` และ `__next__()`
+ทุก generator object ทำตาม **iterator protocol** นั่นคือมี method `__iter__()` และ `__next__()`
 
 - `next(gen)` จะเลื่อนไปยัง `yield` ตัวถัดไปและ return ค่านั้นออกมา
 - เมื่อไม่มีค่าเหลือแล้ว `next(gen)` จะ raise `StopIteration`
@@ -69,7 +69,7 @@ for word in three_words():
 ## generator expression
 
 เช่นเดียวกับที่ list comprehension สร้าง list **generator expression** ก็สร้าง generator โดยใช้วงเล็บแทนวงเล็บเหลี่ยม
-มันประหยัด memory เพราะไม่มีการสร้าง list ขึ้นมาจริง
+วิธีนี้ประหยัด memory เพราะไม่มีการสร้าง list ขึ้นมาจริง
 
 ```python
 squares_list = [x ** 2 for x in range(1_000_000)]   # allocates a list
@@ -148,8 +148,8 @@ except StopIteration:
 **Lazy:** generator จะคำนวณค่าถัดไปก็ต่อเมื่อ `next()` ถูกเรียกเท่านั้น
 generator expression `(heavy_compute(x) for x in data)` จะไม่ทำงานอะไรเลยจนกว่าเราจะเริ่ม iterate
 
-**Single-use:** เมื่อ generator ถูกใช้จนหมดแล้ว มันจะหมดอยู่อย่างนั้น
-การ iterate มันเป็นครั้งที่สองจะไม่ได้อะไรออกมาเลย
+**Single-use:** เมื่อ generator ถูกใช้จนหมดแล้ว จะหมดอยู่อย่างนั้น
+การ iterate เป็นครั้งที่สองจะไม่ได้อะไรออกมาเลย
 หากต้องการ iterate หลายครั้ง ให้แปลงเป็น `list` หรือเรียก generator function อีกครั้งเพื่อให้ได้ generator ตัวใหม่
 
 ```python
@@ -186,12 +186,12 @@ export const quizGenerators = [
     answer: 1
   },
   {
-    q: "หลังจาก iterate generator จนหมดแล้ว การ iterate มันอีกครั้งจะให้ผลลัพธ์อย่างไร?",
+    q: "หลังจาก iterate generator จนหมดแล้ว การ iterate ซ้ำอีกครั้งจะให้ผลลัพธ์อย่างไร?",
     options: [
-      "มันจะเริ่มต้นใหม่จากจุดเริ่มต้น",
-      "มันจะ raise RuntimeError",
-      "มันจะไม่ให้ค่าออกมาเลย เพราะ generator ยังคงหมดอยู่",
-      "มันจะวนซ้ำค่าสุดท้ายไปเรื่อย ๆ ไม่รู้จบ"
+      "จะเริ่มต้นใหม่จากจุดเริ่มต้น",
+      "จะ raise RuntimeError",
+      "จะไม่ให้ค่าออกมาเลย เพราะ generator ยังคงหมดอยู่",
+      "จะวนซ้ำค่าสุดท้ายไปเรื่อย ๆ ไม่รู้จบ"
     ],
     answer: 2
   }

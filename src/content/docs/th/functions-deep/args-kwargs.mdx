@@ -33,7 +33,7 @@ connect(port=5432, host="localhost")
 connect("localhost", port=5432, timeout=60)
 ```
 
-`timeout` มี **ค่า default** เป็น `30` ทำให้มันเป็นค่าที่ใส่หรือไม่ก็ได้
+`timeout` มี **ค่า default** เป็น `30` จึงเป็นค่าที่ใส่หรือไม่ก็ได้
 positional argument จะต้องมาก่อน keyword argument เสมอ ณ จุดที่เรียกใช้
 
 ## Variadic positional args: `*args`
@@ -149,7 +149,7 @@ export const quizArgsKwargs = [
     q: "ทำไม `def f(items=[])` ถึงอันตราย?",
     options: [
       "list ไม่ใช่ค่า default ที่ใช้ได้ใน Python",
-      "list ที่เป็น default ถูกใช้ร่วมกันในทุกการเรียก เพราะมันถูกสร้างเพียงครั้งเดียว",
+      "list ที่เป็น default ถูกใช้ร่วมกันในทุกการเรียก เพราะถูกสร้างเพียงครั้งเดียว",
       "function จะไม่สามารถรับ argument อื่นได้เลย",
       "Python จะ copy list ใหม่ทุกครั้งที่เรียก ทำให้เปลือง memory"
     ],

@@ -37,7 +37,7 @@ if __name__ == "__main__":        # จำเป็นบน macOS/Windows
 ## `Pool.map` — parallel map บน iterable
 
 `Pool.map(fn, iterable)` กระจาย items ไปยัง workers และคืนผลลัพธ์ตามลำดับ input
-มันบล็อกจนกว่า items ทั้งหมดจะถูกประมวลผล
+และบล็อกจนกว่า items ทั้งหมดจะถูกประมวลผล
 
 ```python
 from multiprocessing import Pool
@@ -180,7 +180,7 @@ python3 multiprocessing_demo.py
 
 export const quizMultiprocessing = [
   {
-    q: "เหตุใด `multiprocessing` จึงได้ true CPU parallelism ในขณะที่ `threading` ไม่ได้ใน CPython?",
+    q: "เหตุใด `multiprocessing` จึงได้ true CPU parallelism แต่ `threading` ไม่ได้ใน CPython?",
     options: [
       "Processes ใช้ bytecode compiler ที่เร็วกว่า threads",
       "แต่ละ process มี Python interpreter และ GIL ของตัวเอง จึงรันแบบ parallel จริงๆ",

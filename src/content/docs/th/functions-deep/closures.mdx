@@ -30,7 +30,7 @@ outer()  # Hello from outer
 ## Free variable และ closure
 
 เมื่อ function ตัวใน **อ้างถึงตัวแปรจาก enclosing scope** แล้วถูก **return** ออกไปสู่โลกภายนอก
-Python จะสร้าง **closure** ขึ้นมา function ตัวในนั้น "ปิดครอบ" (close over) ตัวแปรไว้ และทำให้มันยังมีชีวิตอยู่แม้ `outer` จะทำงานเสร็จไปแล้ว
+Python จะสร้าง **closure** ขึ้นมา function ตัวในนั้น "ปิดครอบ" (close over) ตัวแปรไว้ และทำให้ตัวแปรนั้นยังมีชีวิตอยู่แม้ `outer` จะทำงานเสร็จไปแล้ว
 
 ```python
 def make_greeter(greeting: str):
@@ -45,7 +45,7 @@ print(hello("Alice"))   # Hello, Alice!
 print(hi("Bob"))        # Hi, Bob!
 ```
 
-`greeting` เป็น **free variable** ใน `greet` มันไม่ได้ถูกนิยามภายใน `greet` และก็ไม่ใช่ global แต่อาศัยอยู่ใน local scope ของ `make_greeter`
+`greeting` เป็น **free variable** ใน `greet` ไม่ได้ถูกนิยามภายใน `greet` และก็ไม่ใช่ global แต่อาศัยอยู่ใน local scope ของ `make_greeter`
 closure จะรักษาค่าของ `greeting` ให้มีชีวิตอยู่ตราบเท่าที่ `hello` หรือ `hi` ยังคงอยู่
 
 เราสามารถตรวจสอบตัวแปรที่ closure จับไว้ได้ผ่าน `__closure__`:
@@ -57,7 +57,7 @@ print(hello.__closure__[0].cell_contents)   # Hello
 ## keyword `nonlocal`
 
 ภายใน nested function เราสามารถ **อ่าน** free variable ได้โดยไม่ต้องใช้ keyword พิเศษใด ๆ
-แต่ถ้าจะ **กำหนดค่าใหม่ (reassign)** ให้มัน เราต้องใช้ `nonlocal` มิฉะนั้น Python จะมองว่าชื่อนั้นเป็นตัวแปร local ตัวใหม่
+แต่ถ้าจะ **กำหนดค่าใหม่ (reassign)** ให้ตัวแปรนั้น เราต้องใช้ `nonlocal` มิฉะนั้น Python จะมองว่าชื่อนั้นเป็นตัวแปร local ตัวใหม่
 
 ```python
 def make_counter(start: int = 0):
@@ -114,7 +114,7 @@ for label, result in tests:
 <Playground code={closuresCode} />
 
 <Callout title="closure จับตัวแปร ไม่ใช่จับค่า">
-กับดัก late-binding: closure จับ **ตัวแปร** ตัวมันเอง ไม่ใช่ค่าที่มันถืออยู่ตอนที่ closure ถูกสร้าง
+กับดัก late-binding: closure จับ **ตัวแปร** ตัวเอง ไม่ใช่ค่าที่ถืออยู่ตอนที่ closure ถูกสร้าง
 ในลูปนั้นเรื่องนี้กัดเจ็บมาก:
 
 ```python
@@ -135,7 +135,7 @@ export const quizClosures = [
     q: "'closure' ใน Python คือ:",
     options: [
       "function ที่ไม่มีค่า return",
-      "inner function ที่จับตัวแปรจาก enclosing scope ของมัน",
+      "inner function ที่จับตัวแปรจาก enclosing scope ของตัวเอง",
       "class ที่ override __call__",
       "function ที่ถูก decorate ด้วย @staticmethod"
     ],

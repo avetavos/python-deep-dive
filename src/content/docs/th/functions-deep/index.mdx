@@ -14,7 +14,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ใน Python นั้น function คือค่า (value) ตัวหนึ่ง ไม่ใช่ syntax พิเศษ และไม่ใช่ของชั้นรอง
 เราสามารถกำหนด function ให้กับตัวแปร เก็บไว้ใน list ส่งเป็น argument หรือ return ออกมาจากอีก function หนึ่งได้
-คุณสมบัตินี้เรียกว่าสถานะ **first-class** ซึ่งเป็นรากฐานของทุก pattern ขั้นสูงในโมดูลนี้
+คุณสมบัตินี้เรียกว่าสถานะ **first-class** ที่เป็นรากฐานของทุก pattern ขั้นสูงในโมดูลนี้
 
 ```python
 def greet(name: str) -> str:
@@ -74,9 +74,9 @@ for op in ops:
 <Playground code={indexDemoCode} />
 
 <Callout title="Function เป็น object">
-ทุก function ใน Python เป็น instance ของ built-in type ที่ชื่อ `function` เราสามารถตรวจสอบมันได้
+ทุก function ใน Python เป็น instance ของ built-in type ที่ชื่อ `function` เราตรวจสอบได้เอง
 `type(greet)` จะคืนค่า `<class 'function'>` นี่คือเหตุผลว่าทำไมการส่ง function เข้าไปใน `map()`, `sorted()`
-และ `filter()` ถึงทำงานได้ เพราะมันแค่รับ callable object ใด ๆ ก็ได้
+และ `filter()` ถึงทำงานได้ เพราะแค่รับ callable object ใด ๆ ก็ได้
 </Callout>
 
 export const quizIndex = [

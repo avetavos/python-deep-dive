@@ -36,7 +36,7 @@ say_hello()
 
 ## syntax `@`
 
-syntax `@decorator` เป็นรูปแบบย่อ มันจะใช้ decorator โดยอัตโนมัติทันทีหลังจากที่ function ถูกนิยามเสร็จ
+syntax `@decorator` เป็นรูปแบบย่อ จะใช้ decorator โดยอัตโนมัติทันทีหลังจากที่ function ถูกนิยามเสร็จ
 สองแบบนี้เทียบเท่ากันทุกประการ:
 
 ```python
@@ -204,10 +204,10 @@ export const quizDecorators = [
   {
     q: "ทำไมเราควรใช้ `@functools.wraps(func)` ภายใน decorator?",
     options: [
-      "มันทำให้ function wrapper ทำงานเร็วขึ้น",
-      "มันรักษา __name__, __doc__ และ metadata อื่น ๆ ของ function ต้นฉบับไว้",
-      "มันป้องกันไม่ให้ decorator ถูกใช้ซ้ำมากกว่าหนึ่งครั้ง",
-      "มันจำเป็นต้องมีเพื่อให้ syntax ของ decorator ทำงานได้"
+      "ทำให้ function wrapper ทำงานเร็วขึ้น",
+      "รักษา __name__, __doc__ และ metadata อื่น ๆ ของ function ต้นฉบับไว้",
+      "ป้องกันไม่ให้ decorator ถูกใช้ซ้ำมากกว่าหนึ่งครั้ง",
+      "จำเป็นต้องมีเพื่อให้ syntax ของ decorator ทำงานได้"
     ],
     answer: 1
   },

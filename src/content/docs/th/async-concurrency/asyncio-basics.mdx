@@ -36,7 +36,7 @@ asyncio.run(main())
 
 ## `async def` และ coroutines
 
-ฟังก์ชันที่กำหนดด้วย `async def` คือ **coroutine function** การเรียกมันไม่ได้รันเนื้อหา — มันคืน **coroutine object** เนื้อหาจะรันเฉพาะเมื่อ coroutine ถูก await หรือถูก schedule บน event loop เท่านั้น
+ฟังก์ชันที่กำหนดด้วย `async def` คือ **coroutine function** การเรียกฟังก์ชันนี้ไม่ได้รันเนื้อหา — แต่คืน **coroutine object** เนื้อหาจะรันเฉพาะเมื่อ coroutine ถูก await หรือถูก schedule บน event loop เท่านั้น
 
 ```python
 import asyncio
@@ -56,7 +56,7 @@ print(result)              # Hello, Python!
 ## `await` หยุดและกลับมาทำงาน
 
 keyword `await` ใช้ได้เฉพาะภายในฟังก์ชัน `async def` เท่านั้น
-มันหยุด coroutine ปัจจุบันและยกการควบคุมกลับไปยัง event loop
+`await` หยุด coroutine ปัจจุบันและยกการควบคุมกลับไปยัง event loop
 event loop รัน coroutines อื่นที่พร้อมแล้วกลับมาที่ coroutine นี้เมื่อ awaited object เสร็จสิ้น
 
 ```python
@@ -81,7 +81,7 @@ asyncio.run(main())
 ## `asyncio.run` — จุดเข้าหลัก
 
 `asyncio.run(coro)` สร้าง event loop ใหม่, รัน coroutine จนเสร็จสมบูรณ์, ปิด loop และคืนค่าผลลัพธ์
-มันเป็น entry point มาตรฐานสำหรับโปรแกรม async
+เป็น entry point มาตรฐานสำหรับโปรแกรม async
 
 ```python
 import asyncio
@@ -187,7 +187,7 @@ in-browser runner มี event loop รันอยู่แล้ว ดัง�
 
 export const quizAsyncioBasics = [
   {
-    q: "การเรียกฟังก์ชัน `async def` คืนอะไรก่อนที่คุณจะ `await` มัน?",
+    q: "การเรียกฟังก์ชัน `async def` คืนอะไรก่อนที่คุณจะ `await`?",
     options: [
       "ค่า return ของ function body",
       "coroutine object",
@@ -217,7 +217,7 @@ export const quizAsyncioBasics = [
     answer: 1
   },
   {
-    q: "argument ใดใน `asyncio.gather` ทำให้มันคืน exceptions เป็น values แทนการส่งต่อ?",
+    q: "argument ใดใน `asyncio.gather` ทำให้ `gather` คืน exceptions เป็น values แทนการส่งต่อ?",
     options: [
       "ignore_errors=True",
       "safe_mode=True",

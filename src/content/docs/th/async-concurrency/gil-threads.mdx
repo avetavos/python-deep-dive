@@ -129,7 +129,7 @@ print(counter)   # 500_000 ได้อย่างน่าเชื่อถ�
 ## `ThreadPoolExecutor` — high-level API
 
 `concurrent.futures.ThreadPoolExecutor` จัดการ thread pool และคืน `Future` objects
-มัน integrate ได้ดีกับ `asyncio` ผ่าน `loop.run_in_executor`
+และ integrate ได้ดีกับ `asyncio` ผ่าน `loop.run_in_executor`
 
 ```python
 from concurrent.futures import ThreadPoolExecutor
@@ -215,18 +215,18 @@ export const quizGilThreads = [
   {
     q: "จุดประสงค์ของ `threading.Lock` เมื่อ shared mutable state ถูกเข้าถึงจาก threads หลายตัวคืออะไร?",
     options: [
-      "มันเร่งความเร็วการเข้าถึง shared state โดย caching",
-      "มันป้องกันไม่ให้สอง threads แก้ไข shared state พร้อมกัน หลีกเลี่ยง race conditions",
-      "มันคัดลอก shared state เข้าสู่ private memory ของแต่ละ thread",
-      "มัน serialize threads ทั้งหมดเป็น single thread เพื่อความปลอดภัย"
+      "เร่งความเร็วการเข้าถึง shared state โดย caching",
+      "ป้องกันไม่ให้สอง threads แก้ไข shared state พร้อมกัน หลีกเลี่ยง race conditions",
+      "คัดลอก shared state เข้าสู่ private memory ของแต่ละ thread",
+      "serialize threads ทั้งหมดเป็น single thread เพื่อความปลอดภัย"
     ],
     answer: 1
   },
   {
     q: "วิธีเรียกฟังก์ชัน synchronous แบบ blocking จากภายใน `async def` coroutine โดยไม่บล็อก event loop คือ?",
     options: [
-      "เรียกมันโดยตรง — asyncio จัดการ blocking calls โดยอัตโนมัติ",
-      "ห่อมันใน `threading.Thread` และ await thread",
+      "เรียกโดยตรง — asyncio จัดการ blocking calls โดยอัตโนมัติ",
+      "ห่อไว้ใน `threading.Thread` แล้ว await thread",
       "ใช้ `loop.run_in_executor(pool, blocking_fn, *args)` เพื่อโอนไปยัง thread pool",
       "ใช้ `asyncio.sleep(0)` ก่อนการเรียก"
     ],

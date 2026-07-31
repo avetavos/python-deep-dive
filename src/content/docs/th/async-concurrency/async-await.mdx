@@ -53,7 +53,7 @@ asyncio.run(concurrent())
 
 ## `asyncio.create_task` — การ schedule task แบบชัดเจน
 
-`asyncio.create_task(coro)` ห่อ coroutine ใน `Task` และ schedule มันบน event loop ที่กำลังรันทันที
+`asyncio.create_task(coro)` ห่อ coroutine ใน `Task` และ schedule ลงบน event loop ที่กำลังรันทันที
 ต่างจากการเรียก coroutine โดยตรง task เริ่มรันทันทีที่ coroutine ปัจจุบันยกการควบคุม
 
 ```python
@@ -120,8 +120,8 @@ Re-raise `CancelledError` หลัง cleanup เสมอ การกลื�
 
 ## `asyncio.sleep` เป็น cooperative yield
 
-`await asyncio.sleep(0)` คือ yield ขั้นต่ำ — มันหยุด coroutine ปัจจุบันชั่วคราว ทำให้ tasks อื่นที่พร้อมแล้วรันได้
-ใช้มันเพื่อหลีกเลี่ยงการ starve event loop ใน async code ที่ต้องคำนวณหนัก
+`await asyncio.sleep(0)` คือ yield ขั้นต่ำ — หยุด coroutine ปัจจุบันชั่วคราว ทำให้ tasks อื่นที่พร้อมแล้วรันได้
+ใช้เทคนิคนี้เพื่อหลีกเลี่ยงการ starve event loop ใน async code ที่ต้องคำนวณหนัก
 
 ```python
 import asyncio
@@ -138,7 +138,7 @@ asyncio.run(progress_bar(20))
 ## Python 3.11+: `asyncio.TaskGroup`
 
 `asyncio.TaskGroup` คือ structured-concurrency primitive ที่นำเสนอใน Python 3.11
-มันยกเลิก tasks ที่เหลือทั้งหมดโดยอัตโนมัติหากตัวใดตัวหนึ่ง raise exception
+`TaskGroup` ยกเลิก tasks ที่เหลือทั้งหมดโดยอัตโนมัติหากตัวใดตัวหนึ่ง raise exception
 
 ```python
 import asyncio
@@ -163,7 +163,7 @@ asyncio.run(main())
 # C complete
 ```
 
-ควรใช้ `TaskGroup` แทน `gather` ใน Python 3.11+ — มันบังคับ structured lifetimes และส่งต่อ errors อย่างสะอาดผ่าน `ExceptionGroup`
+ควรใช้ `TaskGroup` แทน `gather` ใน Python 3.11+ — เพราะบังคับ structured lifetimes และส่งต่อ errors อย่างสะอาดผ่าน `ExceptionGroup`
 
 ## Timeouts ด้วย `asyncio.wait_for`
 

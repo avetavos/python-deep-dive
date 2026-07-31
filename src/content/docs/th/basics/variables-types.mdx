@@ -13,7 +13,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 ## ตัวแปรและ Dynamic Typing
 
 ใน Python คุณกำหนดค่าให้กับชื่อตัวแปรได้เลย — ไม่ต้องประกาศชนิดข้อมูล
-ชนิดของตัวแปรถูกกำหนดโดยออบเจกต์ที่มันอ้างถึงในขณะนั้น ไม่ใช่โดยการประกาศ
+ชนิดของตัวแปรถูกกำหนดโดยออบเจกต์ที่อ้างถึงในขณะนั้น ไม่ใช่โดยการประกาศ
 
 ```python
 x = 10          # x อ้างถึง int
@@ -42,7 +42,7 @@ Python มีชนิดข้อมูล scalar สี่ชนิดที�
 ## การตรวจสอบชนิดข้อมูลขณะรันไทม์
 
 `type()` คืนชนิดที่แน่นอนของออบเจกต์
-`isinstance()` ทดสอบว่าออบเจกต์เป็น instance ของชนิดนั้นหรือ subclass ของมัน
+`isinstance()` ทดสอบว่าออบเจกต์เป็น instance ของชนิดนั้นหรือ subclass ของตัวเอง
 
 ```python
 age = 30
@@ -114,9 +114,9 @@ for v in falsy_values:
 <Playground code={variablesTypesCode} />
 
 <Callout title="ทุกอย่างคือออบเจกต์">
-ใน Python, `42` ไม่ใช่ primitive — มันคือ instance ของคลาส `int`
-ซึ่งหมายความว่ามัน methods: `(42).bit_length()` คืนค่า `6`
-แม้แต่ `True` และ `False` ก็เป็นออบเจกต์ชนิด `bool` ซึ่งเป็น subclass ของ `int`
+ใน Python, `42` ไม่ใช่ primitive — แต่เป็น instance ของคลาส `int`
+ซึ่งหมายความว่า methods: `(42).bit_length()` คืนค่า `6`
+แม้แต่ `True` และ `False` ก็เป็นออบเจกต์ชนิด `bool` ที่เป็น subclass ของ `int`
 นั่นคือเหตุผลที่ `True + True` ได้ผลลัพธ์เป็น `2`
 </Callout>
 

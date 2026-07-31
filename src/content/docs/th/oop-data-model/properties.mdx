@@ -13,7 +13,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 ## Decorator `@property`
 
 `@property` เปลี่ยน method ให้เป็น attribute-style accessor
-ผู้เรียกใช้ `obj.celsius` แทน `obj.get_celsius()` ทำให้ public API สะอาดในขณะที่ยังเรียก validation logic ได้เบื้องหลัง
+ผู้เรียกใช้ `obj.celsius` แทน `obj.get_celsius()` ทำให้ public API สะอาดโดยยังเรียก validation logic ได้เบื้องหลัง
 
 ```python
 class Temperature:
@@ -42,7 +42,7 @@ class Temperature:
 
 ## Computed (derived) properties
 
-Property สามารถคำนวณค่าในขณะที่เรียกโดยไม่มีพื้นที่จัดเก็บเบื้องหลัง:
+Property คำนวณค่าตอนถูกเรียกได้ โดยไม่ต้องมีพื้นที่จัดเก็บเบื้องหลัง:
 
 ```python
     @property
@@ -129,7 +129,7 @@ print(Temperature.absolute_zero())
 
 <Callout title="Prefer @property over getX/setX methods">
 Java และโค้ด Python รุ่นเก่าใช้ getter/setter methods ที่ชัดเจนเช่น `get_celsius()` และ `set_celsius(value)`
-ใน Python `@property` ให้ validation และ computed values ในขณะที่ call site ยังดูเหมือน plain attribute access: `t.celsius = 0` แทน `t.set_celsius(0)`
+ใน Python `@property` ให้ validation และ computed values โดยที่ call site ยังดูเหมือน plain attribute access: `t.celsius = 0` แทน `t.set_celsius(0)`
 เริ่มต้นด้วย plain attribute ก่อน แล้วค่อย promote เป็น `@property` ภายหลังเมื่อต้องการ validation หรือ lazy computation — ผู้เรียกไม่จำเป็นต้องเปลี่ยนโค้ด
 </Callout>
 

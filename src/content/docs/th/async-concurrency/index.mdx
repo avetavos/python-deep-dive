@@ -97,7 +97,7 @@ print(results)
 
 <Callout title="Python 3.11+ task groups">
 Python 3.11 นำเสนอ `asyncio.TaskGroup` เป็นวิธีแนะนำในการรัน coroutines หลายตัวพร้อมกัน
-มันมี structured concurrency พร้อม automatic cancellation เมื่อเกิด failure — ควรใช้แทน `gather` แบบเปลือยในโค้ดใหม่
+มี structured concurrency พร้อม automatic cancellation เมื่อเกิด failure — ควรใช้แทน `gather` แบบเปลือยในโค้ดใหม่
 
 ```python
 async with asyncio.TaskGroup() as tg:
@@ -121,7 +121,7 @@ export const quizIndex = [
   {
     q: "เหตุใด asyncio จึงจัดการการรอ I/O พร้อมกันหลายพันรายการได้อย่างมีประสิทธิภาพใน single thread?",
     options: [
-      "มันคอมไพล์ coroutines เป็น native machine code",
+      "คอมไพล์ coroutines เป็น native machine code",
       "Event loop สลับระหว่าง coroutines เมื่อตัวใดตัวหนึ่ง await I/O",
       "ใช้ GIL ในการ time-slice ระหว่าง coroutines",
       "แต่ละ coroutine รันใน subprocess ของตัวเอง"

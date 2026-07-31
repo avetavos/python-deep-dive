@@ -150,7 +150,7 @@ export const quizCustomErrors = [
     q: "ทำไม custom application exception จึงควร subclass `Exception` แทน `BaseException`?",
     options: [
       "Exception สร้าง instance ได้เร็วกว่า BaseException",
-      "BaseException รวมถึง KeyboardInterrupt และ SystemExit — การ subclass จากมันทำให้จับสัญญาณหยุดโปรแกรมโดยไม่ตั้งใจ",
+      "BaseException รวมถึง KeyboardInterrupt และ SystemExit — การ subclass จาก BaseException ทำให้จับสัญญาณหยุดโปรแกรมโดยไม่ตั้งใจ",
       "Exception รองรับ custom attribute แต่ BaseException ไม่รองรับ",
       "BaseException ไม่สามารถ raise ด้วย message string"
     ],

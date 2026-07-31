@@ -24,7 +24,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 | `__repr__` | `repr(obj)`, interactive shell | Representation ที่ชัดเจนสำหรับนักพัฒนา |
 | `__str__` | `str(obj)`, `print(obj)` | การแสดงผลที่อ่านง่ายสำหรับมนุษย์ |
 
-ถ้ากำหนดเฉพาะ `__repr__` Python จะใช้มันสำหรับทั้งสองกรณี
+ถ้ากำหนดเฉพาะ `__repr__` Python จะใช้ `__repr__` สำหรับทั้งสองกรณี
 Convention สำหรับ `__repr__` คือ return string ที่ถ้าส่งผ่าน `eval()` จะสร้าง object ขึ้นมาใหม่ได้
 
 ```python
@@ -43,7 +43,7 @@ class Point:
 ## `__eq__` — equality
 
 Python เรียก `__eq__` เมื่อเขียน `a == b`
-หากไม่มีมัน `==` จะ fallback ไปใช้ identity comparison (`is`) — สอง instance แยกกันที่มีข้อมูลเหมือนกันจะไม่เท่ากันเลย
+หากไม่มี `__eq__` `==` จะ fallback ไปใช้ identity comparison (`is`) — สอง instance แยกกันที่มีข้อมูลเหมือนกันจะไม่เท่ากันเลย
 
 ```python
 def __eq__(self, other: object) -> bool:
