@@ -165,6 +165,32 @@ shm.close()
 shm.unlink()
 ```
 
+## Subinterpreters: `concurrent.interpreters` (Python 3.14)
+
+PEP 734 exposes subinterpreters to Python code. Each interpreter gets its own GIL — that groundwork landed
+in 3.12 — so they run on separate cores like processes, but they live inside one OS process, which makes
+startup far cheaper than `fork` or `spawn`.
+
+```python
+from concurrent import interpreters
+
+interp = interpreters.create()
+interp.exec("print(sum(range(1_000_000)))")
+interp.close()
+```
+
+There is a matching executor for pool-shaped work:
+
+```python
+from concurrent.futures import InterpreterPoolExecutor
+
+with InterpreterPoolExecutor(max_workers=4) as pool:
+    print(list(pool.map(str, range(4))))
+```
+
+The trade-off is the boundary: interpreters do not share objects, so arguments and results have to cross as
+serialisable data, exactly like `multiprocessing`. What you save is process startup time and memory.
+
 ## Processes vs threads: decision guide
 
 | Criterion | `multiprocessing` | `threading` | `asyncio` |

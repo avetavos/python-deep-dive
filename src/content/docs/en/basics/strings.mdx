@@ -1,6 +1,6 @@
 ---
 title: Strings
-description: 'String methods, slicing, f-strings, join/split, and immutability in Python.'
+description: 'String methods, slicing, f-strings, t-strings (Python 3.14), join/split, and immutability in Python.'
 sidebar:
   order: 5
 ---
@@ -73,6 +73,57 @@ print(f"Upper: {name.upper()}")
 
 Format specifiers after `:` control alignment, precision, and type — the same mini-language used by `str.format()`.
 
+## t-strings (template strings, Python 3.14)
+
+An f-string is evaluated immediately and hands you a finished `str`. That is exactly the problem when the
+result goes into SQL, a shell command, or HTML: by the time your code sees the string, the interpolated
+values are indistinguishable from the literal text around them.
+
+A **t-string** (PEP 750, Python 3.14) uses the `t` prefix and evaluates to a `Template` instead of a `str`.
+The literal chunks and the substituted values stay separate, so a library can escape the values before
+assembling the final text.
+
+```python
+variety = "Stilton"
+template = t"Try some {variety} cheese!"
+
+print(template.strings)                       # ('Try some ', ' cheese!')
+print(template.interpolations[0].value)       # Stilton
+print(template.interpolations[0].expression)  # variety
+```
+
+Iterating a `Template` yields the literal parts as `str` and the substitutions as `Interpolation` objects —
+which is what makes safe rendering possible:
+
+export const tstringCode = `
+from string.templatelib import Interpolation, Template
+
+variety = "Stilton"
+template = t"Try some {variety} cheese!"
+
+print(type(template).__name__)
+print(template.strings)
+
+for part in template:
+    if isinstance(part, Interpolation):
+        print("value:", part.value, "| expression:", part.expression)
+    else:
+        print("literal:", repr(part))
+
+def shout(tpl: Template) -> str:
+    out = []
+    for part in tpl:
+        out.append(str(part.value).upper() if isinstance(part, Interpolation) else part)
+    return "".join(out)
+
+print(shout(t"hello {variety}, and {1 + 1} more"))
+`.trim();
+
+<Playground code={tstringCode} />
+
+Reach for an f-string when you want text now. Reach for a t-string when something downstream has to know
+which parts came from your program and which came from your data.
+
 ## `join()` and `split()`
 
 `str.split(sep)` breaks a string into a list.
@@ -132,6 +183,16 @@ and call `"".join(pieces)` at the end — this is O(n) instead of O(n²).
 </Callout>
 
 export const quizStrings = [
+  {
+    q: "What does a t-string (Python 3.14) evaluate to?",
+    options: [
+      "A `str`, exactly like an f-string",
+      "A `Template` that keeps literal text and interpolated values separate",
+      "A compiled regular expression",
+      "A lazily evaluated generator of characters"
+    ],
+    answer: 1
+  },
   {
     q: "What does `\"Hello, World!\"[7:]` return?",
     options: [

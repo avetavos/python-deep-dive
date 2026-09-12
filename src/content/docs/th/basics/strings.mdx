@@ -1,6 +1,6 @@
 ---
 title: Strings
-description: 'String methods, slicing, f-strings, join/split, และ immutability ใน Python'
+description: 'String methods, slicing, f-strings, t-strings (Python 3.14), join/split, และ immutability ใน Python'
 sidebar:
   order: 5
 ---
@@ -73,6 +73,55 @@ print(f"Upper: {name.upper()}")
 
 Format specifiers หลัง `:` ควบคุมการจัดวาง, ความแม่นยำ, และชนิด — mini-language เดียวกับที่ใช้ใน `str.format()`
 
+## t-strings (template strings, Python 3.14)
+
+f-string ถูก evaluate ทันทีและคืน `str` ที่เสร็จแล้ว ซึ่งเป็นปัญหาพอดีเวลาผลลัพธ์ถูกส่งต่อไปเป็น SQL, คำสั่ง shell
+หรือ HTML เพราะตอนที่ code เห็น string นั้น ค่าที่แทรกเข้าไปแยกไม่ออกจากข้อความ literal รอบ ๆ แล้ว
+
+**t-string** (PEP 750, Python 3.14) ใช้ prefix `t` และ evaluate เป็น `Template` แทนที่จะเป็น `str`
+ส่วนที่เป็นข้อความ literal กับค่าที่แทรกเข้าไปจะยังแยกจากกัน library จึง escape เฉพาะค่าได้ก่อนประกอบเป็นข้อความสุดท้าย
+
+```python
+variety = "Stilton"
+template = t"Try some {variety} cheese!"
+
+print(template.strings)                       # ('Try some ', ' cheese!')
+print(template.interpolations[0].value)       # Stilton
+print(template.interpolations[0].expression)  # variety
+```
+
+การ iterate `Template` จะได้ส่วน literal เป็น `str` และส่วนที่แทนค่าเป็น object `Interpolation` —
+นี่คือสิ่งที่ทำให้ render อย่างปลอดภัยได้:
+
+export const tstringCode = `
+from string.templatelib import Interpolation, Template
+
+variety = "Stilton"
+template = t"Try some {variety} cheese!"
+
+print(type(template).__name__)
+print(template.strings)
+
+for part in template:
+    if isinstance(part, Interpolation):
+        print("value:", part.value, "| expression:", part.expression)
+    else:
+        print("literal:", repr(part))
+
+def shout(tpl: Template) -> str:
+    out = []
+    for part in tpl:
+        out.append(str(part.value).upper() if isinstance(part, Interpolation) else part)
+    return "".join(out)
+
+print(shout(t"hello {variety}, and {1 + 1} more"))
+`.trim();
+
+<Playground code={tstringCode} />
+
+ใช้ f-string เมื่อต้องการข้อความเดี๋ยวนี้ ใช้ t-string เมื่อมีอะไรปลายทางที่ต้องรู้ว่าส่วนไหนมาจากโปรแกรมของคุณ
+และส่วนไหนมาจากข้อมูล
+
 ## `join()` และ `split()`
 
 `str.split(sep)` แบ่ง string เป็น list
@@ -132,6 +181,16 @@ except TypeError as e:
 </Callout>
 
 export const quizStrings = [
+  {
+    q: "t-string (Python 3.14) evaluate ออกมาเป็นอะไร?",
+    options: [
+      "`str` เหมือน f-string ทุกประการ",
+      "`Template` ที่แยกข้อความ literal กับค่าที่แทรกเข้าไปออกจากกัน",
+      "regular expression ที่ compile แล้ว",
+      "generator ของตัวอักษรที่ evaluate แบบ lazy"
+    ],
+    answer: 1
+  },
   {
     q: "`\"Hello, World!\"[7:]` คืนค่าอะไร?",
     options: [

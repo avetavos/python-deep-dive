@@ -156,6 +156,31 @@ shm.close()
 shm.unlink()
 ```
 
+## Subinterpreters: `concurrent.interpreters` (Python 3.14)
+
+PEP 734 เปิด subinterpreter ให้ code Python ใช้ได้ แต่ละ interpreter มี GIL ของตัวเอง — พื้นฐานส่วนนี้มาตั้งแต่ 3.12 —
+จึงรันบน core แยกกันได้เหมือน process แต่อยู่ใน OS process เดียวกัน ทำให้ startup ถูกกว่า `fork` หรือ `spawn` มาก
+
+```python
+from concurrent import interpreters
+
+interp = interpreters.create()
+interp.exec("print(sum(range(1_000_000)))")
+interp.close()
+```
+
+และมี executor คู่กันสำหรับงานแบบ pool:
+
+```python
+from concurrent.futures import InterpreterPoolExecutor
+
+with InterpreterPoolExecutor(max_workers=4) as pool:
+    print(list(pool.map(str, range(4))))
+```
+
+สิ่งที่ต้องแลกคือขอบเขต: interpreter ไม่ได้ใช้ object ร่วมกัน argument และผลลัพธ์จึงต้องข้ามไปในรูป data ที่ serialise ได้
+เหมือน `multiprocessing` เป๊ะ ๆ สิ่งที่ประหยัดได้คือเวลา startup ของ process และหน่วยความจำ
+
 ## Processes vs threads: คู่มือการตัดสินใจ
 
 | เกณฑ์ | `multiprocessing` | `threading` | `asyncio` |

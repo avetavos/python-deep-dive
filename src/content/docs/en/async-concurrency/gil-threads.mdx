@@ -25,10 +25,12 @@ the simpler approach of a single global lock.
 - I/O-bound threads *do* benefit from threading because the GIL is released while a thread waits
   for an OS I/O call to complete.
 
-<Callout title="Python 3.13 and the no-GIL build">
-Python 3.13 introduces an experimental **free-threaded** (no-GIL) build, enabled at compile time
-with `--disable-gil`. This allows true CPU-level parallelism across threads but may break C extensions
-that assumed the GIL's protection. Mainstream adoption is expected in 3.14+.
+<Callout title="Free-threaded Python is official in 3.14">
+The GIL-free build was experimental in 3.13 and is **officially supported** from Python 3.14 (PEP 779).
+It ships as a separate interpreter — `python3.14t` — because the default build still has the GIL.
+Threads there run Python bytecode in parallel on every core, and the single-threaded cost is now roughly
+5–10%. Check at runtime with `sys._is_gil_enabled()`. C extensions have to opt in, so confirm your
+dependencies support it before switching a real project.
 </Callout>
 
 ## CPU-bound threads: no speedup

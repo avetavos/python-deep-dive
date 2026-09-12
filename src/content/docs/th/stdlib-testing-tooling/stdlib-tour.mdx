@@ -154,10 +154,10 @@ print("name:", back["name"], "| latest:", back["versions"][-1])
 ```python
 from pathlib import Path
 
-p = Path("/usr/local/lib/python3.12/site-packages/requests/__init__.py")
+p = Path("/usr/local/lib/python3.14/site-packages/requests/__init__.py")
 print(p.suffix)   # .py
 print(p.stem)     # __init__
-print(p.parts)    # ('/', 'usr', 'local', 'lib', 'python3.12', 'site-packages', 'requests', '__init__.py')
+print(p.parts)    # ('/', 'usr', 'local', 'lib', 'python3.14', 'site-packages', 'requests', '__init__.py')
 
 # Building paths with /
 project = Path.home() / "projects" / "myapp"
@@ -168,6 +168,52 @@ print(config)
 > `pathlib` จัดการ path ระบบไฟล์ — รัน code นี้ใน local; sandbox ของ browser ไม่มีระบบไฟล์จริง
 
 ---
+
+## อะไรเข้ามา และอะไรออกไป
+
+standard library ขยับทั้งสองทาง Python 3.13 ถอด module ที่ deprecated มานาน 19 ตัวออก (PEP 594) —
+`cgi`, `telnetlib`, `crypt`, `imghdr`, `nntplib`, `pipes`, `uu` และพวกพ้อง พร้อมกับ `lib2to3` code ที่ import
+ตัวใดตัวหนึ่งต้องหาตัวแทนจาก third-party หรือเขียนใหม่
+
+ฝั่งที่เพิ่มเข้ามาซึ่งควรรู้ไว้:
+
+| สิ่งที่เพิ่ม | เวอร์ชัน | ทำไมถึงสำคัญ |
+|---|---|---|
+| `itertools.batched(it, n)` | 3.12 | แบ่งเป็นก้อนขนาดคงที่โดยไม่ต้องเขียน loop เอง |
+| `pathlib.Path.walk()` | 3.12 | `os.walk` ที่คืน object `Path` |
+| `copy.replace(obj, **changes)` | 3.13 | `dataclasses.replace` แบบใช้ได้ทั่วไป ผ่าน `__replace__` |
+| `dbm.sqlite3` | 3.13 | SQLite เป็น backend เริ่มต้นของ `dbm` แล้ว |
+| `glob.translate()` | 3.13 | แปลง shell wildcard เป็น regular expression |
+| `compression.zstd` | 3.14 | Zstandard ต่อเข้ากับ `tarfile`, `zipfile`, `shutil` ให้ด้วย |
+| `pathlib.Path.copy()` และ `.move()` | 3.14 | copy และ move โดยไม่ต้องเรียก `shutil` |
+| `heapq.heapify_max()` และเพื่อน ๆ | 3.14 | max-heap โดยไม่ต้องใส่เครื่องหมายลบทุกค่า |
+| `functools.Placeholder` | 3.14 | ข้าม positional argument ตอนสร้าง `partial` |
+| `Decimal.from_number()` | 3.14 | สร้างค่าแบบเป๊ะ ๆ จาก `int` หรือ `float` |
+
+export const newStdlibCode = `
+import copy, heapq
+from dataclasses import dataclass
+from functools import Placeholder, partial
+from itertools import batched
+
+print(list(batched("ABCDEFG", 3)))
+
+@dataclass
+class Point:
+    x: int
+    y: int
+
+print(copy.replace(Point(1, 2), y=99))
+
+scores = [5, 1, 9, 3]
+heapq.heapify_max(scores)
+print("largest:", scores[0])
+
+to_2dp = partial(round, Placeholder, 2)
+print(to_2dp(3.14159))
+`.trim();
+
+<Playground code={newStdlibCode} />
 
 <Callout title="Reach for stdlib before adding a dependency">
 ทุก module ในหน้านี้มาพร้อมกับ Python — ไม่ต้องใช้ `pip install`

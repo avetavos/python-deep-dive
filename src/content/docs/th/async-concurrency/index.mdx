@@ -67,6 +67,8 @@ t1.start(); t2.start()
 t1.join();  t2.join()
 ```
 
+Python 3.14 เพิ่มทางออกจากมุมนี้อีกสองทาง: free-threaded build ที่รองรับอย่างเป็นทางการแล้ว (`python3.14t`) ซึ่ง thread รันขนานกันได้จริง และ `concurrent.interpreters` ที่ให้ worker แต่ละตัวมี interpreter และ GIL ของตัวเอง ภายใน process เดียว ทั้งคู่อธิบายไว้ในบทเรียน GIL และ Multiprocessing
+
 ## Multiprocessing สำหรับ parallelism จริง
 
 `multiprocessing` สร้าง OS processes แยกกัน แต่ละ process มี Python interpreter และ GIL ของตัวเอง

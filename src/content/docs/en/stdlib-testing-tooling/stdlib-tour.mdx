@@ -154,10 +154,10 @@ print("name:", back["name"], "| latest:", back["versions"][-1])
 ```python
 from pathlib import Path
 
-p = Path("/usr/local/lib/python3.12/site-packages/requests/__init__.py")
+p = Path("/usr/local/lib/python3.14/site-packages/requests/__init__.py")
 print(p.suffix)   # .py
 print(p.stem)     # __init__
-print(p.parts)    # ('/', 'usr', 'local', 'lib', 'python3.12', 'site-packages', 'requests', '__init__.py')
+print(p.parts)    # ('/', 'usr', 'local', 'lib', 'python3.14', 'site-packages', 'requests', '__init__.py')
 
 # Building paths with /
 project = Path.home() / "projects" / "myapp"
@@ -168,6 +168,52 @@ print(config)
 > `pathlib` manipulates filesystem paths — run this locally; the browser sandbox has no real filesystem.
 
 ---
+
+## What arrived, and what left
+
+The standard library moves in both directions. Python 3.13 removed 19 long-deprecated modules (PEP 594) —
+`cgi`, `telnetlib`, `crypt`, `imghdr`, `nntplib`, `pipes`, `uu` and friends — plus `lib2to3`. Code importing
+any of them needs a third-party replacement or a rewrite.
+
+Worth knowing on the other side of the ledger:
+
+| Addition | Version | Why you care |
+|---|---|---|
+| `itertools.batched(it, n)` | 3.12 | Fixed-size chunks without a manual loop |
+| `pathlib.Path.walk()` | 3.12 | `os.walk` that yields `Path` objects |
+| `copy.replace(obj, **changes)` | 3.13 | Generic `dataclasses.replace`, via `__replace__` |
+| `dbm.sqlite3` | 3.13 | SQLite is now the default `dbm` backend |
+| `glob.translate()` | 3.13 | Shell wildcard to regular expression |
+| `compression.zstd` | 3.14 | Zstandard, also wired into `tarfile`, `zipfile`, `shutil` |
+| `pathlib.Path.copy()` and `.move()` | 3.14 | Copy and move without reaching for `shutil` |
+| `heapq.heapify_max()` and friends | 3.14 | Max-heaps without negating every value |
+| `functools.Placeholder` | 3.14 | Skip positional arguments when building a `partial` |
+| `Decimal.from_number()` | 3.14 | Exact construction from an `int` or `float` |
+
+export const newStdlibCode = `
+import copy, heapq
+from dataclasses import dataclass
+from functools import Placeholder, partial
+from itertools import batched
+
+print(list(batched("ABCDEFG", 3)))
+
+@dataclass
+class Point:
+    x: int
+    y: int
+
+print(copy.replace(Point(1, 2), y=99))
+
+scores = [5, 1, 9, 3]
+heapq.heapify_max(scores)
+print("largest:", scores[0])
+
+to_2dp = partial(round, Placeholder, 2)
+print(to_2dp(3.14159))
+`.trim();
+
+<Playground code={newStdlibCode} />
 
 <Callout title="Reach for stdlib before adding a dependency">
 Every module on this page ships with Python — no `pip install` required.

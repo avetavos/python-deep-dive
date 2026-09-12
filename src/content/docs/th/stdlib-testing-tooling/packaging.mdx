@@ -44,7 +44,7 @@ name = "mypackage"
 version = "0.1.0"
 description = "A short description of mypackage"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [
     { name = "Your Name", email = "you@example.com" }
@@ -62,6 +62,10 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/yourname/mypackage"
 ```
+
+`requires-python` คือเวอร์ชันต่ำสุดที่คุณรับประกัน — pip จะไม่ยอมติดตั้งบน interpreter ที่เก่ากว่านั้น
+ให้ตั้งเป็นเวอร์ชันเก่าสุดที่คุณทดสอบจริง และควรรู้ว่า `distutils` ถูกถอดออกใน Python 3.12 แล้ว: ต้องมี build backend
+อย่าง `hatchling` (ตามตัวอย่างข้างบน), `setuptools` หรือ `uv_build` และ `setup.py` ไม่ใช่จุดเริ่มต้นอีกต่อไป
 
 ## ไฟล์ซอร์สโค้ด
 

@@ -1,6 +1,6 @@
 ---
 title: Type Hints
-description: 'Annotating variables, parameters, and return values in Python 3.11+ — Optional, Union, type aliases, and the |  syntax.'
+description: 'Annotating variables, parameters, and return values in Python 3.14 — Optional, Union, the | syntax, PEP 695 type parameters, and lazily evaluated annotations.'
 sidebar:
   order: 2
 ---
@@ -105,6 +105,85 @@ For Python 3.12+ use `type` statements:
 type Vector = list[float]   # Python 3.12+
 ```
 
+## Type parameters without `TypeVar` (Python 3.12+)
+
+PEP 695 gave Python dedicated syntax for generics: the type parameter is declared in square brackets right
+after the name. No `TypeVar` import, no module-level variable.
+
+```python
+def first[T](items: list[T]) -> T:
+    return items[0]
+
+class Box[T]:
+    def __init__(self, value: T) -> None:
+        self.value = value
+
+type Pair[T] = tuple[T, T]     # generic alias
+```
+
+The older spelling still works, and is what you will see in code targeting 3.11 or earlier:
+
+```python
+from typing import TypeVar
+
+T = TypeVar("T")
+
+def first(items: list[T]) -> T:
+    return items[0]
+```
+
+## Annotations are evaluated lazily (Python 3.14)
+
+Before 3.14 an annotation was evaluated the moment the `def` or `class` statement ran, so a name that did
+not exist yet had to be quoted — `from __future__ import annotations` was the usual workaround. PEP 649
+changed that: annotations are stored as a function that runs only when something asks for them, so forward
+references simply work.
+
+```python
+class Node:
+    def link(self, other: Node) -> Node:   # Node is not defined yet — still fine
+        self.other = other
+        return self
+```
+
+To read annotations at runtime, use `annotationlib` rather than touching `__annotations__` directly:
+
+```python
+from annotationlib import Format, get_annotations
+
+get_annotations(Node.link, format=Format.VALUE)       # resolved objects
+get_annotations(Node.link, format=Format.STRING)      # the source text
+get_annotations(Node.link, format=Format.FORWARDREF)  # ForwardRef where it cannot resolve
+```
+
+## The rest of the modern toolkit
+
+| Feature | Version | What it does |
+|---|---|---|
+| `@override` | 3.12 | The checker verifies the method really overrides a base method |
+| `TypeVar("T", default=int)` | 3.13 | A default for a type parameter that is not filled in |
+| `typing.ReadOnly` | 3.13 | Marks a `TypedDict` key as read-only |
+| `typing.TypeIs` | 3.13 | A narrowing predicate that also narrows the negative branch, unlike `TypeGuard` |
+| `@warnings.deprecated` | 3.13 | One deprecation marker the checker and the runtime both understand |
+
+```python
+from typing import ReadOnly, TypeIs, TypedDict, override
+
+class User(TypedDict):
+    id: ReadOnly[int]
+    name: str
+
+def is_str_list(values: list[object]) -> TypeIs[list[str]]:
+    return all(isinstance(v, str) for v in values)
+
+class Base:
+    def run(self) -> None: ...
+
+class Child(Base):
+    @override
+    def run(self) -> None: ...
+```
+
 ## Full runnable demo
 
 export const typeHintsCode = `
@@ -159,6 +238,16 @@ Type hints are only enforced by static checkers like **mypy** or **pyright**. Ru
 </Callout>
 
 export const quizTypeHints = [
+  {
+    q: "In Python 3.14, why do forward references no longer need quotes?",
+    options: [
+      "The interpreter scans the whole file before running it",
+      "Annotations are evaluated lazily (PEP 649), only when something reads them",
+      "`from __future__ import annotations` is now implicit in every module",
+      "Quoted annotations were never required"
+    ],
+    answer: 1
+  },
   {
     q: "What is the modern Python 3.10+ syntax for 'str or None'?",
     options: ["Optional[str]", "str | None", "Union[str, None]", "Nullable[str]"],

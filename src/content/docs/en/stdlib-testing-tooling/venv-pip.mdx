@@ -74,6 +74,23 @@ When you are done working on a project, deactivate restores your original `PATH`
 deactivate
 ```
 
+## `uv` — the fast path
+
+`uv` is a single binary that covers what `venv`, `pip`, `pip-tools`, and `pyenv` do separately. It resolves
+and installs roughly an order of magnitude faster, and it can install interpreters as well.
+
+```bash
+uv python install 3.14      # fetch the interpreter itself
+uv init myapp && cd myapp   # pyproject.toml + .venv
+uv add requests             # resolve, install, record in pyproject.toml and uv.lock
+uv run python app.py        # run inside the project environment, no activation
+uv sync                     # recreate the environment exactly from uv.lock
+```
+
+The payoff is `uv.lock`: a cross-platform lock file, which is the one thing `requirements.txt` never did
+well. The `venv` and `pip` workflow above still works everywhere and is worth understanding — `uv` is what
+most new projects reach for.
+
 ## Typical project layout
 
 A conventional Python project keeps the virtual environment at the root alongside source, tests, and dependency files.

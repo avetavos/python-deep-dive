@@ -1,6 +1,6 @@
 ---
 title: Exceptions
-description: 'try/except/else/finally, raising exceptions, catching specific types, and exception chaining in Python 3.11+.'
+description: 'try/except/else/finally, raising exceptions, catching specific types, exception chaining, and the Python 3.14 except syntax.'
 sidebar:
   order: 3
 ---
@@ -37,6 +37,21 @@ finally:
 
 The `else` clause is a useful Python feature: it lets you distinguish "the operation succeeded" from "we are in cleanup." Code in `else` only runs on the happy path.
 
+### Never `return` out of `finally`
+
+A `return`, `break`, or `continue` inside `finally` throws away whatever exception was in flight — the
+function returns normally and the error disappears. Python 3.14 (PEP 765) warns about it:
+
+```python
+def risky():
+    try:
+        raise ValueError("lost")
+    finally:
+        return "swallowed"   # SyntaxWarning in 3.14 — the ValueError never escapes
+```
+
+Keep `finally` to cleanup only, and let exceptions propagate.
+
 ## Catching specific exception types
 
 Always catch the most specific exception type you can. Catching `Exception` is a last resort; catching bare `except:` silently swallows `KeyboardInterrupt` and `SystemExit` as well.
@@ -56,6 +71,15 @@ To catch multiple types in one clause, use a tuple:
 except (ValueError, TypeError) as e:
     print(f"Input error: {e}")
 ```
+
+Since Python 3.14 (PEP 758) the parentheses are optional when the clause has no `as`:
+
+```python
+except ValueError, TypeError:
+    print("Input error")
+```
+
+With `as` they are still required — `except (ValueError, TypeError) as e:` — because otherwise the parser cannot tell the tuple from the binding.
 
 ## Raising exceptions
 
@@ -142,6 +166,16 @@ Catch `Exception` only at the very top of a call stack (e.g., a global error han
 </Callout>
 
 export const quizExceptions = [
+  {
+    q: "Which `except` clause is valid in Python 3.14 without parentheses?",
+    options: [
+      "`except ValueError, TypeError as e:`",
+      "`except ValueError, TypeError:`",
+      "`except ValueError | TypeError as e:`",
+      "Parentheses are always required"
+    ],
+    answer: 1
+  },
   {
     q: "When does the `else` block in a try statement run?",
     options: [

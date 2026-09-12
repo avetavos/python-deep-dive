@@ -179,6 +179,20 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## ส่องโปรแกรมที่กำลังรันอยู่ (Python 3.14)
+
+เวลา async service ค้าง คำถามที่ยากคือ coroutine ตัวไหนที่ติดอยู่ Python 3.14 เข้าไปเกาะ process ที่ *กำลังรัน*
+แล้วพิมพ์ task tree ออกมาได้เลย ไม่ต้องใส่ instrument ไม่ต้อง restart:
+
+```bash
+python -m asyncio ps 12345      # ตาราง task แบบแบนใน PID 12345
+python -m asyncio pstree 12345  # ต้นไม้ของ await
+```
+
+ความสามารถนี้ต่อยอดจาก external debugger interface ของ PEP 768 ซึ่งทำให้ `python -m pdb -p 12345`
+เกาะ process ที่รันอยู่ได้ด้วย ส่วนภายใน code ของคุณเอง `asyncio.capture_call_graph()` และ
+`asyncio.print_call_graph()` ให้ภาพเดียวกันสำหรับ task ปัจจุบัน
+
 <Callout title="รันโปรแกรม asyncio บนเครื่องของคุณ">
 โค้ดตัวอย่างในหน้านี้ใช้ `asyncio.run(main())` — entry point มาตรฐาน
 in-browser runner มี event loop รันอยู่แล้ว ดังนั้น `asyncio.run()` จะ raise `RuntimeError` ที่นั่น

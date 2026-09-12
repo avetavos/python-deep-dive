@@ -1,6 +1,6 @@
 ---
 title: Exceptions
-description: 'try/except/else/finally, การ raise exception, การจับประเภทเฉพาะ และ exception chaining ใน Python 3.11+'
+description: 'try/except/else/finally, การ raise exception, การจับประเภทเฉพาะ, exception chaining และ syntax except ใหม่ใน Python 3.14'
 sidebar:
   order: 3
 ---
@@ -35,6 +35,21 @@ finally:
 
 Block `else` เป็น feature Python ที่มีประโยชน์: ช่วยแยกแยะ "การดำเนินการสำเร็จ" ออกจาก "เราอยู่ใน cleanup" โค้ดใน `else` ทำงานเฉพาะเส้นทาง happy path เท่านั้น
 
+### อย่า `return` ออกจาก `finally`
+
+`return`, `break` หรือ `continue` ใน `finally` จะทิ้ง exception ที่กำลังลอยอยู่ทั้งหมด — function จะ return
+ตามปกติและ error ก็หายไปเฉย ๆ Python 3.14 (PEP 765) เตือนกรณีนี้แล้ว:
+
+```python
+def risky():
+    try:
+        raise ValueError("lost")
+    finally:
+        return "swallowed"   # SyntaxWarning ใน 3.14 — ValueError ไม่มีทางหลุดออกมา
+```
+
+ให้ `finally` ทำแค่ cleanup แล้วปล่อยให้ exception ไหลต่อไป
+
 ## การจับ exception ตามประเภทเฉพาะ
 
 จับ exception ที่เฉพาะเจาะจงที่สุดเสมอ การจับ `Exception` เป็นทางเลือกสุดท้าย ส่วน `except:` เปล่าจะกลืน `KeyboardInterrupt` และ `SystemExit` ไปด้วย
@@ -54,6 +69,15 @@ except TypeError:
 except (ValueError, TypeError) as e:
     print(f"Input error: {e}")
 ```
+
+ตั้งแต่ Python 3.14 (PEP 758) วงเล็บกลายเป็นตัวเลือก ถ้า clause นั้นไม่มี `as`:
+
+```python
+except ValueError, TypeError:
+    print("Input error")
+```
+
+ถ้ามี `as` ยังต้องใส่วงเล็บอยู่ — `except (ValueError, TypeError) as e:` — เพราะไม่อย่างนั้น parser จะแยกไม่ออกระหว่าง tuple กับตัวแปรที่ผูกค่า
 
 ## การ raise exception
 
@@ -140,6 +164,16 @@ except RuntimeError as e:
 </Callout>
 
 export const quizExceptions = [
+  {
+    q: "clause `except` แบบไหนที่ใช้ได้ใน Python 3.14 โดยไม่ต้องมีวงเล็บ?",
+    options: [
+      "`except ValueError, TypeError as e:`",
+      "`except ValueError, TypeError:`",
+      "`except ValueError | TypeError as e:`",
+      "ต้องใส่วงเล็บเสมอ"
+    ],
+    answer: 1
+  },
   {
     q: "Block `else` ใน try statement ทำงานเมื่อใด?",
     options: [

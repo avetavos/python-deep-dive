@@ -67,6 +67,8 @@ t1.start(); t2.start()
 t1.join();  t2.join()
 ```
 
+Python 3.14 adds two more ways out of this corner: the officially supported free-threaded build (`python3.14t`), where threads really do run in parallel, and `concurrent.interpreters`, which gives each worker its own interpreter and GIL inside a single process. Both are covered in the GIL and Multiprocessing lessons.
+
 ## Multiprocessing for real parallelism
 
 `multiprocessing` spawns separate OS processes, each with its own Python interpreter and GIL.

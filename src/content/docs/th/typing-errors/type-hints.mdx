@@ -1,6 +1,6 @@
 ---
 title: Type Hints
-description: 'การ annotate ตัวแปร, พารามิเตอร์, และค่าที่คืนใน Python 3.11+ — Optional, Union, type alias และ syntax |'
+description: 'การ annotate ตัวแปร, พารามิเตอร์ และค่าที่คืนใน Python 3.14 — Optional, Union, syntax |, type parameter แบบ PEP 695 และ annotation ที่ evaluate แบบ lazy'
 sidebar:
   order: 2
 ---
@@ -105,6 +105,84 @@ Python 3.12+ มี `type` statement:
 type Vector = list[float]   # Python 3.12+
 ```
 
+## Type parameter โดยไม่ต้องใช้ `TypeVar` (Python 3.12+)
+
+PEP 695 ให้ syntax สำหรับ generics โดยเฉพาะ: ประกาศ type parameter ในวงเล็บเหลี่ยมต่อท้ายชื่อได้เลย
+ไม่ต้อง import `TypeVar` ไม่ต้องมีตัวแปรระดับ module
+
+```python
+def first[T](items: list[T]) -> T:
+    return items[0]
+
+class Box[T]:
+    def __init__(self, value: T) -> None:
+        self.value = value
+
+type Pair[T] = tuple[T, T]     # generic alias
+```
+
+รูปแบบเดิมยังใช้ได้ และเป็นสิ่งที่คุณจะเห็นใน code ที่ target 3.11 หรือเก่ากว่า:
+
+```python
+from typing import TypeVar
+
+T = TypeVar("T")
+
+def first(items: list[T]) -> T:
+    return items[0]
+```
+
+## Annotation ถูก evaluate แบบ lazy (Python 3.14)
+
+ก่อน 3.14 annotation ถูก evaluate ทันทีที่ statement `def` หรือ `class` ทำงาน ชื่อที่ยังไม่มีตัวตนจึงต้องใส่ quote
+และ `from __future__ import annotations` คือทางออกที่ใช้กันทั่วไป PEP 649 เปลี่ยนเรื่องนี้: annotation ถูกเก็บเป็น
+function ที่จะทำงานเมื่อมีคนขอเท่านั้น forward reference จึงใช้ได้เลย
+
+```python
+class Node:
+    def link(self, other: Node) -> Node:   # Node ยังไม่ถูกนิยาม — แต่ไม่มีปัญหา
+        self.other = other
+        return self
+```
+
+เวลาต้องอ่าน annotation ตอน runtime ให้ใช้ `annotationlib` แทนการแตะ `__annotations__` ตรง ๆ:
+
+```python
+from annotationlib import Format, get_annotations
+
+get_annotations(Node.link, format=Format.VALUE)       # object ที่ resolve แล้ว
+get_annotations(Node.link, format=Format.STRING)      # ข้อความจาก source
+get_annotations(Node.link, format=Format.FORWARDREF)  # ForwardRef ตรงที่ resolve ไม่ได้
+```
+
+## เครื่องมือ typing สมัยใหม่ที่เหลือ
+
+| ฟีเจอร์ | เวอร์ชัน | ทำอะไร |
+|---|---|---|
+| `@override` | 3.12 | checker ตรวจว่า method นั้น override method ของ base จริง |
+| `TypeVar("T", default=int)` | 3.13 | ค่า default ของ type parameter ที่ไม่ได้ระบุ |
+| `typing.ReadOnly` | 3.13 | ทำเครื่องหมายว่า key ของ `TypedDict` เป็น read-only |
+| `typing.TypeIs` | 3.13 | predicate สำหรับ narrowing ที่ narrow ฝั่ง negative ด้วย ต่างจาก `TypeGuard` |
+| `@warnings.deprecated` | 3.13 | เครื่องหมาย deprecation ตัวเดียวที่ทั้ง checker และ runtime เข้าใจ |
+
+```python
+from typing import ReadOnly, TypeIs, TypedDict, override
+
+class User(TypedDict):
+    id: ReadOnly[int]
+    name: str
+
+def is_str_list(values: list[object]) -> TypeIs[list[str]]:
+    return all(isinstance(v, str) for v in values)
+
+class Base:
+    def run(self) -> None: ...
+
+class Child(Base):
+    @override
+    def run(self) -> None: ...
+```
+
 ## Demo แบบ runnable เต็มรูปแบบ
 
 export const typeHintsCode = `
@@ -159,6 +237,16 @@ Type hints ถูกบังคับใช้เฉพาะโดย static c
 </Callout>
 
 export const quizTypeHints = [
+  {
+    q: "ใน Python 3.14 ทำไม forward reference ถึงไม่ต้องใส่ quote แล้ว?",
+    options: [
+      "interpreter สแกนทั้งไฟล์ก่อนเริ่มรัน",
+      "annotation ถูก evaluate แบบ lazy (PEP 649) เมื่อมีคนอ่านเท่านั้น",
+      "ทุก module มี `from __future__ import annotations` ให้โดยปริยาย",
+      "annotation แบบใส่ quote ไม่เคยจำเป็นตั้งแต่แรก"
+    ],
+    answer: 1
+  },
   {
     q: "Syntax ของ Python 3.10+ สำหรับ 'str หรือ None' คืออะไร?",
     options: ["Optional[str]", "str | None", "Union[str, None]", "Nullable[str]"],

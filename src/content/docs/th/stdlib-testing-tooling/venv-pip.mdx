@@ -74,6 +74,22 @@ pip freeze > requirements.txt
 deactivate
 ```
 
+## `uv` — ทางลัดที่เร็วกว่า
+
+`uv` เป็น binary ตัวเดียวที่ครอบงานของ `venv`, `pip`, `pip-tools` และ `pyenv` รวมกัน มัน resolve และติดตั้ง
+เร็วกว่าราวสิบเท่า และติดตั้งตัว interpreter เองได้ด้วย
+
+```bash
+uv python install 3.14      # ดึงตัว interpreter มาเลย
+uv init myapp && cd myapp   # ได้ pyproject.toml + .venv
+uv add requests             # resolve, ติดตั้ง, บันทึกลง pyproject.toml และ uv.lock
+uv run python app.py        # รันใน environment ของโปรเจกต์ ไม่ต้อง activate
+uv sync                     # สร้าง environment ขึ้นใหม่ให้ตรงกับ uv.lock เป๊ะ ๆ
+```
+
+ของดีคือ `uv.lock`: lock file ที่ครอบคลุมทุกแพลตฟอร์ม ซึ่งเป็นสิ่งเดียวที่ `requirements.txt` ไม่เคยทำได้ดี
+workflow แบบ `venv` และ `pip` ข้างบนยังใช้ได้ทุกที่และควรเข้าใจไว้ — ส่วน `uv` คือสิ่งที่โปรเจกต์ใหม่ ๆ ส่วนใหญ่เลือกใช้
+
 ## โครงสร้างโปรเจกต์ทั่วไป
 
 โปรเจกต์ Python ตามมาตรฐานจะเก็บ virtual environment ไว้ที่ root ควบคู่กับ source, tests และไฟล์ dependencies

@@ -183,6 +183,20 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## Inspecting a running program (Python 3.14)
+
+When an async service hangs, the hard question is which coroutine is stuck. Python 3.14 can attach to a
+*running* process and print its task tree — no instrumentation, no restart:
+
+```bash
+python -m asyncio ps 12345      # flat table of tasks in PID 12345
+python -m asyncio pstree 12345  # the await tree
+```
+
+This rides on PEP 768's external debugger interface, which also lets `python -m pdb -p 12345` attach to a
+live process. From inside your own code, `asyncio.capture_call_graph()` and `asyncio.print_call_graph()`
+give the same picture for the current task.
+
 <Callout title="Run asyncio programs locally">
 The code examples on this page use `asyncio.run(main())` — the standard idiomatic entry point.
 The in-browser runner has an event loop already running, so `asyncio.run()` raises `RuntimeError` there.

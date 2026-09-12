@@ -22,10 +22,12 @@ GIL มีอยู่เพราะเหตุผลเชิงปฏิบ�
 - โค้ด Python แบบ CPU-bound ที่รันใน threads หลายตัวไม่รันแบบ parallel — threads สลับกัน
 - I/O-bound threads *ได้ประโยชน์* จาก threading เพราะ GIL ถูกปล่อยขณะรอ OS I/O call
 
-<Callout title="Python 3.13 และ no-GIL build">
-Python 3.13 นำเสนอ **free-threaded** (no-GIL) build แบบ experimental ที่เปิดใช้งานเมื่อ compile ด้วย `--disable-gil`
-สิ่งนี้อนุญาตให้มี true CPU-level parallelism ระหว่าง threads แต่อาจทำให้ C extensions ที่สมมติว่ามี GIL ป้องกันพัง
-คาดว่าจะนำมาใช้กระแสหลักใน 3.14+
+<Callout title="Free-threaded Python เป็นทางการแล้วใน 3.14">
+free-threaded build (no-GIL) เคยเป็น experimental ใน 3.13 และ **รองรับอย่างเป็นทางการ** ตั้งแต่ Python 3.14 (PEP 779)
+มันมาเป็น interpreter แยกตัว — `python3.14t` — เพราะ build ปกติยังมี GIL อยู่
+thread ในนั้นรัน Python bytecode ขนานกันได้ทุก core และตอนนี้ต้นทุนฝั่ง single-thread เหลือราว 5–10%
+ตรวจตอน runtime ได้ด้วย `sys._is_gil_enabled()` ส่วน C extension ต้อง opt in เอง ก่อนย้ายโปรเจกต์จริงจึงควรเช็ก
+ว่า dependency ของคุณรองรับแล้ว
 </Callout>
 
 ## CPU-bound threads: ไม่มีความเร็วเพิ่มขึ้น
