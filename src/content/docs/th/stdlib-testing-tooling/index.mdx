@@ -24,7 +24,7 @@ Standard library ครอบคลุมมากกว่า 200 module
 
 - **`venv`** — สร้าง virtual environment แบบ isolated เพื่อไม่ให้ dependency ของโปรเจกต์หนึ่งปนกับอีกโปรเจกต์
 - **`pip`** — ติดตั้ง third-party package จาก PyPI ควรใช้หลังจากยืนยันแล้วว่า stdlib ช่วยไม่ได้
-- **`pyproject.toml`** — ไฟล์มาตรฐาน PEP-517 สมัยใหม่สำหรับประกาศ package metadata, build backend และการตั้งค่า tool (แทนที่ `setup.py` + `setup.cfg` แบบเก่า)
+- **`pyproject.toml`** — ไฟล์สมัยใหม่สำหรับประกาศ package metadata, build backend และการตั้งค่า tool (แทนที่ `setup.py` + `setup.cfg` แบบเก่า): ตาราง `[build-system]` มาจาก PEP 518, ตาราง `[project]` (metadata) มาจาก PEP 621 ส่วน PEP 517 คือ build-backend interface ที่ tool เหล่านี้ implement
 - **`pytest`** — test runner มาตรฐานโดยพฤตินัยสำหรับโปรเจกต์ Python ซึ่งสร้างบน `unittest` ของ stdlib ด้วย API ที่เป็นมิตรกว่า
 
 คุณจะได้ศึกษา `unittest` และ `pytest` ในบทเรียนถัดไปของ chapter นี้

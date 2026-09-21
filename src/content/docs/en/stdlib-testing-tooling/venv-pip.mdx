@@ -12,6 +12,8 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 Every Python project should run inside its own virtual environment. Without one, every `pip install` lands in the global Python installation, where packages from different projects collide and version conflicts accumulate silently. A virtual environment is a self-contained directory tree with its own Python interpreter and site-packages, completely isolated from the system Python and from every other project.
 
+> This lesson has no Run button — venv/pip/uv must run locally: `uv init myapp && cd myapp && uv add requests`.
+
 ## Creating a virtual environment
 
 Python ships with the `venv` module in its standard library. The convention is to name the environment `.venv` and place it at the project root.

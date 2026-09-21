@@ -80,11 +80,14 @@ from multiprocessing import Pool
 def square(x: int) -> int:
     return x * x
 
-with Pool(processes=4) as pool:
-    results = pool.map(square, range(10))
-
-print(results)
+if __name__ == "__main__":        # required on every platform
+    with Pool(processes=4) as pool:
+        results = pool.map(square, range(10))
+    print(results)
+    # [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
 ```
+
+> รันเฉพาะในเครื่องเท่านั้น — ไม่มี process จริงใน browser sandbox ต้องใส่ guard `if __name__ == "__main__":` เสมอทุกแพลตฟอร์ม: หากไม่มี, macOS/Windows (`spawn`) จะ import module นี้ใหม่ในทุก child process และสร้าง process ไม่สิ้นสุด ดูรายละเอียด guard/start-method ทั้งหมดได้ในบทเรียน Multiprocessing
 
 ## สิ่งที่โมดูลนี้ครอบคลุม
 

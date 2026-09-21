@@ -186,10 +186,9 @@ asyncio.run(main())
 # operation timed out
 ```
 
-<Callout title="รันโปรแกรม asyncio บนเครื่องของคุณ">
-ตัวอย่างทั้งหมดในหน้านี้ใช้ `asyncio.run(main())`
-in-browser runner มี event loop รันอยู่แล้ว ดังนั้น `asyncio.run()` จะ raise `RuntimeError`
-วาง snippet ลงในไฟล์ `.py` แล้วรันด้วย `python3 async_await.py` เพื่อดู output
+<Callout title="รันตัวอย่างเหล่านี้ในเครื่องของคุณ">
+บทนี้ไม่มี in-browser runner — รันตัวอย่างในเครื่องของคุณด้วย `python3.14` ทุกตัวอย่างใช้
+`asyncio.run(main())`: วาง snippet ลงในไฟล์ `.py` แล้วรันด้วย `python3 async_await.py` เพื่อดู output
 </Callout>
 
 export const quizAsyncAwait = [

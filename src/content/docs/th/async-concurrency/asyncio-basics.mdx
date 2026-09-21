@@ -44,13 +44,23 @@ import asyncio
 async def greet(name: str) -> str:
     return f"Hello, {name}!"
 
-# การเรียก greet() คืน coroutine object — ยังไม่มีอะไรรัน
+# Calling greet() returns a coroutine object — nothing runs yet
 coro = greet("Python")
 print(type(coro))          # <class 'coroutine'>
 
-# Await มันเพื่อรันเนื้อหาจริง
+# Never awaiting it is a real bug. Under `python3.14 -X dev`, deleting the
+# never-awaited coroutine triggers:
+#   RuntimeWarning: coroutine 'greet' was never awaited
+del coro
+
+# Fix: await it to actually run the body
 result = asyncio.run(greet("Python"))
 print(result)              # Hello, Python!
+
+# If you decide not to run a coroutine after all, close it explicitly —
+# closing (instead of just dropping the reference) silences the warning
+unused = greet("Python")
+unused.close()
 ```
 
 ## `await` หยุดและกลับมาทำงาน
@@ -193,10 +203,10 @@ python -m asyncio pstree 12345  # ต้นไม้ของ await
 เกาะ process ที่รันอยู่ได้ด้วย ส่วนภายใน code ของคุณเอง `asyncio.capture_call_graph()` และ
 `asyncio.print_call_graph()` ให้ภาพเดียวกันสำหรับ task ปัจจุบัน
 
-<Callout title="รันโปรแกรม asyncio บนเครื่องของคุณ">
-โค้ดตัวอย่างในหน้านี้ใช้ `asyncio.run(main())` — entry point มาตรฐาน
-in-browser runner มี event loop รันอยู่แล้ว ดังนั้น `asyncio.run()` จะ raise `RuntimeError` ที่นั่น
-เพื่อรันตัวอย่างเหล่านี้ วาง code ลงในไฟล์ `.py` แล้วรันด้วย `python3 asyncio_basics.py`
+<Callout title="รันตัวอย่างเหล่านี้ในเครื่องของคุณ">
+บทนี้ไม่มี in-browser runner — รันตัวอย่างในเครื่องของคุณด้วย `python3.14` ทุกตัวอย่างใช้
+`asyncio.run(main())` ซึ่งเป็น entry point มาตรฐาน: วาง code ลงในไฟล์ `.py` แล้วรันด้วย
+`python3 asyncio_basics.py`
 </Callout>
 
 export const quizAsyncioBasics = [

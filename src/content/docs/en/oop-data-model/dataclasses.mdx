@@ -63,7 +63,7 @@ class Inventory:
 |---|---|
 | `default_factory` | Called with no arguments to produce each instance's default |
 | `repr=False` | Exclude the field from `__repr__` |
-| `compare=False` | Exclude the field from `__eq__` and `__lt__` |
+| `compare=False` | Excluded from `__eq__` (and from the ordering methods if you also set `order=True`) |
 | `init=False` | Exclude from `__init__`; set manually in `__post_init__` |
 
 ## `frozen=True` — immutable records
@@ -135,6 +135,8 @@ print(item)
 red = Color(255, 0, 0)
 print(red)
 print(red == Color(255, 0, 0))
+
+# hash(p)  # TypeError: unhashable type: 'Point'
 `.trim();
 
 <Playground code={dataclassesCode} />
@@ -143,6 +145,7 @@ print(red == Color(255, 0, 0))
 Use `@dataclass` whenever your class is primarily a container for data fields — configuration objects, DTOs, value objects, named tuples with methods.
 For fully immutable value types, add `frozen=True`; for flexible defaults on mutable lists or dicts, always use `field(default_factory=...)`.
 If you need runtime validation on field values, consider Pydantic's `BaseModel` — it builds on the same idea but adds type coercion and validators.
+`@dataclass` generates `__eq__` by default, and generating `__eq__` sets `__hash__` to `None` — so a plain (non-frozen) dataclass like `Point` is unhashable, as the commented line above shows (full treatment in a later lesson).
 </Callout>
 
 export const quizDataclasses = [

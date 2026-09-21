@@ -130,12 +130,13 @@ for err in errors:
         print(f"[{e.code}] AppError: {e}")
 
 # --- isinstance hierarchy ---
+# 'e' is deleted when the except block ends (CPython) — use a new name here
 print()
-e = ValidationError("name", "too short")
-print(f"ValidationError? {isinstance(e, ValidationError)}")
-print(f"AppError?        {isinstance(e, AppError)}")
-print(f"Exception?       {isinstance(e, Exception)}")
-print(f"BaseException?   {isinstance(e, BaseException)}")
+sample = ValidationError("name", "too short")
+print(f"ValidationError? {isinstance(sample, ValidationError)}")
+print(f"AppError?        {isinstance(sample, AppError)}")
+print(f"Exception?       {isinstance(sample, Exception)}")
+print(f"BaseException?   {isinstance(sample, BaseException)}")
 `.trim();
 
 <Playground code={customErrorsCode} />

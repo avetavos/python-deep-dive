@@ -12,6 +12,8 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 **Python package** คือไดเรกทอรีของโมดูลที่สามารถติดตั้ง กำหนดเวอร์ชัน และแชร์ได้ การทำ Packaging จะเปลี่ยนโค้ดในเครื่องของคุณให้เป็นสิ่งที่ทุกคนสามารถติดตั้งได้ด้วย `pip install mypackage` การเข้าใจ Packaging เป็นสิ่งจำเป็นทันทีที่โปรเจกต์ของคุณเติบโตเกินกว่าสคริปต์ไฟล์เดียว หรือเมื่อคุณต้องการแชร์งานกับเพื่อนร่วมทีมหรือสาธารณะ
 
+> บทนี้ไม่มีปุ่ม Run — packaging และ publish ต้องรันในเครื่อง: `uv init --lib mypackage && cd mypackage && uv build`
+
 ## โครงสร้าง Package
 
 การใช้ src-layout แบบเรียบร้อยจะแยกซอร์สโค้ดออกจากการทดสอบและ tooling ป้องกันการ import โค้ดที่ยังไม่ได้ติดตั้งโดยบังเอิญ
@@ -45,7 +47,7 @@ version = "0.1.0"
 description = "A short description of mypackage"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
+license = "MIT"
 authors = [
     { name = "Your Name", email = "you@example.com" }
 ]

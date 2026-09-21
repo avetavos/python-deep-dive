@@ -32,7 +32,28 @@ evens = [x for x in range(20) if x % 2 == 0]
 # [0, 2, 4, 6, 8, 10, 12, 14, 16, 18]
 ```
 
-Both examples are equivalent to a `for` loop that appends to a list — but they are more compact and typically faster because the iteration happens in C rather than bytecode.
+Both examples are equivalent to a `for` loop that appends to a list — but they are more compact and typically faster. Both compile to bytecode run by the same interpreter (a comprehension is not "C code"); the speedup comes from two things: (1) the comprehension emits a dedicated `LIST_APPEND` opcode instead of the loop's `LOAD_ATTR` + `CALL` needed to look up and invoke `.append` on every iteration, and (2) since Python 3.12 (PEP 709) comprehensions are inlined into the enclosing frame instead of compiling to a separate function call.
+
+```python
+import dis
+
+def comp():
+    return [x**2 for x in range(5)]
+
+def loop():
+    result = []
+    for x in range(5):
+        result.append(x**2)
+    return result
+```
+
+The inner-loop opcodes from `dis.dis(comp)` and `dis.dis(loop)` on 3.14, run locally, confirm it:
+
+```text
+comp():  FOR_ITER -> STORE_FAST_LOAD_FAST (x, x) -> LOAD_SMALL_INT 2 -> BINARY_OP 8 (**) -> LIST_APPEND 2 -> JUMP_BACKWARD
+
+loop():  FOR_ITER -> STORE_FAST (x) -> LOAD_FAST_BORROW (result) -> LOAD_ATTR (append + NULL|self) -> LOAD_FAST_BORROW (x) -> LOAD_SMALL_INT 2 -> BINARY_OP 8 (**) -> CALL 1 -> POP_TOP -> JUMP_BACKWARD
+```
 
 ## Nested comprehensions
 

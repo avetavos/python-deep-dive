@@ -63,7 +63,7 @@ class Inventory:
 |---|---|
 | `default_factory` | เรียกโดยไม่มี argument เพื่อสร้าง default ของแต่ละ instance |
 | `repr=False` | ยกเว้น field จาก `__repr__` |
-| `compare=False` | ยกเว้น field จาก `__eq__` และ `__lt__` |
+| `compare=False` | ยกเว้นจาก `__eq__` (และจาก ordering methods ด้วยถ้าตั้ง `order=True`) |
 | `init=False` | ยกเว้นจาก `__init__`; กำหนดด้วยตนเองใน `__post_init__` |
 
 ## `frozen=True` — immutable records
@@ -135,6 +135,8 @@ print(item)
 red = Color(255, 0, 0)
 print(red)
 print(red == Color(255, 0, 0))
+
+# hash(p)  # TypeError: unhashable type: 'Point'
 `.trim();
 
 <Playground code={dataclassesCode} />
@@ -143,6 +145,7 @@ print(red == Color(255, 0, 0))
 ใช้ `@dataclass` เมื่อ class เป็น container สำหรับข้อมูลเป็นหลัก — configuration objects, DTOs, value objects, named tuples ที่มี methods
 สำหรับ value types ที่ immutable เต็มรูปแบบ เพิ่ม `frozen=True`; สำหรับ defaults ที่ยืดหยุ่นบน mutable list หรือ dict ให้ใช้ `field(default_factory=...)` เสมอ
 ถ้าต้องการ runtime validation บน field values ลองพิจารณา Pydantic's `BaseModel` — สร้างบน idea เดิมแต่เพิ่ม type coercion และ validators
+`@dataclass` สร้าง `__eq__` ให้โดย default และการมี `__eq__` ทำให้ `__hash__` กลายเป็น `None` — dataclass ธรรมดาที่ไม่ได้ frozen อย่าง `Point` จึง unhashable ตามที่บรรทัด comment ด้านบนแสดง (เนื้อหาเต็มไปบทถัดไป)
 </Callout>
 
 export const quizDataclasses = [

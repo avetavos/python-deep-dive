@@ -35,6 +35,8 @@ with expr as var:
 This is exactly equivalent to:
 
 ```python
+import sys
+
 cm = expr
 var = cm.__enter__()
 try:
@@ -48,18 +50,28 @@ else:
 
 `__enter__` sets up the resource and returns a value bound to `var`.
 `__exit__` always runs on exit. If it returns a truthy value it **suppresses** the exception; returning `False` (or `None`) lets the exception propagate.
+The bare `except:` above is one of the rare cases where catching everything is correct: the `if not ...: raise` re-raises unless `__exit__` explicitly suppresses, so no exception is ever silently swallowed.
 
 ## Writing a class-based context manager
 
 ```python
+from types import TracebackType
+from typing import Self
+
 class Timer:
-    def __enter__(self) -> "Timer":
+    def __enter__(self) -> Self:
         print("Timer started")
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool:
         print("Timer stopped")
-        return False   # do not suppress exceptions
+        suppress = False   # do not suppress exceptions
+        return suppress
 ```
 
 The three arguments to `__exit__` are the exception type, value, and traceback — all `None` when no exception occurred.
@@ -97,15 +109,24 @@ with open("in.txt") as src, open("out.txt", "w") as dst:
 
 export const contextManagersCode = `
 import contextlib
+from collections.abc import Iterator
+from types import TracebackType
+from typing import Self
 
 # --- class-based context manager ---
 class Timer:
-    def __enter__(self):
+    def __enter__(self) -> Self:
         print("Timer started")
         return self
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool:
         print("Timer stopped")
-        return False
+        suppress = False
+        return suppress
 
 print("=== class-based ===")
 with Timer():
@@ -113,7 +134,7 @@ with Timer():
 
 # --- contextlib.contextmanager ---
 @contextlib.contextmanager
-def managed_resource(name: str):
+def managed_resource(name: str) -> Iterator[str]:
     print(f"Acquiring {name}")
     try:
         yield name

@@ -11,6 +11,8 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 pytest is the de-facto standard for testing Python code. Unlike the built-in `unittest` module, pytest requires no class inheritance, no special assertion methods, and no boilerplate — you write plain functions and plain `assert` statements. pytest's test discovery, rich failure output, fixture system, and plugin ecosystem make it the first tool to reach for in any Python project.
 
+> This lesson has no Run button — pytest must run locally: `uv init myapp && cd myapp && uv add --dev pytest && uv run pytest`.
+
 ## Writing a test function
 
 pytest discovers test files whose names start with `test_` or end with `_test.py`, and within them, functions whose names start with `test_`. No class needed — a module-level function is enough.
