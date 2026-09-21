@@ -80,11 +80,14 @@ from multiprocessing import Pool
 def square(x: int) -> int:
     return x * x
 
-with Pool(processes=4) as pool:
-    results = pool.map(square, range(10))
-
-print(results)
+if __name__ == "__main__":        # required on every platform
+    with Pool(processes=4) as pool:
+        results = pool.map(square, range(10))
+    print(results)
+    # [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
 ```
+
+> Run this locally only — there are no real processes in the browser sandbox. Always include the `if __name__ == "__main__":` guard, on every platform: without it, macOS/Windows (`spawn`) will re-import this module in every child process and spawn processes forever. See the Multiprocessing lesson for the full guard/start-method guide.
 
 ## What this module covers
 

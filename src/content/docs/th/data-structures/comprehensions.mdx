@@ -32,7 +32,28 @@ evens = [x for x in range(20) if x % 2 == 0]
 # [0, 2, 4, 6, 8, 10, 12, 14, 16, 18]
 ```
 
-ทั้งสองตัวอย่างเทียบเท่ากับ `for` loop ที่ append ลง list แต่กระชับกว่าและมักเร็วกว่าเพราะการวนซ้ำเกิดใน C ไม่ใช่ bytecode
+ทั้งสองตัวอย่างเทียบเท่ากับ `for` loop ที่ append ลง list แต่กระชับกว่าและมักเร็วกว่า ทั้งสองแบบ compile เป็น bytecode ที่ interpreter ตัวเดียวกันรัน (comprehension ไม่ใช่ "โค้ด C") ที่เร็วกว่ามาจากสองเรื่อง: (1) comprehension ใช้ opcode `LIST_APPEND` โดยตรง แทนที่จะต้อง `LOAD_ATTR` + `CALL` เพื่อค้นหาและเรียก `.append` ทุกรอบแบบ loop และ (2) ตั้งแต่ Python 3.12 (PEP 709) comprehension ถูก inline เข้า frame เดียวกันกับที่ล้อมรอบ ไม่ต้อง compile เป็น function call แยกต่างหาก
+
+```python
+import dis
+
+def comp():
+    return [x**2 for x in range(5)]
+
+def loop():
+    result = []
+    for x in range(5):
+        result.append(x**2)
+    return result
+```
+
+opcode ของ inner loop จาก `dis.dis(comp)` และ `dis.dis(loop)` บน 3.14 ที่รันในเครื่องจริง ยืนยันเรื่องนี้:
+
+```text
+comp():  FOR_ITER -> STORE_FAST_LOAD_FAST (x, x) -> LOAD_SMALL_INT 2 -> BINARY_OP 8 (**) -> LIST_APPEND 2 -> JUMP_BACKWARD
+
+loop():  FOR_ITER -> STORE_FAST (x) -> LOAD_FAST_BORROW (result) -> LOAD_ATTR (append + NULL|self) -> LOAD_FAST_BORROW (x) -> LOAD_SMALL_INT 2 -> BINARY_OP 8 (**) -> CALL 1 -> POP_TOP -> JUMP_BACKWARD
+```
 
 ## Nested comprehensions
 

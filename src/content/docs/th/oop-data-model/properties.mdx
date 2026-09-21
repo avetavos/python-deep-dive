@@ -59,7 +59,7 @@ Class method รับ **class** (`cls`) เป็น argument แรกแท�
 
 ```python
     @classmethod
-    def from_fahrenheit(cls, f: float) -> "Temperature":
+    def from_fahrenheit(cls, f: float) -> Self:
         return cls((f - 32) * 5 / 9)
 ```
 
@@ -69,6 +69,7 @@ print(boiling.celsius)   # 100.0
 ```
 
 Subclass สืบทอด class method อัตโนมัติและ `cls` จะอ้างถึง subclass — factory จึงสร้าง instance ของ type ที่ถูกต้อง
+Annotate return type ด้วย `typing.Self` (`from typing import Self`) ไม่ใช่ string literal `"Temperature"` — string annotation ทำให้ type checker infer เป็น base class แม้ `cls` จะเป็น subclass ก็ตาม ด้วย annotation แบบเก่า `uvx mypy --strict` บน subclass ที่เพิ่ม method จะรายงานแบบนี้เป๊ะ ๆ: `` "Temperature" has no attribute "to_kelvin"  [attr-defined] `` `Self` แก้ปัญหานี้ได้เพราะมันอ้างถึง class ที่ method ถูกเรียกจริง ๆ เสมอ
 
 ## `@staticmethod` — utility functions
 
@@ -88,6 +89,9 @@ print(Temperature.absolute_zero())   # -273.15
 ## Demo รันได้จริง
 
 export const propertiesCode = `
+from typing import Self
+
+
 class Temperature:
     def __init__(self, celsius: float = 0.0) -> None:
         self._celsius = celsius
@@ -107,7 +111,7 @@ class Temperature:
         return self._celsius * 9 / 5 + 32
 
     @classmethod
-    def from_fahrenheit(cls, f: float) -> "Temperature":
+    def from_fahrenheit(cls, f: float) -> Self:
         return cls((f - 32) * 5 / 9)
 
     @staticmethod

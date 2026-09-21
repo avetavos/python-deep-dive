@@ -83,11 +83,14 @@ For nested structures (lists of lists), use `copy.deepcopy()` instead if you nee
 You can store a slice in a variable with `slice(start, stop, step)` for readability:
 
 ```python
-HEADER  = slice(None, 5)
-PAYLOAD = slice(5, -2)
+HEADER  = slice(None, 3)
+PAYLOAD = slice(3, -2)
 FOOTER  = slice(-2, None)
 
-data = b'HDRpayload!FT'
+data = b'HDR' + b'payload' + b'FT'
+print(data[HEADER])   # b'HDR'
+print(data[PAYLOAD])  # b'payload'
+print(data[FOOTER])   # b'FT'
 ```
 
 ## Full runnable demo

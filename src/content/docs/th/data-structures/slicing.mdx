@@ -83,11 +83,14 @@ print(copy)      # [99, 2, 3, 4, 5]
 เก็บ slice ในตัวแปรด้วย `slice(start, stop, step)` เพื่อความอ่านง่าย:
 
 ```python
-HEADER  = slice(None, 5)
-PAYLOAD = slice(5, -2)
+HEADER  = slice(None, 3)
+PAYLOAD = slice(3, -2)
 FOOTER  = slice(-2, None)
 
-data = b'HDRpayload!FT'
+data = b'HDR' + b'payload' + b'FT'
+print(data[HEADER])   # b'HDR'
+print(data[PAYLOAD])  # b'payload'
+print(data[FOOTER])   # b'FT'
 ```
 
 ## ตัวอย่างรันได้

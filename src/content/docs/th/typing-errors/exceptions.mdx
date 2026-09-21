@@ -20,6 +20,7 @@ Exception คือ object — instance ของ class ที่สืบทอ
 ## โครงสร้าง try statement ครบรูปแบบ
 
 ```python
+# illustrative — names below are placeholders
 try:
     result = risky_operation()
 except SomeError as e:
@@ -136,8 +137,11 @@ for b in [2.0, 0]:
 
 # --- catching specific types ---
 print("\\n=== specific exception types ===")
-for val in ["42", "abc", None]:
+vals: list[str | None] = ["42", "abc", None]
+for val in vals:
     try:
+        if val is None:
+            raise TypeError("expected str, got None")
         n = int(val)
         print(f"  parsed {val!r} -> {n}")
     except (TypeError, ValueError) as e:

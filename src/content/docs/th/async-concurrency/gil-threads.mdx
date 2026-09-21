@@ -47,7 +47,7 @@ start = time.perf_counter()
 count_down(N)
 single = time.perf_counter() - start
 
-# สอง threads — งานรวมเท่าเดิม แบ่งระหว่าง threads
+# Two threads — same total work split across threads
 start = time.perf_counter()
 t1 = threading.Thread(target=count_down, args=(N // 2,))
 t2 = threading.Thread(target=count_down, args=(N // 2,))
@@ -57,7 +57,10 @@ threaded = time.perf_counter() - start
 
 print(f"Single thread: {single:.2f}s")
 print(f"Two threads:   {threaded:.2f}s")
-# สอง threads มักช้ากว่าเพราะ GIL contention และ context-switch overhead
+# Measured three times on this machine (python3.14): 0.51s vs 0.52s, 0.51s vs
+# 0.53s, 0.51s vs 0.51s — two threads are not faster (same total work, same
+# time) and can be marginally slower from GIL-switch and context-switch
+# overhead. Numbers are machine-dependent.
 ```
 
 ## I/O-bound threads: concurrency จริง
@@ -174,9 +177,8 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-<Callout title="ไม่สามารถใช้งานใน in-browser runner">
-`threading` และ `concurrent.futures.ThreadPoolExecutor` ไม่สามารถใช้ได้ใน in-browser Python runner (Pyodide)
-รันตัวอย่างด้านบนบนเครื่องของคุณ:
+<Callout title="รันตัวอย่างเหล่านี้ในเครื่องของคุณ">
+บทนี้ไม่มี in-browser runner และ browser sandbox ก็ไม่มี OS thread จริงอยู่แล้ว รันตัวอย่างด้านบนบนเครื่องของคุณ:
 
 ```bash
 python3 gil_threads.py

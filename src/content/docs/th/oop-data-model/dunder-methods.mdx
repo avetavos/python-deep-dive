@@ -58,7 +58,7 @@ Return `NotImplemented` (ไม่ใช่ `False`) เมื่อ type ไม
 
 Implement `__len__` เพื่อรองรับ `len(obj)`
 Implement `__getitem__` เพื่อรองรับ `obj[index]` subscript access
-ทั้งคู่รวมกันทำให้ object iterable ผ่าน `for` loop ด้วย (Python เรียก `__getitem__` ด้วย 0, 1, 2, ... จนถึง `IndexError`)
+`__getitem__` เพียงอย่างเดียวก็เพียงพอที่จะทำให้ object iterable ผ่าน `for` loop ได้: legacy iteration fallback ของ Python เรียก `__getitem__` ด้วย 0, 1, 2, ... ไปเรื่อย ๆ จนกว่าจะ raise `IndexError` แล้วหยุดตรงนั้น — `__len__` ไม่เกี่ยวข้องกับ fallback นี้เลย
 
 ```python
 def __len__(self) -> int:
@@ -122,6 +122,8 @@ print(v1 == Vector(1, 2))
 print(v1 + v2)
 print(len(v1))
 print(v1[0], v1[1])
+
+# hash(v1)  # TypeError: unhashable type: 'Vector'
 `.trim();
 
 <Playground code={dunderCode} />
@@ -130,6 +132,7 @@ print(v1[0], v1[1])
 คุณไม่เรียก `v1.__add__(v2)` โดยตรงใน application code — แค่เขียน `v1 + v2` และ Python resolve dunder method ให้
 นี่คือสิ่งที่ทำให้ user-defined objects รู้สึกเป็นธรรมชาติ: `len(v)`, `v[0]`, `v1 == v2` และ `print(v)` ทำงานได้ทันทีเมื่อกำหนด dunder ที่สอดคล้องกัน
 รายการทั้งหมดอยู่ใน Python Data Model reference — มี dunders สำหรับ context managers, iteration, attribute access และอีกมากมาย
+การกำหนด `__eq__` ยังทำให้ `__hash__` กลายเป็น `None` ด้วย ทำให้ instance unhashable — ตามที่บรรทัด comment ด้านบนแสดง (เนื้อหาเต็มไปบทถัดไป)
 </Callout>
 
 export const quizDunder = [
@@ -164,14 +167,14 @@ export const quizDunder = [
     answer: 2
   },
   {
-    q: "ถ้า class implement `__len__` และ `__getitem__` Python จะอนุญาตให้ทำอะไรได้อีกอัตโนมัติ?",
+    q: "Class หนึ่ง implement เฉพาะ `__getitem__` (ไม่มี `__iter__`, ไม่มี `__len__`) `for` loop รู้ได้อย่างไรว่าเมื่อไหร่ควรหยุด?",
     options: [
-      "Pickle serialisation",
-      "Iteration ด้วย for loop (index-based fallback)",
-      "Hashing ด้วย hash()",
-      "Comparison ด้วย <"
+      "Python เรียก __getitem__ ด้วย 0, 1, 2, ... จนกว่าจะ raise IndexError",
+      "Python เรียก __len__ ก่อนเพื่อรู้ว่าต้องดึงกี่ตัว",
+      "ไม่มีวันหยุด loop จะวนตลอดไป",
+      "หยุดทันทีที่ __getitem__ คืนค่า None"
     ],
-    answer: 1
+    answer: 0
   }
 ];
 

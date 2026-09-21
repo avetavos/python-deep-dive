@@ -12,6 +12,8 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 A **Python package** is a directory of modules that can be installed, versioned, and shared. Packaging turns your local code into something anyone can install with `pip install mypackage`. Understanding packaging is essential the moment your project grows beyond a single script or you want to share work with teammates or the public.
 
+> This lesson has no Run button — packaging and publishing must run locally: `uv init --lib mypackage && cd mypackage && uv build`.
+
 ## Package layout
 
 A clean src-layout keeps your source isolated from tests and tooling, preventing accidental imports of uninstalled code.
@@ -45,7 +47,7 @@ version = "0.1.0"
 description = "A short description of mypackage"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
+license = "MIT"
 authors = [
     { name = "Your Name", email = "you@example.com" }
 ]

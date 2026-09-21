@@ -12,6 +12,8 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ทุกโปรเจกต์ Python ควรรันอยู่ภายใน virtual environment ของตัวเอง หากไม่มี ทุกคำสั่ง `pip install` จะติดตั้งไปยัง Python installation ระดับ global ซึ่งแพ็กเกจจากโปรเจกต์ต่าง ๆ จะชนกันและความขัดแย้งของเวอร์ชันจะสะสมอย่างเงียบ ๆ Virtual environment คือไดเรกทอรีต้นไม้ที่มี Python interpreter และ site-packages ของตัวเอง แยกออกจาก Python ของระบบและจากทุกโปรเจกต์อื่น ๆ อย่างสมบูรณ์
 
+> บทนี้ไม่มีปุ่ม Run — venv/pip/uv ต้องรันในเครื่อง: `uv init myapp && cd myapp && uv add requests`
+
 ## การสร้าง virtual environment
 
 Python มีโมดูล `venv` ใน standard library ข้อตกลงคือตั้งชื่อ environment ว่า `.venv` และวางไว้ที่ root ของโปรเจกต์

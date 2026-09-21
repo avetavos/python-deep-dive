@@ -60,7 +60,10 @@ threaded = time.perf_counter() - start
 
 print(f"Single thread: {single:.2f}s")
 print(f"Two threads:   {threaded:.2f}s")
-# Two threads is often SLOWER due to GIL contention and context-switch overhead
+# Measured three times on this machine (python3.14): 0.51s vs 0.52s, 0.51s vs
+# 0.53s, 0.51s vs 0.51s — two threads are not faster (same total work, same
+# time) and can be marginally slower from GIL-switch and context-switch
+# overhead. Numbers are machine-dependent.
 ```
 
 ## I/O-bound threads: real concurrency
@@ -179,9 +182,9 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-<Callout title="Not available in the in-browser runner">
-`threading` and `concurrent.futures.ThreadPoolExecutor` are not available in the in-browser Python runner (Pyodide).
-Run the examples above locally:
+<Callout title="Run these examples locally">
+This lesson has no in-browser runner, and the browser sandbox has no real OS threads anyway. Run
+the examples above locally:
 
 ```bash
 python3 gil_threads.py

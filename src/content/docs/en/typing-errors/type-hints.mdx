@@ -167,13 +167,14 @@ get_annotations(Node.link, format=Format.FORWARDREF)  # ForwardRef where it cann
 | `@warnings.deprecated` | 3.13 | One deprecation marker the checker and the runtime both understand |
 
 ```python
+from collections.abc import Sequence
 from typing import ReadOnly, TypeIs, TypedDict, override
 
 class User(TypedDict):
     id: ReadOnly[int]
     name: str
 
-def is_str_list(values: list[object]) -> TypeIs[list[str]]:
+def is_str_list(values: Sequence[object]) -> TypeIs[Sequence[str]]:
     return all(isinstance(v, str) for v in values)
 
 class Base:
@@ -183,6 +184,8 @@ class Child(Base):
     @override
     def run(self) -> None: ...
 ```
+
+The parameter must be `Sequence[object]`, not `list[object]`: `list` is **invariant**, so `list[str]` is not a subtype of `list[object]`, and a `TypeIs` return type must narrow to a subtype of the parameter type. Using `list[object]` here gives real errors — mypy `--strict`: `Narrowed type "list[str]" is not a subtype of input type "list[object]"  [narrowed-type-not-subtype]`; pyright: `Return type of TypeIs ("list[str]") is not consistent with value parameter type ("list[object]") (reportGeneralTypeIssues)`. `Sequence` is covariant, so `Sequence[str]` narrowing `Sequence[object]` is valid.
 
 ## Full runnable demo
 

@@ -58,7 +58,7 @@ Return `NotImplemented` (not `False`) when the types are incompatible — this l
 
 Implement `__len__` to support `len(obj)`.
 Implement `__getitem__` to support `obj[index]` subscript access.
-Together they also make the object iterable via a `for` loop (Python calls `__getitem__` with 0, 1, 2, ... until `IndexError`).
+`__getitem__` alone is also enough to make the object iterable via a `for` loop: Python's legacy iteration fallback calls `__getitem__` with 0, 1, 2, ... until it raises `IndexError`, and stops there — `__len__` is not involved in that fallback at all.
 
 ```python
 def __len__(self) -> int:
@@ -122,6 +122,8 @@ print(v1 == Vector(1, 2))
 print(v1 + v2)
 print(len(v1))
 print(v1[0], v1[1])
+
+# hash(v1)  # TypeError: unhashable type: 'Vector'
 `.trim();
 
 <Playground code={dunderCode} />
@@ -130,6 +132,7 @@ print(v1[0], v1[1])
 You never call `v1.__add__(v2)` directly in application code — you write `v1 + v2` and Python resolves the dunder method for you.
 This is what makes user-defined objects feel native: `len(v)`, `v[0]`, `v1 == v2`, and `print(v)` all just work once the corresponding dunders are defined.
 The full list is in the Python Data Model reference — there are dunders for context managers (`__enter__`/`__exit__`), iteration (`__iter__`/`__next__`), attribute access (`__getattr__`), and much more.
+Defining `__eq__` also sets `__hash__` to `None`, making instances unhashable — as the commented line above shows (full treatment in a later lesson).
 </Callout>
 
 export const quizDunder = [
@@ -164,14 +167,14 @@ export const quizDunder = [
     answer: 2
   },
   {
-    q: "If a class implements `__len__` and `__getitem__`, what else does Python allow automatically?",
+    q: "A class defines only `__getitem__` (no `__iter__`, no `__len__`). How does a `for` loop know when to stop?",
     options: [
-      "Pickle serialisation",
-      "Iteration with a for loop (index-based fallback)",
-      "Hashing with hash()",
-      "Comparison with <"
+      "Python calls __getitem__ with 0, 1, 2, ... until it raises IndexError",
+      "Python calls __len__ first to know how many items to fetch",
+      "It never stops; the loop runs forever",
+      "It stops as soon as __getitem__ returns None"
     ],
-    answer: 1
+    answer: 0
   }
 ];
 

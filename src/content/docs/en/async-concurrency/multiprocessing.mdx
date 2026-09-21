@@ -38,8 +38,11 @@ if __name__ == "__main__":        # REQUIRED on macOS/Windows
     # [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
 ```
 
-On Linux the default start method is **fork** (the child copies the parent's memory), so the guard
-is technically optional — but always include it for portability.
+Since Python 3.14, Unix platforms other than macOS default to **forkserver** instead of **fork**
+(the default from 3.3–3.13) — see the 3.14 What's New entry for `multiprocessing` and
+[gh-84559](https://github.com/python/cpython/issues/84559). macOS and Windows continue to default
+to **spawn**. Because every platform can now re-run your module in a fresh process on pool startup,
+keep the guard everywhere, not just on macOS/Windows.
 
 ## `Pool.map` — parallel map over an iterable
 
@@ -98,7 +101,7 @@ def cpu_work(n: int) -> float:
     return sum(math.sin(i) for i in range(n))
 
 if __name__ == "__main__":
-    inputs = [500_000] * 8    # 8 identical CPU-bound tasks
+    inputs = [3_000_000] * 8   # 8 CPU-bound tasks, large enough that compute dominates pool startup
 
     # Sequential baseline
     import time
@@ -117,7 +120,13 @@ if __name__ == "__main__":
     print(f"Speedup:    {seq_time / par_time:.1f}x")
 ```
 
-On an 8-core machine you should see close to an 8x speedup for pure computation.
+Measured three times on an 11-core machine (`python3.14`): 3.0x, 3.3x, 3.6x — nowhere near a clean
+8x, and that is expected, not a bug in the measurement. The smaller `500_000`-element version used
+to show here spent so much of its time on pool startup (`ProcessPoolExecutor` spawns fresh
+interpreter processes) that the speedup barely cleared 1x; even with a workload six times larger,
+process startup, pickling the arguments/results, and scheduling across a mix of performance and
+efficiency cores all eat into the theoretical maximum. Numbers here are machine-dependent — measure
+on your own hardware before quoting a specific multiplier.
 
 ## Inter-process communication
 
@@ -202,15 +211,16 @@ serialisable data, exactly like `multiprocessing`. What you save is process star
 | Communication | Queue / Pipe | Shared state + Lock | Channels / queues |
 | Startup time | Slow (fork/spawn) | Fast | Zero |
 
-<Callout title="Not available in the in-browser runner">
-`multiprocessing` and `ProcessPoolExecutor` are not available in the in-browser Python runner (Pyodide).
-Run the examples above locally:
+<Callout title="Run these examples locally">
+This lesson has no in-browser runner, and the browser sandbox has no real processes anyway. Run the
+examples above locally:
 
 ```bash
 python3 multiprocessing_demo.py
 ```
 
-Remember the `if __name__ == "__main__"` guard — without it the script loops forever on macOS and Windows.
+Remember the `if __name__ == "__main__"` guard — without it the script loops forever on macOS and
+Windows (`spawn`); see the guard/start-method section above for how this changed in Python 3.14.
 </Callout>
 
 export const quizMultiprocessing = [

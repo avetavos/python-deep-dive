@@ -166,13 +166,14 @@ get_annotations(Node.link, format=Format.FORWARDREF)  # ForwardRef ตรงท�
 | `@warnings.deprecated` | 3.13 | เครื่องหมาย deprecation ตัวเดียวที่ทั้ง checker และ runtime เข้าใจ |
 
 ```python
+from collections.abc import Sequence
 from typing import ReadOnly, TypeIs, TypedDict, override
 
 class User(TypedDict):
     id: ReadOnly[int]
     name: str
 
-def is_str_list(values: list[object]) -> TypeIs[list[str]]:
+def is_str_list(values: Sequence[object]) -> TypeIs[Sequence[str]]:
     return all(isinstance(v, str) for v in values)
 
 class Base:
@@ -182,6 +183,8 @@ class Child(Base):
     @override
     def run(self) -> None: ...
 ```
+
+พารามิเตอร์ต้องเป็น `Sequence[object]` ไม่ใช่ `list[object]`: `list` เป็น **invariant** ทำให้ `list[str]` ไม่ใช่ subtype ของ `list[object]` และ return type ของ `TypeIs` ต้องเป็น subtype ของ type พารามิเตอร์เสมอ ถ้าใช้ `list[object]` จะได้ error จริงดังนี้ — mypy `--strict`: `Narrowed type "list[str]" is not a subtype of input type "list[object]"  [narrowed-type-not-subtype]`; pyright: `Return type of TypeIs ("list[str]") is not consistent with value parameter type ("list[object]") (reportGeneralTypeIssues)` ส่วน `Sequence` เป็น covariant ทำให้ narrow จาก `Sequence[object]` ไป `Sequence[str]` ถูกต้อง
 
 ## Demo แบบ runnable เต็มรูปแบบ
 

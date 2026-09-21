@@ -32,7 +32,11 @@ if __name__ == "__main__":        # จำเป็นบน macOS/Windows
     # [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
 ```
 
-บน Linux, start method เริ่มต้นคือ **fork** (child คัดลอก memory ของ parent) ดังนั้น guard จึงเป็น optional ในทางเทคนิค แต่ควรใส่เสมอเพื่อความสามารถพกพา
+ตั้งแต่ Python 3.14 ระบบ Unix ที่ไม่ใช่ macOS จะใช้ **forkserver** เป็นค่าเริ่มต้นแทน **fork**
+(ซึ่งเป็นค่าเริ่มต้นในช่วง 3.3–3.13) — ดูรายละเอียดใน 3.14 What's New หัวข้อ `multiprocessing` และ
+[gh-84559](https://github.com/python/cpython/issues/84559) ส่วน macOS และ Windows ยังคงใช้ **spawn**
+เป็นค่าเริ่มต้น เนื่องจากทุกแพลตฟอร์มสามารถรัน module ของคุณใหม่ใน process สะอาดตอน pool เริ่มทำงานได้
+จึงควรใส่ guard ไว้เสมอทุกแพลตฟอร์ม ไม่ใช่แค่ macOS/Windows
 
 ## `Pool.map` — parallel map บน iterable
 
@@ -87,11 +91,11 @@ from concurrent.futures import ProcessPoolExecutor
 import math
 
 def cpu_work(n: int) -> float:
-    # จำลองการคำนวณ CPU-intensive
+    # Simulate CPU-intensive computation
     return sum(math.sin(i) for i in range(n))
 
 if __name__ == "__main__":
-    inputs = [500_000] * 8    # 8 CPU-bound tasks ที่เหมือนกัน
+    inputs = [3_000_000] * 8   # 8 CPU-bound tasks, large enough that compute dominates pool startup
 
     # Sequential baseline
     import time
@@ -99,7 +103,7 @@ if __name__ == "__main__":
     seq_results = [cpu_work(n) for n in inputs]
     seq_time = time.perf_counter() - start
 
-    # Parallel ด้วย ProcessPoolExecutor
+    # Parallel with ProcessPoolExecutor
     start = time.perf_counter()
     with ProcessPoolExecutor() as executor:
         par_results = list(executor.map(cpu_work, inputs))
@@ -110,7 +114,11 @@ if __name__ == "__main__":
     print(f"Speedup:    {seq_time / par_time:.1f}x")
 ```
 
-บนเครื่อง 8-core คุณควรเห็นความเร็วที่เพิ่มขึ้นใกล้ 8 เท่าสำหรับการคำนวณล้วนๆ
+วัดจริงสามรอบบนเครื่อง 11-core (`python3.14`) ได้ 3.0x, 3.3x, 3.6x — ห่างไกลจาก 8 เท่าเต็มๆ และนั่นคือสิ่งที่คาดไว้
+ไม่ใช่ความผิดพลาดของการวัด เวอร์ชันเดิมที่ใช้ `500_000` elements ต่องานเสียเวลาไปกับ pool startup มากจนความเร็ว
+แทบไม่เกิน 1x (`ProcessPoolExecutor` ต้อง spawn interpreter process ใหม่ทุกตัว) แม้จะเพิ่ม workload ขึ้นหกเท่าแล้ว
+ต้นทุน process startup, การ pickle arguments/results, และการ schedule ข้าม performance/efficiency core ที่ปนกัน
+ก็ยังกินส่วนต่างจาก speedup สูงสุดตามทฤษฎี ตัวเลขในที่นี้ขึ้นกับเครื่อง — วัดบนเครื่องของคุณเองก่อนอ้างตัวเลขที่แน่นอน
 
 ## Inter-process communication
 
@@ -192,15 +200,15 @@ with InterpreterPoolExecutor(max_workers=4) as pool:
 | Communication | Queue / Pipe | Shared state + Lock | Channels / queues |
 | Startup time | ช้า (fork/spawn) | เร็ว | ศูนย์ |
 
-<Callout title="ไม่สามารถใช้งานใน in-browser runner">
-`multiprocessing` และ `ProcessPoolExecutor` ไม่สามารถใช้ได้ใน in-browser Python runner (Pyodide)
-รันตัวอย่างด้านบนบนเครื่องของคุณ:
+<Callout title="รันตัวอย่างเหล่านี้ในเครื่องของคุณ">
+บทนี้ไม่มี in-browser runner และ browser sandbox ก็ไม่มี process จริงอยู่แล้ว รันตัวอย่างด้านบนบนเครื่องของคุณ:
 
 ```bash
 python3 multiprocessing_demo.py
 ```
 
 อย่าลืม guard `if __name__ == "__main__"` — หากไม่มีนี้ script จะ loop ตลอดไปบน macOS และ Windows
+(`spawn`) ดูหัวข้อ guard/start-method ด้านบนว่าเปลี่ยนไปอย่างไรใน Python 3.14
 </Callout>
 
 export const quizMultiprocessing = [

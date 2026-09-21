@@ -45,8 +45,10 @@ def total(*amounts: float) -> float:
     return sum(amounts)
 
 print(total(10.0, 20.5, 5.0))  # 35.5
-print(total())                  # 0.0
+print(total())                  # 0
 ```
+
+`sum()` ของ iterable ที่ว่างเปล่าจะคืนค่า int `0` เว้นแต่จะส่ง `start` เข้าไป เช่น `sum(amounts, 0.0)`
 
 ## Variadic keyword args: `**kwargs`
 
@@ -140,7 +142,7 @@ export const quizArgsKwargs = [
     options: [
       "variadic positional parameter",
       "keyword-only parameter",
-      "positional-only parameter",
+      "variadic keyword parameter",
       "parameter ที่จำเป็นต้องใส่ (required)"
     ],
     answer: 1

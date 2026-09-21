@@ -35,6 +35,8 @@ with expr as var:
 เทียบเท่ากับ:
 
 ```python
+import sys
+
 cm = expr
 var = cm.__enter__()
 try:
@@ -48,18 +50,28 @@ else:
 
 `__enter__` ตั้งค่า resource และคืนค่าที่ bind ให้ `var`
 `__exit__` ทำงานเสมอเมื่อออกจาก block ถ้าคืนค่า truthy จะ **suppress** exception ถ้าคืน `False` (หรือ `None`) exception จะ propagate ต่อ
+bare `except:` ด้านบนเป็นหนึ่งในกรณีหายากที่ดัก exception ทุกชนิดถูกต้อง: `if not ...: raise` จะ re-raise เสมอ ยกเว้น `__exit__` เลือก suppress อย่างชัดเจน จึงไม่มี exception ใดหายไปเงียบ ๆ
 
 ## เขียน context manager แบบ class
 
 ```python
+from types import TracebackType
+from typing import Self
+
 class Timer:
-    def __enter__(self) -> "Timer":
+    def __enter__(self) -> Self:
         print("Timer started")
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool:
         print("Timer stopped")
-        return False   # ไม่ suppress exceptions
+        suppress = False   # do not suppress exceptions
+        return suppress
 ```
 
 อาร์กิวเมนต์สามตัวของ `__exit__` คือ exception type, value, และ traceback — ทั้งหมดเป็น `None` เมื่อไม่มี exception
@@ -97,15 +109,24 @@ with open("in.txt") as src, open("out.txt", "w") as dst:
 
 export const contextManagersCode = `
 import contextlib
+from collections.abc import Iterator
+from types import TracebackType
+from typing import Self
 
 # --- class-based context manager ---
 class Timer:
-    def __enter__(self):
+    def __enter__(self) -> Self:
         print("Timer started")
         return self
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool:
         print("Timer stopped")
-        return False
+        suppress = False
+        return suppress
 
 print("=== class-based ===")
 with Timer():
@@ -113,7 +134,7 @@ with Timer():
 
 # --- contextlib.contextmanager ---
 @contextlib.contextmanager
-def managed_resource(name: str):
+def managed_resource(name: str) -> Iterator[str]:
     print(f"Acquiring {name}")
     try:
         yield name

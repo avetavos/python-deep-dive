@@ -24,7 +24,7 @@ A production Python project typically relies on a small set of tools:
 
 - **`venv`** — creates isolated virtual environments so dependencies do not bleed across projects.
 - **`pip`** — installs third-party packages from PyPI. Should only be used *after* confirming the stdlib cannot help.
-- **`pyproject.toml`** — the modern, PEP-517-standardised file for declaring package metadata, build backends, and tool configuration (replacing the old `setup.py` + `setup.cfg` approach).
+- **`pyproject.toml`** — the modern file for declaring package metadata, build backends, and tool configuration (replacing the old `setup.py` + `setup.cfg` approach): the `[build-system]` table comes from PEP 518, the `[project]` metadata table from PEP 621, and PEP 517 defines the build-backend interface those tools implement.
 - **`pytest`** — the de-facto test runner for Python projects, building on top of the stdlib `unittest` infrastructure with a friendlier API.
 
 You will explore `unittest` and `pytest` in later lessons in this chapter.

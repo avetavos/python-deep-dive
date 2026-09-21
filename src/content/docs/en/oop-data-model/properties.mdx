@@ -59,7 +59,7 @@ The most common use is providing alternative constructors:
 
 ```python
     @classmethod
-    def from_fahrenheit(cls, f: float) -> "Temperature":
+    def from_fahrenheit(cls, f: float) -> Self:
         return cls((f - 32) * 5 / 9)
 ```
 
@@ -69,6 +69,7 @@ print(boiling.celsius)   # 100.0
 ```
 
 Subclasses automatically inherit the class method and `cls` will refer to the subclass — so the factory creates an instance of the correct type.
+Annotate the return type with `typing.Self` (`from typing import Self`), not the string literal `"Temperature"` — the string annotation makes a type checker infer the base class even when `cls` is a subclass. With the old annotation, `uvx mypy --strict` on a subclass that adds a method reports exactly this: `` "Temperature" has no attribute "to_kelvin"  [attr-defined] ``. `Self` fixes it because it always refers to whatever class the method was actually called on.
 
 ## `@staticmethod` — utility functions
 
@@ -88,6 +89,9 @@ print(Temperature.absolute_zero())   # -273.15
 ## Full runnable demo
 
 export const propertiesCode = `
+from typing import Self
+
+
 class Temperature:
     def __init__(self, celsius: float = 0.0) -> None:
         self._celsius = celsius
@@ -107,7 +111,7 @@ class Temperature:
         return self._celsius * 9 / 5 + 32
 
     @classmethod
-    def from_fahrenheit(cls, f: float) -> "Temperature":
+    def from_fahrenheit(cls, f: float) -> Self:
         return cls((f - 32) * 5 / 9)
 
     @staticmethod

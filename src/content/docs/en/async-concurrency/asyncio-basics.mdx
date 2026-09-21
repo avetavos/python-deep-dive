@@ -51,9 +51,19 @@ async def greet(name: str) -> str:
 coro = greet("Python")
 print(type(coro))          # <class 'coroutine'>
 
-# Await it to actually execute the body
+# Never awaiting it is a real bug. Under `python3.14 -X dev`, deleting the
+# never-awaited coroutine triggers:
+#   RuntimeWarning: coroutine 'greet' was never awaited
+del coro
+
+# Fix: await it to actually run the body
 result = asyncio.run(greet("Python"))
 print(result)              # Hello, Python!
+
+# If you decide not to run a coroutine after all, close it explicitly —
+# closing (instead of just dropping the reference) silences the warning
+unused = greet("Python")
+unused.close()
 ```
 
 ## `await` suspends and resumes
@@ -197,10 +207,10 @@ This rides on PEP 768's external debugger interface, which also lets `python -m 
 live process. From inside your own code, `asyncio.capture_call_graph()` and `asyncio.print_call_graph()`
 give the same picture for the current task.
 
-<Callout title="Run asyncio programs locally">
-The code examples on this page use `asyncio.run(main())` — the standard idiomatic entry point.
-The in-browser runner has an event loop already running, so `asyncio.run()` raises `RuntimeError` there.
-To run these examples, paste them into a `.py` file and execute with `python3 asyncio_basics.py`.
+<Callout title="Run these examples locally">
+This lesson has no in-browser runner — run the examples locally with `python3.14`. All of them use
+`asyncio.run(main())`, the standard entry point: paste a snippet into a `.py` file and execute with
+`python3 asyncio_basics.py`.
 </Callout>
 
 export const quizAsyncioBasics = [
