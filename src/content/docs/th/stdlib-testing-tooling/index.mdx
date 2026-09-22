@@ -7,8 +7,10 @@ sidebar:
 
 import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
+import Mermaid from '../../../../components/Mermaid.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Batteries included
 
@@ -22,12 +24,13 @@ Standard library ครอบคลุมมากกว่า 200 module
 
 โปรเจกต์ Python สำหรับ production มักพึ่งพา tool ชุดเล็กๆ:
 
-- **`venv`** — สร้าง virtual environment แบบ isolated เพื่อไม่ให้ dependency ของโปรเจกต์หนึ่งปนกับอีกโปรเจกต์
-- **`pip`** — ติดตั้ง third-party package จาก PyPI ควรใช้หลังจากยืนยันแล้วว่า stdlib ช่วยไม่ได้
-- **`pyproject.toml`** — ไฟล์สมัยใหม่สำหรับประกาศ package metadata, build backend และการตั้งค่า tool (แทนที่ `setup.py` + `setup.cfg` แบบเก่า): ตาราง `[build-system]` มาจาก PEP 518, ตาราง `[project]` (metadata) มาจาก PEP 621 ส่วน PEP 517 คือ build-backend interface ที่ tool เหล่านี้ implement
-- **`pytest`** — test runner มาตรฐานโดยพฤตินัยสำหรับโปรเจกต์ Python ซึ่งสร้างบน `unittest` ของ stdlib ด้วย API ที่เป็นมิตรกว่า
+- **`uv`** — เครื่องมือเดียวที่จัดการ interpreter, virtual environment, dependency และ lockfile (บทเรียน `venv-pip`)
+- **`pyproject.toml`** — ไฟล์สมัยใหม่สำหรับประกาศ package metadata, build backend และ tool configuration: ตาราง `[build-system]` มาจาก PEP 518, ตาราง `[project]` (metadata) มาจาก PEP 621 ส่วน PEP 517 คือ build-backend interface ที่ tool เหล่านี้ implement (บทเรียน `packaging`)
+- **`pytest`** — test runner มาตรฐานโดยพฤตินัยสำหรับโปรเจกต์ Python ซึ่งสร้างบน `unittest` ของ stdlib ด้วย API ที่เป็นมิตรกว่า (บทเรียน `pytest`)
+- **`ruff`** — linter *และ* formatter ที่แทนที่ `flake8` + `black` + `isort` ด้วยเครื่องมือเดียวที่เร็วมาก อธิบายต่อในบทนี้
+- **`mypy`**/**`pyright`** — static type checker ที่ตรวจสอบ type hint โดยไม่ต้องรันโค้ดจริง อธิบายต่อในบทนี้เช่นกัน
 
-คุณจะได้ศึกษา `unittest` และ `pytest` ในบทเรียนถัดไปของ chapter นี้
+คุณจะได้สำรวจแต่ละตัวในบทเรียนของ chapter นี้
 ตอนนี้ นิสัยสำคัญคือ: **ใช้ stdlib ก่อนเสมอ**
 
 ## ลิ้มลองสั้นๆ: stdlib สามโมดูลในการใช้งานจริง
@@ -76,6 +79,252 @@ Module สำคัญที่ควรรู้จักดี:
 - **`unittest`** — framework การทดสอบ built-in (และเป็นพื้นฐานที่ pytest สร้างต่อยอด)
 </Callout>
 
+## Linting และ formatting ด้วย `ruff`
+
+`ruff` คือ linter และ formatter ในตัวเดียว เร็วพอที่จะรันได้ทุกครั้งที่ save มัน implement rule ของ `flake8`, `isort`, `pyupgrade`, `bugbear` และอื่น ๆ ซ้ำ ภายใต้ rule code สั้น ๆ rule ส่วนหนึ่งจับ bug ที่ AI assistant สร้างบ่อยที่สุดได้พอดี
+
+```python
+# ai_code.py -- every line below trips a real ruff rule
+import datetime
+import os
+import sys
+from typing import List, Optional
+
+
+def add_item(item, items=[]):
+    items.append(item)
+    return items
+
+
+def make_report(created_at=datetime.datetime.now()) -> None:
+    print(created_at)
+
+
+def divide(a, b):
+    try:
+        return a / b
+    except:
+        pass
+
+
+def get_names() -> Optional[List[str]]:
+    result = os.getcwd()
+    return None
+```
+
+Output จริง, `ruff` 0.16.8, rule set ดีฟอลต์ — ไม่ต้อง config อะไรเลย:
+
+```text
+$ uvx ruff check ai_code.py
+F401 [*] `sys` imported but unused
+ --> ai_code.py:3:8
+
+UP035 `typing.List` is deprecated, use `list` instead
+ --> ai_code.py:4:1
+
+B006 Do not use mutable data structures for argument defaults
+ --> ai_code.py:7:26
+help: Replace with `None`; initialize within function
+
+DTZ005 `datetime.datetime.now()` called without a `tz` argument
+  --> ai_code.py:12:28
+
+B008 Do not perform function call `datetime.datetime.now` in argument defaults;
+     instead, perform the call within the function, or read the default from
+     a module-level singleton variable
+  --> ai_code.py:12:28
+
+E722 Do not use bare `except`
+  --> ai_code.py:19:5
+
+S110 `try`-`except`-`pass` detected, consider logging the exception
+  --> ai_code.py:19:5
+
+UP045 [*] Use `X | None` for type annotations
+  --> ai_code.py:23:20
+
+UP006 [*] Use `list` instead of `List` for type annotation
+  --> ai_code.py:23:29
+
+F841 Local variable `result` is assigned to but never used
+  --> ai_code.py:24:5
+
+Found 10 errors.
+[*] 3 fixable with the `--fix` option (2 hidden fixes can be enabled with the `--unsafe-fixes` option).
+```
+
+`F401`/`F841` จับ dead code (import/variable ที่ไม่ได้ใช้) — ซากที่เหลือจาก AI assistant แก้ function แล้วทิ้ง import เก่าหรือตัวแปรกลางที่ไม่ได้ใช้ไว้ `B006`/`B008` จับ bug ของ function signature ที่ AI สร้างบ่อยที่สุด: default argument ที่เป็น mutable หรือถูก evaluate สด ๆ ซึ่งคำนวณแค่ *ครั้งเดียว* ตอน import/definition แล้วถูกแชร์ข้ามทุกการเรียก `E722` จับ `except:` เปล่าที่กลืนทุก exception รวมถึงตัวที่แทบไม่มีใครอยากกลืน (`KeyboardInterrupt`, `SystemExit`) กลุ่ม `UP` ชี้โค้ดที่เขียนตาม Python เวอร์ชันเก่า (`typing.List`, `typing.Optional`) ที่มีรูปแบบสั้นกว่าและเป็นปัจจุบันกว่า (`list`, `X | None`) — ตรงกับสไตล์ที่โมเดล AI ที่เทรนจากโค้ดเก่ามักจะใช้เป็นดีฟอลต์
+
+`ruff format` (เป็นอีก subcommand แยกจาก `ruff check`) จัดการ whitespace/style แบบเดียวกับ `black` — การรันแค่ตัวใดตัวหนึ่งเป็นการตั้งค่าผิดที่พบบ่อย อธิบายต่อในหัวข้อ `pre-commit` ข้างล่าง
+
+## Type checking ใน CI: `mypy --strict` เทียบกับ `pyright`
+
+ทั้ง `mypy` และ `pyright` อ่าน type hint ชุดเดียวกันแต่สามารถเห็นต่างกันได้ ให้รันทั้งคู่ใน CI — bug ที่มีแค่ตัวเดียวจับได้ก็ยังเป็น bug จริง
+
+```python
+def first_or_none(items: list[int]) -> int | None:
+    if items:
+        return items[0]
+
+
+def total(values: list[int]) -> int:
+    result = 0
+    for v in values:
+        result += v
+    return result
+
+
+print(total(first_or_none([1, 2, 3])))
+```
+
+```text
+$ uvx mypy --strict typing_demo.py
+typing_demo.py:1: error: Missing return statement  [return]
+typing_demo.py:13: error: Argument 1 to "total" has incompatible type "int | None"; expected "list[int]"  [arg-type]
+Found 2 errors in 1 file (checked 1 source file)
+
+$ uvx pyright typing_demo.py
+typing_demo.py:13:13 - error: Argument of type "int | None" cannot be assigned to parameter "values" of type "list[int]" in function "total"
+    Type "int | None" is not assignable to type "list[int]"
+      "int" is not assignable to "list[int]" (reportArgumentType)
+1 error, 0 warnings, 0 informations
+```
+
+ทั้งคู่จับ bug จริงได้ — การส่ง `int | None` เข้าที่ที่ต้องการ `list[int]` (crash จริง: การเรียก `total` ด้วย `None` จะ raise `TypeError` ตอน runtime) แต่ทั้งคู่ **เห็นต่างกัน** ในเรื่อง function แรก: `mypy --strict` ชี้เพิ่มว่า "Missing return statement" บน `first_or_none` ทั้งที่ return type ที่ประกาศไว้มี `None` รวมอยู่แล้ว (การตกออกจากท้าย function *คือ* การ return `None` ซึ่งเป็นค่าที่ valid ของ `int | None`); `pyright` ไม่ชี้ปัญหานี้เลย ไม่มีคำตัดสินไหนที่ "ผิด" — ทั้งสองใช้ heuristic ความเข้มงวดต่างกันกับ implicit-`None` return — แต่ทีมที่รันแค่ `pyright` ใน CI จะไม่เห็น warning แรกนั้นเลย และทีมที่รันแค่ `mypy --strict` ก็ได้ warning ที่บางคนมองว่าเป็น false positive บทเรียนคือ: รันทั้งคู่ถ้า CI time ไหว และรู้ว่าตัวไหนที่ gate การ merge ของคุณจริง ๆ
+
+## อัตโนมัติการตรวจสอบ: `pre-commit`
+
+`pre-commit` รันชุดการตรวจสอบทุกครั้งที่ `git commit` เพื่อให้ bug ที่ `ruff` จับได้ไม่มีทางไปถึงแม้แต่ commit ในเครื่อง อย่าว่าแต่ CI เลย
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+```
+
+`ruff-check` และ `ruff-format` เป็นสอง hook แยกกัน — config ที่มีแค่ตัวเดียวจะข้ามการตรวจของอีกตัวไปแบบเงียบ ๆ ลำดับสำคัญเมื่อใช้ `--fix`: `ruff-check` รันก่อน `ruff-format` เพื่อให้การเขียนใหม่ที่ `ruff --fix` ทำเพื่อแก้ lint rule ถูก format ต่อทีหลัง ไม่ถูกทิ้งไว้แบบ format ครึ่งเดียว
+
+## จับ bug ตอน runtime: `python -X dev` และ `-W error`
+
+บาง bug จะเงียบโดยดีฟอลต์เพราะ warning filter ดีฟอลต์ของ Python ซ่อนมันไว้ `-X dev` ("development mode") เปิดหลายตัวในนั้น
+
+```python
+# devdemo2.py
+def read_first_line(path: str) -> str:
+    f = open(path)  # BUG: never closed, no 'with'
+    return f.readline()
+
+
+read_first_line(__file__)
+print("done")
+```
+
+```text
+$ python3.14 devdemo2.py
+done
+
+$ python3.14 -X dev devdemo2.py
+devdemo2.py:6: ResourceWarning: unclosed file <_io.TextIOWrapper name='devdemo2.py' mode='r' encoding='UTF-8'>
+  read_first_line(__file__)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+done
+```
+
+การรันเปล่า ๆ รั่ว file handle แบบเงียบ ๆ; `-X dev` เปิดการรายงาน `ResourceWarning` (พร้อมการตรวจอื่น ๆ: assertion เพิ่มเติมใน interpreter, `PYTHONMALLOC=debug`, คำเตือนของ `io.IOBase.__del__`) และพิมพ์ตำแหน่งที่มันเกิดขึ้นเป๊ะ ๆ `-W error::<category>` ไปไกลกว่านั้นอีกขั้น โดยเปลี่ยน warning category ที่ระบุให้กลายเป็น hard failure — มีประโยชน์ใน CI เพื่อให้แน่ใจว่า deprecation ที่ไม่มีใครคอยดูจะไม่แอบผ่านไปเรื่อย ๆ จนถึงวันที่มันถูกลบจริง:
+
+```python
+# devdemo3.py
+import datetime
+
+
+def log_timestamp() -> None:
+    now = datetime.datetime.utcnow()  # deprecated since 3.12, naive UTC
+    print(f"logged at {now}")
+
+
+log_timestamp()
+print("done")
+```
+
+```text
+$ python3.14 -W error::DeprecationWarning devdemo3.py
+Traceback (most recent call last):
+  File "devdemo3.py", line 9, in <module>
+    log_timestamp()
+  File "devdemo3.py", line 5, in log_timestamp
+    now = datetime.datetime.utcnow()  # deprecated since 3.12, naive UTC
+DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for
+removal in a future version. Use timezone-aware objects to represent datetimes
+in UTC: datetime.datetime.now(datetime.UTC).
+```
+
+Exit code จริง: `1` ถ้าไม่มี `-W error` โปรแกรมเดียวกันนี้จะพิมพ์ deprecation warning แล้วรันต่อจนจบ — พลาดง่ายมากใน CI log ที่ยุ่งเหยิง
+
+## บันไดการตรวจสอบ (verification ladder)
+
+แต่ละ tool ในโมดูลนี้จับ bug คนละประเภท เรียงจากถูกที่สุดและควรรันบ่อยที่สุด ไปหาแพงที่สุดและควรรันน้อยที่สุด:
+
+<Mermaid code={`flowchart TD
+  A["ruff check + ruff format\n(milliseconds, every save)"] --> B["mypy --strict / pyright\n(seconds, every save or pre-commit)"]
+  B --> C["pytest\n(seconds to minutes, every commit/CI run)"]
+  C --> D["hypothesis-backed tests\n(slower, property-based, finds edge cases the other three miss)"]`} title="บันไดการตรวจสอบ: ถูกและบ่อยที่สุดก่อน" />
+
+`ruff` จับ bug ระดับ syntax และ style (dead code, default อันตราย, API ที่ deprecate แล้ว) โดยไม่ต้องรันโค้ดคุณเลย Type checker จับ bug เชิง logic ที่กว้างกว่า — type ผิดที่ไหลระหว่าง function — ก็ยังไม่ต้องรันอะไรเช่นกัน `pytest` รันโค้ดคุณจริง ๆ กับตัวอย่างที่คุณเลือกเอง `hypothesis` (อธิบายละเอียดในบทเรียน `pytest`) รันโค้ดคุณกับตัวอย่างที่ *มันเอง* เลือก โดยเจาะจงล่า input ที่คุณคิดไม่ถึง ไม่มีตัวไหนใน 4 ตัวนี้แทนที่กันได้ — โปรแกรมสามารถผ่าน `ruff` และ type checker ทั้งสองตัวพร้อม test coverage 100% แล้วยังผิดอยู่ได้ ถ้า assertion ของทุก test อ่อนเหมือน coverage demo ในบทเรียน `pytest`
+
+## บทเรียนในโมดูลนี้
+
+- **`pytest`** — fixture, `parametrize`, mocking, coverage และ `hypothesis` แบบละเอียด
+- **`stdlib-tour`** — `datetime`, `json`, `functools`, `itertools`, `pathlib`, `subprocess` และอื่น ๆ
+- **`venv-pip`** — `uv` ก่อน แล้วค่อย `venv`/`pip` ที่อยู่ข้างใต้
+- **`packaging`** — `pyproject.toml`, `uv build`/`uv publish`, dependency group
+- **`index`** (บทนี้) — `ruff`, กลยุทธ์ type-checker ใน CI, `pre-commit`, runtime warning และวิธีที่ 4 ชั้นการตรวจสอบเชื่อมกัน
+
+## Mental Model
+
+ทุก tool ใน chapter นี้ตอบคำถามเดียวกันที่จุดต่างกันใน development loop: **"โค้ดนี้ถูกไหม และจะรู้ได้ถูกที่สุดยังไง"** ตัว stdlib เองคือรูปแบบความถูกต้องที่ถูกที่สุด — โค้ดที่คุณไม่ได้เขียนเองไม่มี bug ที่คุณใส่เข้าไปได้ `ruff` มาต่อ: มันอ่านข้อความ source ของคุณและชี้ pattern ที่รู้ว่าทำให้เกิด bug โดยไม่รันโค้ดสักบรรทัดเดียว Type checker อ่านทั้ง source *และ* annotation ของคุณ แล้วจำลองว่า value ไหนไหลไปที่ไหนได้บ้าง ก็ยังไม่ต้องรันอะไร `pytest` และ `hypothesis` เป็น tool เดียวในบันไดนี้ที่รันโค้ดคุณจริง ๆ — ซึ่งก็เป็นเหตุผลว่าทำไมมันช้าที่สุดและเป็นด่านสุดท้าย ไม่ใช่ด่านแรก
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| ใช้ stdlib ก่อนเสมอ | ไม่เพิ่ม dependency, เวอร์ชัน หรือ security surface | บางครั้งยาวกว่า third-party convenience library |
+| `ruff` เป็น linter + formatter | เครื่องมือเร็วมากตัวเดียวแทน `flake8` + `black` + `isort` | rule surface ดีฟอลต์+opt-in ใหญ่ต้องเรียนรู้; `--fix` อาจไม่ปลอดภัยสำหรับบาง rule |
+| รันทั้ง `mypy --strict` และ `pyright` ใน CI | จับ bug ของทั้งสอง tool รวมกัน; เห็นความเห็นต่าง | เวลา CI เพิ่มเป็นสองเท่า; บางครั้งต้องตัดสินความเห็นต่าง |
+| `pre-commit` | Bug ไม่มีทางถึง commit อย่าว่าแต่ CI | ต้องมี config ไฟล์เพิ่ม; hook ที่ตั้งค่าผิด (มีแค่ `ruff-format` ไม่มี `ruff-check`) ให้ความมั่นใจปลอม |
+| `-X dev` / `-W error` ใน CI หรือรันในเครื่อง | เผย resource leak และ deprecation แบบเงียบ ๆ ก่อนที่จะสำคัญ | รันช้าลงนิดหน่อย; บาง warning ต้อง filter ต่อโปรเจกต์เพื่อไม่ให้ noise จาก dependency |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"`ruff format` กับ `ruff check` คือคำสั่งเดียวกัน"** ทั้งสองเป็น subcommand แยกกัน (และ hook id ของ `pre-commit` แยกกัน คือ `ruff-format` กับ `ruff-check`) — formatting แก้ whitespace/style ส่วน checking ชี้ bug และ anti-pattern จริง; hook หรือ CI step ที่รันแค่ตัวเดียวจะข้ามปัญหาทั้งหมวดของอีกตัวไปแบบเงียบ ๆ
+- **"ถ้า `pyright` สะอาด `mypy --strict` ก็ต้องสะอาดด้วย (หรือกลับกัน)"** demo ของ `first_or_none`/`total` ข้างบนคือหลักฐานจริงที่ตรวจสอบแล้วว่าไม่ใช่: `mypy --strict` รายงาน 2 error, `pyright` รายงาน 1 error บนไฟล์เดียวกันเป๊ะ
+- **"การรันแล้วเงียบ สะอาด แปลว่าไม่มี bug"** demo unclosed-file รันจนจบโดยไม่มี error ให้เห็นภายใต้ `python3.14 devdemo2.py` เปล่า ๆ — resource leak จะเห็นได้ก็ต่อเมื่ออยู่ภายใต้ `-X dev` เท่านั้น
+- **"deprecation warning เป็นแค่ noise ที่เพิกเฉยได้จนกว่าจะถูกลบจริง"** `-W error::DeprecationWarning` ในบทนี้เปลี่ยน warning ประเภทนั้นให้กลายเป็น failure ที่ดังและทันที — นั่นคือประเด็น: จับมันตอนที่ยังมีเวลาแก้อย่างใจเย็น ไม่ใช่วันที่ API ถูกลบจริง
+- **"pip คือสิ่งแรกที่ควรใช้เมื่อต้องการ functionality"** ตรวจ stdlib ก่อน (`collections`, `itertools`, `functools`, `pathlib` ฯลฯ — ดู Callout ข้างบน) ช่วยเลี่ยงการเพิ่ม dependency, เวอร์ชันที่ต้องติดตาม และความเสี่ยง supply-chain สำหรับสิ่งที่ standard library อาจทำได้อยู่แล้ว
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อสคริปต์ setup, CI config หรือไฟล์ `pre-commit` ที่ generate มา ให้ตรวจ:
+
+- config `pre-commit` ที่มีแค่ hook `ruff-format` (หรือ `ruff` แบบเก่า) และไม่มี `ruff-check` (หรือกลับกัน) — การตรวจทั้งหมวด (formatting หรือ linting) ถูกข้ามไปแบบเงียบ ๆ
+- CI ที่รันแค่ `mypy` หรือแค่ `pyright` แล้วบอกว่า "type checking เสร็จแล้ว" — ทั้งสอง tool เห็นต่างกันได้จริง ตามที่แสดงข้างบน
+- โค้ดที่ใช้ `except:` เปล่า แทนที่จะเป็น `except Exception:` หรือ exception type ที่ระบุชื่อ — `E722` ของ `ruff` จับสิ่งนี้ได้ แต่ก็ต่อเมื่อ `ruff check` รันจริงใน CI ไม่ใช่แค่ในเครื่อง
+- Function ที่มี default argument เป็น mutable (`[]`, `{}`) หรือถูก evaluate สด ๆ (`datetime.now()`) — `B006`/`B008` ของ `ruff` จับสิ่งนี้ได้ แต่การรัน `--fix` โดยไม่ review อาจเปลี่ยนพฤติกรรมแบบเงียบ ๆ สำหรับ edge case ที่ fix ไม่ได้ทำซ้ำครบ
+- โปรแกรมที่ไม่เคย crash ในเครื่องแต่รั่ว file handle, thread หรือ connection — มองไม่เห็นถ้าไม่มี `-X dev` หรือ test ที่ track resource ชัดเจน
+
+<SpotTheBug code={`# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff-format`} lang="yaml">
+Hook นี้รันแค่ `ruff-format` (whitespace/style) เท่านั้น -- ไม่เคยรัน `ruff-check` (linter) เลย ดังนั้น bug ทุกตัวที่ demo `ai_code.py` ของบทนี้แสดง (`B006`, `B008`, `E722`, `F401`, `F841`, กลุ่ม `UP`) สามารถ commit และ push ได้ทั้งที่ pre-commit ผ่านเขียวหมด ทางแก้คือเพิ่ม hook entry ที่สองสำหรับ `ruff-check` (พร้อม `args: [--fix]` ถ้าต้องการ auto-fix) *ก่อน* entry ของ `ruff-format` ให้ตรงกับ config ที่ใช้งานได้จริงที่แสดงไว้ก่อนหน้าในบทนี้
+</SpotTheBug>
+
 export const quizStdlibIntro = [
     {
         q: "'batteries included' หมายความว่าอะไรสำหรับ Python?",
@@ -85,7 +334,8 @@ export const quizStdlibIntro = [
             "คุณต้องติดตั้ง library ทั้งหมดผ่าน pip",
             "stdlib ต้องติดตั้งแยกต่างหาก"
         ],
-        answer: 1
+        answer: 1,
+        explain: "stdlib มาพร้อมกับทุกการติดตั้ง Python และครอบคลุมงานประจำวันส่วนใหญ่ (collections, file I/O, networking, testing และอื่น ๆ) โดยไม่ต้องติดตั้งอะไรเพิ่ม",
     },
     {
         q: "module ใดที่มี Counter และ defaultdict?",
@@ -95,7 +345,8 @@ export const quizStdlibIntro = [
             "collections",
             "builtins"
         ],
-        answer: 2
+        answer: 2,
+        explain: "collections คือ module ของ stdlib สำหรับ container type พิเศษ: Counter, defaultdict, deque, namedtuple และ OrderedDict",
     },
     {
         q: "tool สมัยใหม่สำหรับประกาศ package metadata และการตั้งค่า build คืออะไร?",
@@ -105,8 +356,53 @@ export const quizStdlibIntro = [
             "pyproject.toml",
             "Makefile"
         ],
-        answer: 2
-    }
+        answer: 2,
+        explain: "pyproject.toml รวม package metadata ([project], PEP 621), build backend ([build-system], PEP 518) และ tool configuration ([tool.*]) ไว้ในไฟล์เดียว — บทเรียน packaging อธิบายละเอียด",
+    },
+    {
+        q: "```python\ndef add_item(item, items=[]):\n    items.append(item)\n    return items\n```\n`ruff` rule ไหนจับโค้ดนี้ และทำไมมันเป็น bug จริง?",
+        options: [
+            "F401 -- items is an unused import",
+            "B006 -- the mutable default list is created once at function definition and shared across every call that doesn't pass its own items",
+            "E722 -- bare except detected",
+            "UP006 -- use list instead of List",
+        ],
+        answer: 1,
+        explain: "B006 (mutable default argument) จับ pattern นี้เป๊ะ ๆ default `[]` จะถูก evaluate แค่ครั้งเดียวตอนนิยาม function ไม่ใช่ทุกครั้งที่เรียก — ทุกการเรียกที่พึ่งค่า default จะแชร์และแก้ list object ตัวเดียวกัน สะสมข้ามการเรียกที่ไม่เกี่ยวข้องกัน",
+    },
+    {
+        q: "```text\n$ uvx mypy --strict typing_demo.py\ntyping_demo.py:1: error: Missing return statement  [return]\ntyping_demo.py:13: error: ... incompatible type \"int | None\"; expected \"list[int]\"\n\n$ uvx pyright typing_demo.py\ntyping_demo.py:13:13 - error: ... cannot be assigned to parameter \"values\" of type \"list[int]\"\n```\nOutput จริงนี้แสดงอะไร?",
+        options: [
+            "pyright is strictly better than mypy --strict because it reports fewer false positives",
+            "mypy --strict and pyright can disagree on the same file -- here mypy also flags an implicit-None return that pyright does not -- so CI relying on only one tool can miss a class of warnings",
+            "The two tools always produce identical output",
+            "pyright cannot check function arguments, only mypy can",
+        ],
+        answer: 1,
+        explain: "ทั้งสอง tool เห็นตรงกันในเรื่อง bug จริง (การส่ง int | None เข้าที่ที่ต้องการ list[int]) แต่เห็นต่างกันว่า implicit `None` return ใน function ที่ annotate เป็น -> int | None ควรมี warning หรือไม่ -- mypy --strict ชี้ ส่วน pyright ไม่ชี้ การรันแค่ tool เดียวใน CI แปลว่าพลาด warning ที่มีแค่อีกตัวจับได้",
+    },
+    {
+        q: "```python\ndef read_first_line(path: str) -> str:\n    f = open(path)  # never closed\n    return f.readline()\n```\nทำไม `python3.14 devdemo2.py` ไม่แสดงอะไรเลย แต่ `python3.14 -X dev devdemo2.py` พิมพ์ ResourceWarning?",
+        options: [
+            "-X dev recompiles the file with different behavior",
+            "Python's default warning filters suppress ResourceWarning; -X dev (development mode) enables it along with other runtime checks, without changing the program's actual behavior",
+            "The file only leaks a handle when -X dev is passed",
+            "-X dev requires a different Python version",
+        ],
+        answer: 1,
+        explain: "resource leak (file ที่ไม่ถูกปิด) เกิดขึ้นเหมือนกันในทั้งสองการรัน -- เป็นเรื่องจริงทั้งคู่ -X dev แค่เปิดการรายงาน ResourceWarning (บวก assertion เพิ่มเติมของ interpreter และ PYTHONMALLOC=debug) ที่ warning filter ดีฟอลต์ซ่อนไว้ ทำให้ bug ที่เงียบมองเห็นได้โดยไม่เปลี่ยนพฤติกรรมโปรแกรม",
+    },
+    {
+        q: "`python3.14 -W error::DeprecationWarning script.py` ต่างจากการรันเปล่า ๆ อย่างไร เมื่อสคริปต์เรียก function ที่ deprecate แล้ว?",
+        options: [
+            "Nothing, -W only affects logging output",
+            "It turns that specific warning category into a raised exception, crashing the program at the exact call site instead of printing a warning and continuing",
+            "It silences all warnings instead of showing them",
+            "It only works inside pytest, not a plain script",
+        ],
+        answer: 1,
+        explain: "การรันเปล่า ๆ จะพิมพ์ DeprecationWarning แล้วรันต่อจนจบ (พลาดง่ายใน log ที่ยุ่งเหยิง) -W error::DeprecationWarning เปลี่ยน warning นั้นให้เป็น exception จริงพร้อม traceback ชี้ตำแหน่งเรียกเป๊ะ ๆ และ exit code ไม่เป็นศูนย์ -- ตรวจสอบแล้ว: exit code 1 ในการรันจริงของบทนี้",
+    },
 ];
 
 <Quiz client:visible id="stdlib-testing-tooling/index" questions={quizStdlibIntro} />

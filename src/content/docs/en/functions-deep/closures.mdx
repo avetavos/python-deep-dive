@@ -1,6 +1,6 @@
 ---
 title: Closures
-description: 'Nested functions, free variables, nonlocal, and the late-binding gotcha in Python closures.'
+description: 'LEGB scoping, nonlocal vs global, closures over mutables, __closure__ cells, and the late-binding gotcha in Python.'
 sidebar:
   order: 3
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Nested functions
 
@@ -25,6 +27,34 @@ def outer():
     inner()
 
 outer()  # Hello from outer
+```
+
+## LEGB: how Python looks up a name
+
+Every name lookup in Python follows one fixed order, abbreviated **LEGB**:
+
+1. **Local** — names assigned inside the current function
+2. **Enclosing** — names in any enclosing function's local scope (this is where closures live)
+3. **Global** — names assigned at module level
+4. **Built-in** — names Python provides itself (`len`, `print`, `range`, ...)
+
+Python stops at the first scope where the name is found:
+
+```python
+x = "global x"
+
+def legb_demo():
+    y = "enclosing y"
+
+    def inner():
+        z = "local z"
+        print("local:", z)
+        print("enclosing:", y)   # not local to inner — found in legb_demo's scope
+        print("global:", x)      # not local or enclosing — found at module level
+        print("built-in:", len)  # not any of the above — found in builtins
+    inner()
+
+legb_demo()
 ```
 
 ## Free variables and closures
@@ -45,14 +75,25 @@ print(hello("Alice"))   # Hello, Alice!
 print(hi("Bob"))        # Hi, Bob!
 ```
 
-`greeting` is a **free variable** in `greet` — it is not defined inside `greet` and not a global; it lives in `make_greeter`'s local scope.
+`greeting` is a **free variable** in `greet` — it is not defined inside `greet` and not a global; it lives in `make_greeter`'s local scope, one level up in the "E" of LEGB.
 The closure keeps the value of `greeting` alive for as long as `hello` or `hi` exist.
 
-You can inspect a closure's captured variables via `__closure__`:
+## `__closure__` and cell contents
+
+A closure is not magic — CPython implements it with **cell objects**, one per free variable, stored on the function's `__closure__` tuple. `__code__.co_freevars` names which variables those cells hold:
 
 ```python
+def make_greeter(greeting):
+    def greet(name):
+        return f"{greeting}, {name}!"
+    return greet
+
+hello = make_greeter("Hello")
 print(hello.__closure__[0].cell_contents)   # Hello
+print(hello.__code__.co_freevars)           # ('greeting',)
 ```
+
+Each call to `make_greeter` creates a fresh cell — `hello` and `hi` from the earlier example have completely independent cells, which is why they remember different greetings.
 
 ## The `nonlocal` keyword
 
@@ -84,6 +125,53 @@ print(inc())    # 1
 
 Without `nonlocal count`, the line `count += step` would raise `UnboundLocalError` because Python sees the assignment and treats `count` as a local variable that has not been assigned yet.
 
+## `global`: the same rule, one scope further out
+
+`global` is `nonlocal`'s counterpart for module-level names: it tells Python that an assignment inside a function should rebind the **global** name instead of creating a new local one. The same `UnboundLocalError` rule applies without it — Python decides a name is local to a function by scanning the *whole function body* for assignments, before running any of it, so even reading the name before the assignment line fails:
+
+```python
+counter = 0
+
+def increment_global():
+    global counter
+    counter += 1
+
+increment_global()
+increment_global()
+print(counter)   # 2
+
+def broken_increment():
+    counter += 1   # counter is assigned somewhere in this function...
+                    # ...so Python treats it as local for the *entire* function body
+
+broken_increment()
+# UnboundLocalError: cannot access local variable 'counter' where it is not associated with a value
+```
+
+`global` and `nonlocal` solve the same problem (an assignment would otherwise create a shadowing local) at two different scope distances — `global` always reaches module scope directly, skipping any enclosing function scopes in between; `nonlocal` reaches the nearest enclosing *function* scope.
+
+## Closing over a mutable instead of using `nonlocal`
+
+Reassigning a free variable requires `nonlocal`, but **mutating** an object the closure already holds a reference to does not — this is often the simpler fix when several inner functions need to share state:
+
+```python
+def make_counter_mutable():
+    state = {"count": 0}   # mutable container — no nonlocal needed
+
+    def increment(step: int = 1) -> int:
+        state["count"] += step   # mutating the dict, not rebinding the name
+        return state["count"]
+
+    return increment, state
+
+inc, state = make_counter_mutable()
+print(inc())      # 1
+print(inc(5))     # 6
+print(state)       # {'count': 6} — visible from outside too
+```
+
+`state["count"] += step` looks up `state` (read-only access to the free variable — no `nonlocal` needed) and then mutates the dict it points to. This trades `nonlocal`'s explicit reassignment for a shared mutable container — useful when multiple inner functions need to observe or reset the same state, but it also exposes that state directly to any code holding a reference to `state`, which `nonlocal`'s fully private cell does not.
+
 ## Factory functions — a practical closure
 
 export const closuresCode = `
@@ -113,6 +201,151 @@ for label, result in tests:
 
 <Playground code={closuresCode} />
 
+## Depth demo: LEGB, `global`, mutable state, `__closure__`, and the late-binding fix
+
+export const closuresDepthCode = `
+import functools
+
+# --- LEGB named ---
+x = "global x"
+
+def legb_demo():
+    y = "enclosing y"
+
+    def inner():
+        z = "local z"
+        print("local:", z)
+        print("enclosing:", y)
+        print("global:", x)
+        print("built-in:", len)
+    inner()
+
+print("--- LEGB ---")
+legb_demo()
+
+# --- global keyword ---
+counter = 0
+
+def increment_global():
+    global counter
+    counter += 1
+
+print("\\n--- global ---")
+increment_global()
+increment_global()
+print("counter:", counter)
+
+def broken_increment():
+    counter += 1  # UnboundLocalError: assignment makes counter local here
+
+try:
+    broken_increment()
+except UnboundLocalError as e:
+    print(type(e).__name__ + ":", e)
+
+# --- closing over a mutable instead of nonlocal ---
+print("\\n--- mutable cell instead of nonlocal ---")
+
+def make_counter_mutable():
+    state = {"count": 0}   # mutable container — no nonlocal needed
+
+    def increment(step=1):
+        state["count"] += step   # mutating the dict, not rebinding the name
+        return state["count"]
+
+    return increment, state
+
+inc, state = make_counter_mutable()
+print(inc())
+print(inc(5))
+print("state dict itself:", state)
+
+# --- __closure__ / cell contents ---
+print("\\n--- __closure__ and cell contents ---")
+
+def make_greeter(greeting):
+    def greet(name):
+        return f"{greeting}, {name}!"
+    return greet
+
+hello = make_greeter("Hello")
+print(hello.__closure__[0].cell_contents)
+print(hello.__code__.co_freevars)
+
+# --- late binding + partial fix ---
+print("\\n--- late binding + functools.partial fix ---")
+funcs_broken = [lambda: i for i in range(3)]
+print("broken:", [f() for f in funcs_broken])
+
+funcs_default_arg = [lambda i=i: i for i in range(3)]
+print("default-arg fix:", [f() for f in funcs_default_arg])
+
+def identity(i):
+    return i
+
+funcs_partial = [functools.partial(identity, i) for i in range(3)]
+print("partial fix:", [f() for f in funcs_partial])
+`.trim();
+
+<Playground code={closuresDepthCode} />
+
+## Mental Model
+
+Each call to `make_greeter` allocates its own cell for `greeting` — the closure is the returned function plus a reference to that specific cell, not a copy of the value:
+
+export const closuresMentalModel = `flowchart LR
+  subgraph call1["make_greeter(\\"Hello\\")"]
+    cellA["cell: greeting = 'Hello'"]
+  end
+  subgraph call2["make_greeter(\\"Hi\\")"]
+    cellB["cell: greeting = 'Hi'"]
+  end
+  hello["hello.__closure__[0]"] --> cellA
+  hi["hi.__closure__[0]"] --> cellB`;
+
+<Mermaid code={closuresMentalModel} title="Each call creates an independent cell — hello and hi never share state" />
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| `nonlocal` | Explicit, self-documenting reassignment of an enclosing variable | Must be declared before the first assignment in the function; forgetting it raises `UnboundLocalError`, not a silent wrong answer |
+| Closing over a mutable (dict/list) | No `nonlocal` needed to share state across several inner functions | The state is a plain object anyone holding a reference to it can mutate from outside too — no privacy `nonlocal`'s cell gives you |
+| `global` | Lets a function update true module-level state | Couples the function to a specific module's global; makes the function harder to test in isolation and to reason about from other modules |
+| Default-argument late-binding fix (`lambda i=i: ...`) | One extra `=i`, no imports needed | Easy to forget; reads oddly to someone unfamiliar with the idiom |
+| `functools.partial` late-binding fix | Explicit and self-documenting — freezes the argument by name | Requires an extra `import functools` and a named function instead of an inline `lambda` |
+
+## Common Misconceptions
+
+- **"A closure captures the value a variable had when the function was defined"** — fact: it captures the **variable itself** (the cell) — if that variable's value changes later, every closure over it sees the new value, which is exactly why the late-binding loop gotcha happens.
+- **"Reading an enclosing variable requires `nonlocal`, same as writing it"** — fact: `nonlocal` is only needed to **reassign** a free variable. Reading it, or mutating an object it refers to (`state["count"] += 1` on a dict), needs no declaration at all.
+- **"`UnboundLocalError` means the variable was never given a value anywhere"** — fact: it means Python decided the name is local to *this* function (because it is assigned somewhere in the function body) and that particular execution reached a read before the local assignment ran — the exact failure mode of forgetting `global`/`nonlocal`.
+- **"Two closures created from the same factory function share state"** — fact: each call to the factory (`make_greeter("Hello")` vs `make_greeter("Hi")`) creates its own independent cell — closures from different calls never see each other's variables unless they explicitly share a mutable object.
+- **"The late-binding loop bug only affects `lambda`"** — fact: any nested function defined in a loop and capturing the loop variable has the same bug, `lambda` is just the shortest way to demonstrate it.
+
+## Reading AI-generated code
+
+- Does a nested function assign to a variable from an enclosing scope without `nonlocal` (or the module's global without `global`)? Either it is a bug (`UnboundLocalError` waiting to happen) or the author actually wanted a fresh local variable — check which.
+- Are functions or lambdas being created inside a loop, closing over the loop variable, and called *after* the loop finishes? Check for the late-binding gotcha — every one of them will see the loop variable's *final* value.
+- Is shared mutable state (a dict or list) closed over by several inner functions instead of `nonlocal`? Confirm that sharing is intentional and that nothing outside the closure can corrupt it unexpectedly.
+- Does a function read a name that is assigned later in the *same* function body, expecting to see a global or enclosing value first? Python decides "local" for the whole function ahead of time — this raises `UnboundLocalError`, not a fallback to the outer scope.
+- Is `global` used where the value could instead be threaded through function parameters and return values? Excess `global` usage makes functions hard to test and to reason about without reading the whole module.
+
+<SpotTheBug code={`def make_click_handlers(labels):
+    handlers = []
+    for i, label in enumerate(labels):
+        def handler():
+            print(f"Button {i}: {label} clicked")
+        handlers.append(handler)
+    return handlers
+
+
+buttons = make_click_handlers(["Save", "Cancel", "Delete"])
+for click in buttons:
+    click()`}>
+Every \`handler\` closure captures the **variables** \`i\` and \`label\`, not the values they held on that loop iteration. By the time any \`click()\` is actually called — after the \`for\` loop inside \`make_click_handlers\` has already finished — \`i\` and \`label\` both hold their *final* iteration's values. Verified on Python 3.14: all three calls print \`Button 2: Delete clicked\`, never \`Button 0\` or \`Button 1\`. The fix is to freeze the current value at definition time, either with default arguments (\`def handler(i=i, label=label): ...\`) or with \`functools.partial(handler_body, i, label)\` — both evaluate \`i\`/\`label\` immediately, once per loop iteration, instead of looking them up later through the shared closure cell.
+</SpotTheBug>
+
 <Callout title="Closures capture variables, not values">
 The late-binding gotcha: closures capture the **variable** itself, not the value it held when the closure was created.
 In a loop this bites hard:
@@ -127,7 +360,7 @@ funcs = [lambda i=i: i for i in range(3)]
 print([f() for f in funcs])   # [0, 1, 2]
 ```
 
-The default-argument trick `i=i` evaluates `i` at **definition time**, creating a fresh binding for each function.
+The default-argument trick `i=i` evaluates `i` at **definition time**, creating a fresh binding for each function. `functools.partial(lambda i: i, i)` inside the loop achieves the same freeze, more explicitly.
 </Callout>
 
 export const quizClosures = [
@@ -139,12 +372,31 @@ export const quizClosures = [
       "A class that overrides __call__",
       "A function decorated with @staticmethod"
     ],
-    answer: 1
+    answer: 1,
+    explain: "A closure is an inner function that references (\"closes over\") one or more variables from its enclosing function's scope, keeping them alive even after the enclosing function has returned."
+  },
+  {
+    q: "What does this print?\n\nx = \"global\"\n\ndef outer():\n    x = \"enclosing\"\n    def inner():\n        print(x)\n    inner()\n\nouter()",
+    options: ["global", "enclosing", "UnboundLocalError", "NameError"],
+    answer: 1,
+    explain: "LEGB lookup: inner has no local x, so Python checks the Enclosing scope next and finds x = \"enclosing\" in outer — it never reaches the global x."
   },
   {
     q: "What keyword must you use to reassign a free variable from an enclosing scope inside a nested function?",
     options: ["closure", "outer", "nonlocal", "free"],
-    answer: 2
+    answer: 2,
+    explain: "nonlocal tells Python to reuse and reassign the name from the nearest enclosing function scope, instead of creating a new local variable."
+  },
+  {
+    q: "What does this print?\n\ncounter = 0\n\ndef bump():\n    counter += 1\n    return counter\n\ntry:\n    bump()\nexcept UnboundLocalError:\n    print(\"caught it\")",
+    options: [
+      "1",
+      "caught it",
+      "0",
+      "NameError"
+    ],
+    answer: 1,
+    explain: "counter += 1 is an assignment to counter inside bump, so Python treats counter as local to the entire function body. Reading it on the right-hand side before any local assignment has run raises UnboundLocalError — global counter would fix this by telling Python to use the module-level name instead."
   },
   {
     q: "Why does `[lambda: i for i in range(3)]` produce `[2, 2, 2]` when called?",
@@ -154,7 +406,19 @@ export const quizClosures = [
       "Python evaluates lambda bodies at definition time",
       "range(3) only produces [2, 2, 2]"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Every lambda in the list closes over the same variable i (the same cell), not a snapshot of its value. By the time any lambda is called, the loop has finished and i holds its final value, 2 — so every call sees 2."
+  },
+  {
+    q: "What does this print?\n\ndef make_counter():\n    state = {\"n\": 0}\n    def bump():\n        state[\"n\"] += 1\n        return state[\"n\"]\n    return bump, state\n\nbump, state = make_counter()\nbump()\nbump()\nprint(state[\"n\"])",
+    options: [
+      "0",
+      "1",
+      "2",
+      "UnboundLocalError — state is never declared nonlocal"
+    ],
+    answer: 2,
+    explain: "state[\"n\"] += 1 mutates the dict that state refers to — it does not reassign the name state itself, so no nonlocal declaration is needed. Both bump() calls mutate the same shared dict, leaving state[\"n\"] at 2."
   }
 ];
 
