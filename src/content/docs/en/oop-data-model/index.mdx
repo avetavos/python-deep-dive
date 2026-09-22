@@ -1,6 +1,6 @@
 ---
 title: 'OOP & the Data Model'
-description: 'An overview of Python object-oriented programming and the special-method protocol that powers built-in syntax.'
+description: 'An overview of Python object-oriented programming, the instance/class/type chain, and the special-method protocol that powers built-in syntax.'
 sidebar:
   order: 1
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Everything in Python is an object
 
@@ -45,14 +47,25 @@ class Point:
 - `__init__` is the **initialiser** — it runs right after the object is created and sets up instance attributes.
 - `__repr__` gives the object a developer-friendly string representation.
 
+## Classes are objects too: instance → class → type
+
+The chain doesn't stop at "an object has a class". A class is itself an object, and it has a type too — `type(Point)` is `<class 'type'>`. `type` is the built-in **metaclass**: the type of every ordinary class, including itself (`type(type)` is `type` — the chain terminates there).
+
+<Mermaid code={`flowchart LR
+  p1["p1 (a Point instance)"] -->|"type(p1)"| Point["Point (the class)"]
+  Point -->|"type(Point)"| Type["type (the metaclass)"]
+  Type -->|"type(type)"| Type`} title="Every object's type chain ends at type, which is its own type" />
+
+This is not a special case for one built-in name — it's how every class in Python is built, including the ones you write. `Point.__mro__` is `(Point, object)`: even a class with no explicit base ultimately inherits from `object`, the root of every class hierarchy. Later lessons in this module use this chain constantly: `isinstance(x, C)` walks it, `super()` walks the MRO it produces for multiple bases, and a metaclass (an advanced, rarely-needed tool) is simply a class whose instances are themselves classes — a `type` subclass, one level up from where most code ever needs to go.
+
 ## What this module covers
 
 | Lesson | Topic |
 |---|---|
-| 1. Classes | `class`, `__init__`, instance vs class attributes, inheritance |
-| 2. Dunder methods | `__repr__`, `__eq__`, `__len__`, `__getitem__`, `__add__` |
-| 3. Properties | `@property`, computed attributes, `@classmethod`, `@staticmethod` |
-| 4. Dataclasses | `@dataclass`, defaults, `field`, `frozen=True` |
+| 1. Classes | `class`, `__init__` vs `__new__`, shared mutable class attributes, MRO/diamond inheritance, `isinstance` vs `type()`, duck typing vs `ABC`/`Protocol` |
+| 2. Dunder methods | `__repr__`/`__str__`, `__eq__`/`__hash__`, `NotImplemented`, `__iter__`/`__next__`, `__call__`, `__getattr__`/`__getattribute__` |
+| 3. Properties | `@property` as a descriptor, writing your own descriptor, `cached_property`, `@classmethod` returning `Self` |
+| 4. Dataclasses | `@dataclass`, `field`, `frozen=True`, `slots=True`, `order=True`, `kw_only`, dataclass vs `NamedTuple`/`TypedDict`/pydantic |
 
 ## Runnable demo
 
@@ -68,12 +81,36 @@ class Point:
     def __add__(self, other: "Point") -> "Point":
         return Point(self.x + other.x, self.y + other.y)
 
+
 p1 = Point(1, 2)
 p2 = Point(3, 4)
 print(p1)
 print(p1 + p2)
 print(type(p1))
 print(isinstance(p1, Point))
+print(type(Point))       # the class itself is an instance of type
+print(type(type(p1)))    # same thing, spelled through the instance
+print(type(type))        # type is its own metaclass -- the chain stops here
+print(Point.__mro__)
+
+
+class Base:
+    def __init__(self) -> None:
+        self.ready = True
+        print("Base.__init__ ran")
+
+
+class Broken(Base):
+    def __init__(self, name: str) -> None:
+        self.name = name  # forgot super().__init__() -- Base.__init__ never runs
+
+
+b = Broken("widget")
+print(b.name)
+try:
+    print(b.ready)
+except AttributeError as e:
+    print(f"AttributeError: {e}")
 `.trim();
 
 <Playground code={oopIndexCode} />
@@ -84,6 +121,57 @@ Python looks up `__add__` on the left operand and calls it for you.
 Every operator, built-in function, and language construct has a corresponding dunder method your class can implement.
 </Callout>
 
+## Mental Model
+
+<Mermaid code={`flowchart TD
+  Call["Point(1, 2)"] --> New["type.__call__ runs Point.__new__(Point) -- creates a bare instance"]
+  New --> Init["Point.__init__(instance, 1, 2) -- fills in the attributes"]
+  Init --> Ready["fully-constructed p1"]`} title="Constructing an instance: __new__ creates it, __init__ fills it in" />
+
+Every mechanism this module covers — attribute lookup, MRO, descriptors, dataclass generation — is a variation on one idea: a class is a namespace of names, an instance is a thinner namespace layered on top of it, and Python always has a defined, inspectable order for resolving a name against both. `Point(1, 2)` isn't magic: `type.__call__` runs `Point.__new__` to produce a bare object, then `Point.__init__` to fill it in — the same two-step split the Classes lesson uses to explain singletons and immutable-type subclasses. Keep asking "what object, what type, what order" while reading any class-heavy code, and the rest of the Data Model stops feeling like a list of unrelated dunder methods.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Everything is an object | One uniform mental model for ints, functions, classes, and modules alike | "Object" stops meaning "instance of a class I wrote" — it includes things that feel like syntax |
+| The Data Model (dunder methods) | Your classes integrate with `+`, `len()`, `for`, `with`, and every other built-in | Every dunder you implement is a contract you must honor correctly, or built-in syntax misbehaves in confusing ways |
+| Deep, uniform object model (instance → class → type) | Consistent rules explain classmethods, metaclasses, and `isinstance` alike | The metaclass layer is real complexity that's easy to ignore until something (an ORM, a framework) uses it on you |
+
+## Common Misconceptions
+
+- **Only things you create with `class` are "objects".** Integers, strings, functions, modules, and classes themselves are all objects — `type(42)`, `type(print)`, and `type(int)` all return a real class.
+- **A class is fundamentally different from the objects it creates.** A class is an object too — an instance of `type` — which is why `type(Point)` is a meaningful, well-defined question with a real answer.
+- **The dunder-method system is a fixed list you either use or don't.** It's an open protocol — any class can opt in to any subset of it, and Python only calls the methods that are actually needed for the syntax being used.
+- **`isinstance`, `super()`, and dataclass generation are unrelated features you memorize separately.** They're all consequences of the same object model: `isinstance` walks the class hierarchy, `super()` walks the MRO, and `@dataclass` just writes ordinary methods onto the class using the same rules any hand-written method follows.
+
+## Reading AI-generated code
+
+Before trusting a generated class hierarchy at a glance, check for:
+
+- Does a subclass's `__init__` call `super().__init__(...)`? Skipping it is one of the most common generated-code bugs — attributes the parent sets up (including ones other methods rely on) simply never exist on the subclass, and the failure surfaces later as an `AttributeError` far from the missing call.
+- Does code compare types with `type(x) == SomeClass` where an `isinstance` check (respecting subclasses) was clearly intended?
+- Is a mutable object assigned as a class-level attribute that a method then mutates in place? Every instance shares it.
+- Does a comparison dunder (`__eq__`) get defined without a matching `__hash__`, and does the class later get used in a set or as a dict key?
+- Is there a deep inheritance chain where a `has-a` relationship (composition) would be simpler and less fragile than "just one more subclass"?
+
+<SpotTheBug code={`class Connection:
+    def __init__(self, host: str) -> None:
+        self.host = host
+        self.is_open = True
+
+
+class LoggingConnection(Connection):
+    def __init__(self, host: str, log_prefix: str) -> None:
+        self.log_prefix = log_prefix  # forgot super().__init__(host)
+
+
+conn = LoggingConnection("db.example.com", "[DB]")
+print(conn.log_prefix)
+print(conn.is_open)`} lang="python">
+`LoggingConnection.__init__` never calls `super().__init__(host)`, so `Connection.__init__` never runs — `self.host` and `self.is_open` are never set. `conn.log_prefix` prints fine, but `conn.is_open` raises `AttributeError: 'LoggingConnection' object has no attribute 'is_open'`, verified on 3.14. This is the single most common multiple-lesson bug in this module: it looks identical to the cooperative-`super()` chain from the Classes lesson, except the call is missing entirely, so the chain never starts. Fix it by adding `super().__init__(host)` as the first line of `LoggingConnection.__init__`.
+</SpotTheBug>
+
 export const quizOopIndex = [
   {
     q: "Which dunder method runs when you write `obj = MyClass(1, 2)`?",
@@ -93,7 +181,8 @@ export const quizOopIndex = [
       "__create__",
       "__call__"
     ],
-    answer: 1
+    answer: 1,
+    explain: "__new__ actually creates the instance first (usually invisibly, via the default implementation), then __init__ runs on the already-created instance to set up its attributes. __create__ doesn't exist; __call__ is what makes an object callable like MyClass(...) at all, but it's type.__call__ orchestrating __new__ and __init__ underneath."
   },
   {
     q: "What does Python call internally when you write `len(my_list)`?",
@@ -103,7 +192,8 @@ export const quizOopIndex = [
       "len.__call__(my_list)",
       "my_list.size()"
     ],
-    answer: 1
+    answer: 1,
+    explain: "len() is a thin wrapper that calls __len__ on its argument -- this is the Data Model in action: built-in functions dispatch to dunder methods rather than containing type-specific logic themselves."
   },
   {
     q: "What is the term for the system of dunder methods that integrates classes with Python syntax?",
@@ -113,7 +203,8 @@ export const quizOopIndex = [
       "The Python Data Model",
       "The operator registry"
     ],
-    answer: 2
+    answer: 2,
+    explain: "The Python Data Model is the official name for this protocol -- it's documented as its own chapter in the Python reference and defines every dunder method's contract."
   },
   {
     q: "Which statement about Python objects is true?",
@@ -123,7 +214,41 @@ export const quizOopIndex = [
       "Functions are not objects",
       "Objects only exist at runtime after explicit allocation"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Integers, strings, functions, and classes are all objects in Python -- type(42), type(print), and type(int) all return real classes, confirming there's no special non-object category."
+  },
+  {
+    q: "```python\nclass Point:\n    pass\n\nprint(type(Point))\nprint(type(type(Point)))\n```\nWhat does this print?",
+    options: [
+      "<class 'Point'> then <class 'Point'>",
+      "<class 'type'> then <class 'type'>",
+      "<class 'object'> then <class 'type'>",
+      "TypeError -- classes don't have a type"
+    ],
+    answer: 1,
+    explain: "Point is itself an object whose type is the metaclass type. type is its own type too (type(type) is type), so both lines print <class 'type'>."
+  },
+  {
+    q: "```python\nclass Base:\n    def __init__(self):\n        self.ready = True\n\nclass Broken(Base):\n    def __init__(self, name):\n        self.name = name\n\nb = Broken(\"x\")\nprint(b.ready)\n```\nWhat happens on the last line?",
+    options: [
+      "Prints True",
+      "Prints None",
+      "AttributeError: 'Broken' object has no attribute 'ready'",
+      "TypeError: Base.__init__() was never called"
+    ],
+    answer: 2,
+    explain: "Broken.__init__ never calls super().__init__(), so Base.__init__ (which sets self.ready) never runs. b.ready doesn't exist -- verified: AttributeError: 'Broken' object has no attribute 'ready'."
+  },
+  {
+    q: "What does `Point.__mro__` return for a class defined as `class Point: pass`, with no explicit base?",
+    options: [
+      "Just (Point,) -- a class with no base has no MRO chain",
+      "(Point, object) -- every class ultimately inherits from object",
+      "An empty tuple",
+      "(object, Point) -- object always comes first"
+    ],
+    answer: 1,
+    explain: "Every class implicitly inherits from object even without writing it, and __mro__ always lists the class itself first, ending at object -- (Point, object) here."
   }
 ];
 

@@ -1,6 +1,6 @@
 ---
-title: Lists และ Tuples
-description: 'list ที่เปลี่ยนแปลงได้พร้อม sort และ slice เทียบกับ tuple ที่เปลี่ยนแปลงไม่ได้พร้อม unpacking ใน Python 3.14'
+title: Lists and Tuples
+description: 'Aliasing กับการ copy, sort() เทียบ sorted(), list ที่เปลี่ยนแปลงได้เทียบ tuple ที่เปลี่ยนแปลงไม่ได้, NamedTuple, และ deque ใน Python 3.14'
 sidebar:
   order: 2
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Lists — ลำดับที่เปลี่ยนแปลงได้
 
@@ -35,9 +37,9 @@ print(fruits)                # ['apple', 'avocado', 'cherry', 'date']
 | `index(x)` | คืน index ของรายการแรกที่ตรงกับ `x` |
 | `count(x)` | นับจำนวนรายการที่ตรงกับ `x` |
 
-### การเรียงลำดับ
+### การเรียงลำดับ: ใน place เทียบกับ list ใหม่ และความ stable
 
-`list.sort()` เรียงลำดับใน place และคืนค่า `None`
+`list.sort()` เรียงลำดับ **ใน place และคืนค่า `None`**
 ส่ง `key` function เพื่อเรียงตามเกณฑ์ที่กำหนดเอง
 
 ```python
@@ -50,7 +52,98 @@ words.sort(key=len)
 print(words)    # ['apple', 'banana', 'cherry']
 ```
 
-ใช้ `sorted(iterable)` แทน `.sort()` เมื่อต้องการ list ใหม่โดยไม่แก้ไขต้นฉบับ
+ใช้ `sorted(iterable)` แทน `.sort()` เมื่อต้องการ list ใหม่โดยไม่แก้ไขต้นฉบับ — `sorted()` คืนค่า list เสมอ ในขณะที่ `.sort()` ไม่เคยคืนค่าอะไรเลย การเอาผลลัพธ์ต่อจาก `.sort()` ไปใช้ (`x = lst.sort()` หรือ `lst.sort()[:3]`) คือ bug จริง เพราะ `x` หรือเป้าหมายของการ slice จะเป็น `None`
+
+ทั้ง `.sort()` และ `sorted()` เป็น **stable**: element ที่เท่ากันตาม `key` จะคงลำดับเดิมไว้ (relative order) นี่สำคัญมากสำหรับการเรียงหลาย key — เรียงตาม key ที่สำคัญน้อยกว่าก่อน แล้วค่อยเรียงตาม key ที่สำคัญที่สุดทับอีกที:
+
+```python
+people = [('carol', 30), ('alice', 30), ('dave', 25), ('bob', 25)]
+people.sort(key=lambda p: p[1])
+print(people)  # [('dave', 25), ('bob', 25), ('carol', 30), ('alice', 30)]
+```
+
+ความ stable รับประกันแค่ว่าลำดับ *เดิม* จะอยู่รอดภายในกลุ่มอายุเดียวกัน — มันไม่ได้เรียงชื่อตามตัวอักษรให้ สำหรับการเรียงหลาย key อย่างแท้จริง ให้รวมทุก key ไว้ใน tuple เดียว:
+
+```python
+people.sort(key=lambda p: (p[1], p[0]))
+print(people)  # [('bob', 25), ('dave', 25), ('alice', 30), ('carol', 30)]
+```
+
+## Aliasing: assignment ไม่เคย copy
+
+`b = a` **ไม่ได้** สร้าง list ตัวที่สอง — มันแค่ผูกชื่อที่สองเข้ากับ object *ตัวเดิม* การแก้ไขผ่านชื่อใดชื่อหนึ่งจะเห็นผลผ่านทั้งสองชื่อ:
+
+```python
+a = [1, 2, 3]
+b = a
+b.append(4)
+print(a)  # [1, 2, 3, 4] — a changed too, even though only b was touched
+```
+
+`a[:]` (หรือ `list(a)` หรือ `a.copy()`) สร้าง **shallow copy**: list ชั้นนอกใหม่ แต่ทุก element ยังเป็น object *ตัวเดิม* เหมือนก่อนหน้า ถ้า element เป็นสิ่งที่เปลี่ยนแปลงได้ มันก็ยังถูกแชร์อยู่ดี:
+
+```python
+a = [1, [2, 3]]
+c = a[:]
+c[1].append(9)
+print(a)  # [1, [2, 3, 9]] — the inner list is shared, so a saw the mutation too
+```
+
+มีแค่ `copy.deepcopy()` เท่านั้นที่ copy โครงสร้างที่เปลี่ยนแปลงได้ซ้อนกันแบบ recursive ทำให้ไม่มีอะไรถูกแชร์เลย:
+
+```python
+import copy
+a = [1, [2, 3]]
+d = copy.deepcopy(a)
+d[1].append(100)
+print(a)  # [1, [2, 3]] — untouched; d's inner list is an independent object
+```
+
+### กับดัก `[[0] * n] * m`
+
+`[[0] * 3] * 3` คือการคูณ *list object* ไม่ใช่คูณค่าข้างใน — ทุกแถวของ grid ที่ได้คือ inner list ตัวเดียวกัน ที่ถูก alias ไว้สามครั้ง:
+
+```python
+grid = [[0] * 3] * 3
+grid[0][0] = 1
+print(grid)  # [[1, 0, 0], [1, 0, 0], [1, 0, 0]] — every row "changed"
+```
+
+วิธีแก้คือใช้ comprehension ซึ่งจะ evaluate `[0] * 3` ใหม่ทุกรอบ:
+
+```python
+grid = [[0] * 3 for _ in range(3)]
+grid[0][0] = 1
+print(grid)  # [[1, 0, 0], [0, 0, 0], [0, 0, 0]]
+```
+
+## การเปลี่ยนแปลงใน place เทียบกับการ rebind: `+=` บน list เทียบ tuple
+
+`+=` ดูเหมือน operator เดียว แต่ทำงานต่างกันไปตาม type ทางซ้ายมือ บน list `+=` เรียก `__iadd__` ซึ่งขยาย list **ใน place** — ทุก alias เห็นการเปลี่ยนแปลง บน tuple ไม่มี `__iadd__` ใน place ให้ใช้ Python จึงถอยไปใช้ `t = t + (...)` ซึ่งสร้าง tuple ใหม่ทั้งหมดและ **rebind ชื่อ** — alias ยังชี้ไปที่ tuple เดิม:
+
+```python
+la = [1, 2]
+lb = la
+la += [3]
+print(la, lb)  # [1, 2, 3] [1, 2, 3] — same object, both names see it
+
+ta = (1, 2)
+tb = ta
+ta += (3,)
+print(ta, tb)  # (1, 2, 3) (1, 2) — ta now points at a new tuple; tb is unaffected
+```
+
+## การทดสอบ membership: `in` บน list เทียบ set
+
+`x in some_list` ตรวจ element ทีละตัว — `O(n)` ตามขนาดของ list ส่วน `x in some_set` แฮช `x` แล้วมองหา bucket — `O(1)` โดยเฉลี่ย ไม่ว่า set จะใหญ่แค่ไหน ทั้งสองแบบได้คำตอบ boolean เหมือนกัน ต่างกันแค่ต้นทุน และต้นทุนนี้จะเห็นชัดก็ต่อเมื่อ collection ใหญ่ขึ้น:
+
+```python
+names_list = ['alice', 'bob', 'carol']
+names_set = {'alice', 'bob', 'carol'}
+print('bob' in names_list, 'bob' in names_set)  # True True — same answer, different cost
+```
+
+ถ้า function ทำ `in` ซ้ำ ๆ กับ list ที่อาจโตขึ้นมาก การแปลงมันเป็น `set` (หรือ `frozenset` ถ้าต้องไม่เปลี่ยนแปลง) คือการแก้ performance ด้วยโค้ดบรรทัดเดียว
 
 ## Tuples — ลำดับที่เปลี่ยนแปลงไม่ได้
 
@@ -61,6 +154,31 @@ print(words)    # ['apple', 'banana', 'cherry']
 rgb = (255, 128, 0)   # an orange colour
 point = (3.0, 4.0)    # a 2-D coordinate
 row = (1, 'Alice', 42)  # a database row
+```
+
+"เปลี่ยนแปลงไม่ได้" หมายความแค่ว่า slot ของ tuple เองจะถูก reassign ไม่ได้ — มันไม่ได้บอกอะไรเลยว่า *element* ข้างในจะเปลี่ยนแปลงได้หรือไม่:
+
+```python
+t = (1, [2, 3])
+t[0] = 99          # TypeError: 'tuple' object does not support item assignment
+```
+
+```python
+t[1].append(4)     # allowed — the list inside the tuple can still change
+print(t)            # (1, [2, 3, 4])
+```
+
+element ที่เปลี่ยนแปลงได้นี้ยังส่งผลต่อการ hash ด้วย: tuple จะ hashable — และใช้เป็น dict key หรือ set member ได้ — ก็ต่อเมื่อ *ทุก* element ข้างในเป็น hashable:
+
+```python
+d = {t: 'value'}   # TypeError: cannot use 'tuple' as a dict key (unhashable type: 'list')
+```
+
+tuple ที่มีแต่ element hashable ใช้เป็น key ได้ปกติ:
+
+```python
+point = (1, 2)
+by_point = {point: 'ok'}
 ```
 
 ### Tuple unpacking
@@ -78,7 +196,7 @@ print(first)             # 1
 print(rest)              # [2, 3, 4, 5]
 ```
 
-### การเข้าถึง field ของ tuple ด้วย index
+### การเข้าถึง field ของ tuple ด้วย index — หรือด้วยชื่อ
 
 โดยไม่มีชื่อ field ของ tuple จะถูกเข้าถึงด้วย integer index
 กำหนด constant เพื่อให้อ่านง่าย:
@@ -94,7 +212,47 @@ print(RGB[GREEN])  # 128
 print(RGB[BLUE])   # 0
 ```
 
-สำหรับแนวทางที่สะดวกกว่า ใช้ `collections.namedtuple` หรือ `typing.NamedTuple`
+`typing.NamedTuple` ให้ tuple แบบเดียวกันทุกอย่าง (index access, unpacking, equality, hashability) บวกกับการเข้าถึง attribute แบบมีชื่อ ในโค้ดประมาณสามบรรทัด ส่วน `@dataclass` หน้าตาคล้ายกันแต่เป็น object คนละแบบ — เปลี่ยนแปลงได้โดย default และใช้เป็น dict key ไม่ได้เว้นแต่จะตั้งค่าเอง:
+
+```python
+from typing import NamedTuple
+from dataclasses import dataclass
+
+class PointNT(NamedTuple):
+    x: int
+    y: int
+
+@dataclass
+class PointDC:
+    x: int
+    y: int
+```
+
+```python
+pnt = PointNT(1, 2)
+pnt.x = 99  # AttributeError: can't set attribute — still a tuple, still immutable
+```
+
+```python
+pdc = PointDC(1, 2)
+pdc.x = 99  # allowed — a dataclass instance is a plain, mutable object
+```
+
+ใช้ `NamedTuple` เมื่อค่าคือ record เล็ก ๆ คงที่ และ hashable (ปลอดภัยพอจะเป็น dict key ปลอดภัยพอจะส่งต่อโดยไม่ต้องกังวลว่าใครจะมาแก้) ใช้ `@dataclass` เมื่อต้องการ object ที่เปลี่ยนแปลงได้พร้อมพฤติกรรมแบบ class (method, inheritance, `field(default_factory=...)`)
+
+## นอกเหนือจาก list: `deque` สำหรับทั้งสองปลาย
+
+`insert(0, x)` และ `pop(0)` ของ `list` คือ `O(n)` — ทุก element ที่เหลือต้องขยับ `collections.deque` คือ double-ended queue ที่ append/pop จากทั้งสองปลายเป็น `O(1)` แลกมากับการเข้าถึงแบบสุ่มด้วย index เป็น `O(n)` (slice ไม่ได้):
+
+```python
+from collections import deque
+dq = deque([1, 2, 3])
+dq.appendleft(0)
+dq.append(4)
+print(dq)  # deque([0, 1, 2, 3, 4])
+```
+
+ใช้ `deque` สำหรับ queue, sliding window, และ undo/history buffer เก็บ `list` ไว้เมื่องานหลักคือ index, slice, หรือ append ที่ท้ายเท่านั้น
 
 ## ตัวอย่างรันได้
 
@@ -132,48 +290,258 @@ print('red:', RGB[0], 'green:', RGB[1], 'blue:', RGB[2])
 
 <Playground code={listsTuplesCode} />
 
-<Callout title="Tuple เปลี่ยนแปลงไม่ได้ — ใช้สำหรับ record ที่คงที่">
-เมื่อสร้าง tuple แล้วจะไม่สามารถแก้ไขได้
-การลอง `my_tuple[0] = 99` จะเกิด `TypeError: 'tuple' object does not support item assignment`
-ความ immutable นี้ทำให้ tuple ใช้เป็น dictionary key และใส่ใน set ได้ เนื่องจาก hashable ตราบใดที่ทุก element hashable ได้
-ใช้ tuple เมื่อข้อมูลแสดง record ที่คงที่และการเปลี่ยนแปลงถือเป็น bug
+playground ด้านล่างคือที่ที่หัวข้อความลึกด้านบนรันจริง — aliasing เทียบ shallow copy เทียบ deep copy, กับดัก `[[0]*3]*3`, `.sort()` เทียบ `sorted()` พร้อมความ stable, `+=` บน list เทียบ tuple, element ที่เปลี่ยนแปลงได้ของ tuple ที่ทำให้ hash ไม่ได้, `NamedTuple` เทียบ `dataclass`, และ `deque`:
+
+export const listsTuplesAliasingCode = `
+import copy
+
+# --- aliasing vs shallow copy vs deep copy ---
+a = [1, [2, 3]]
+b = a                    # alias: same object
+c = a[:]                 # shallow copy: new outer list, same inner list
+d = copy.deepcopy(a)     # deep copy: fully independent
+
+b.append(4)
+c[1].append(99)
+d[1].append(100)
+
+print('a:', a)
+print('b:', b)
+print('c:', c)
+print('d:', d)
+
+# --- [[0]*3]*3 shares rows ---
+grid = [[0] * 3] * 3
+grid[0][0] = 1
+print('broken grid:', grid)
+
+fixed = [[0] * 3 for _ in range(3)]
+fixed[0][0] = 1
+print('fixed grid:', fixed)
+
+# --- list.sort() returns None; sorted() returns a new list ---
+nums = [3, 1, 2]
+result = nums.sort()
+print('sort() return value:', result)
+print('nums after sort():', nums)
+
+nums2 = [3, 1, 2]
+nums2_sorted = sorted(nums2)
+print('sorted() return value:', nums2_sorted)
+print('nums2 unchanged:', nums2)
+
+# --- stability + multi-key sort ---
+people = [('carol', 30), ('alice', 30), ('dave', 25), ('bob', 25)]
+people.sort(key=lambda p: p[1])
+print('stable by age:', people)
+
+people.sort(key=lambda p: (p[1], p[0]))
+print('multi-key age,name:', people)
+
+# --- membership: list O(n) vs set O(1), same result different cost ---
+names_list = ['alice', 'bob', 'carol']
+names_set = {'alice', 'bob', 'carol'}
+print('in list:', 'bob' in names_list, '  in set:', 'bob' in names_set)
+
+# --- += mutates a list in place (shared); += on a tuple rebinds (not shared) ---
+la = [1, 2]
+lb = la
+la += [3]
+print('list +=:', la, lb)
+
+ta = (1, 2)
+tb = ta
+ta += (3,)
+print('tuple +=:', ta, tb)
+
+# --- tuple is immutable but its mutable elements are not ---
+t = (1, [2, 3])
+try:
+    t[0] = 99
+except TypeError as e:
+    print(type(e).__name__ + ':', e)
+t[1].append(4)
+print('tuple with mutated inner list:', t)
+
+# --- that same tuple can't be a dict key because it contains a list ---
+try:
+    d2 = {t: 'value'}
+except TypeError as e:
+    print(type(e).__name__ + ':', e)
+
+frozen_point = (1, 2)
+d3 = {frozen_point: 'ok'}
+print('hashable tuple as key:', d3)
+
+# --- NamedTuple vs dataclass, three lines each ---
+from typing import NamedTuple
+from dataclasses import dataclass
+
+class PointNT(NamedTuple):
+    x: int
+    y: int
+
+@dataclass
+class PointDC:
+    x: int
+    y: int
+
+pnt = PointNT(1, 2)
+pdc = PointDC(1, 2)
+print('namedtuple:', pnt, pnt.x, pnt[0], pnt == PointNT(1, 2))
+print('dataclass:', pdc, pdc.x, pdc == PointDC(1, 2))
+try:
+    pnt.x = 99
+except AttributeError as e:
+    print(type(e).__name__ + ':', e)
+pdc.x = 99
+print('dataclass is mutable:', pdc)
+
+# --- deque: O(1) at both ends vs list's O(n) insert(0, ...) ---
+from collections import deque
+dq = deque([1, 2, 3])
+dq.appendleft(0)
+dq.append(4)
+print('deque:', dq)
+lst = [1, 2, 3]
+lst.insert(0, 0)
+print('list insert(0, ...):', lst)
+`.trim();
+
+<Playground code={listsTuplesAliasingCode} />
+
+## Mental Model
+
+export const listsTuplesMentalModel = `flowchart LR
+  subgraph Names
+    a["a"]
+    b["b = a"]
+    c["c = a[:]"]
+    d["d = deepcopy(a)"]
+  end
+  subgraph Objects["heap objects"]
+    OUTER1["list #1 [1, ref, 4]"]
+    OUTER2["list #2 (shallow copy) [1, ref]"]
+    INNER["inner list #3 [2, 3, 99]"]
+    OUTER3["list #4 (deep copy) [1, ref]"]
+    INNER2["inner list #5 [2, 3, 100]"]
+  end
+  a --> OUTER1
+  b --> OUTER1
+  c --> OUTER2
+  OUTER1 --> INNER
+  OUTER2 --> INNER
+  d --> OUTER3
+  OUTER3 --> INNER2`;
+
+<Mermaid code={listsTuplesMentalModel} title="a และ b แชร์ list object เดียวกัน; c คือ list ชั้นนอกใหม่ที่ยังแชร์ inner list อยู่; มีแค่ d (deepcopy) เท่านั้นที่เป็นอิสระเต็มที่" />
+
+## Trade-offs
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| `list` (เปลี่ยนแปลงได้) | append/sort/แก้ไขใน place โดยไม่ต้อง copy | ทุก alias แชร์การเปลี่ยนแปลง — แก้สิ่งที่ไม่ได้ตั้งใจแก้ได้ง่าย |
+| `tuple` (เปลี่ยนแปลงไม่ได้) | hash ได้ แชร์ได้ปลอดภัย และใช้เป็น dict key หรือ set member ได้ | ขนาดและลำดับคงที่; "เปลี่ยนแปลงไม่ได้" ปกป้องแค่ slot ของ tuple เอง ไม่ปกป้อง element ข้างในที่เปลี่ยนแปลงได้ |
+| `list.sort()` (ใน place) | ไม่ต้อง allocate list ใหม่ | คืนค่า `None` — เอาไปต่อ (`.sort()[:3]`) จะได้ `TypeError` |
+| `sorted()` (list ใหม่) | ต้นฉบับไม่ถูกแตะต้อง เอาไปต่อได้อย่างปลอดภัย | allocate list ใหม่เสมอ แม้จะแค่ดูผลชั่วคราว |
+| `deque` | append/pop ที่ทั้งสองปลายเป็น `O(1)` | เข้าถึงแบบสุ่มด้วย index เป็น `O(n)`, slice ไม่ได้ |
+
+## Common Misconceptions
+
+- **"`b = a` copy list"** — ความจริง: มันแค่ผูกชื่อที่สองเข้ากับ object เดิม การแก้ไขผ่าน `b` เปลี่ยนสิ่งที่ `a` เห็นด้วย
+- **"`a[:]` ทำ copy ที่เป็นอิสระเต็มที่"** — ความจริง: `a[:]` คือ shallow copy — element ที่เปลี่ยนแปลงได้ที่ซ้อนอยู่ (เช่น inner list) ยังถูกแชร์อยู่
+- **"`list.sort()` คืนค่า list ที่เรียงแล้ว"** — ความจริง: `.sort()` คืนค่า `None` เสมอ มีแค่ `sorted()` เท่านั้นที่คืนค่า list ใหม่
+- **"tuple ปลอดภัยเสมอที่จะใช้เป็น dict key"** — ความจริง: ปลอดภัยก็ต่อเมื่อทุก element ข้างในเป็น hashable — tuple ที่มี list อยู่ข้างในจะ raise `TypeError: unhashable type: 'list'`
+- **"`+=` ทำงานเหมือนกันบน list และ tuple"** — ความจริง: บน list มันแก้ไขใน place (alias เห็นด้วย); บน tuple มันสร้าง tuple ใหม่และ rebind ชื่อ (alias ไม่เห็นด้วย)
+
+## อ่านโค้ดที่ AI เขียน
+
+- function ที่รับ list มาแล้วแก้ไขใน place *และ* `return` มันด้วยหรือเปล่า? ตรวจทุกจุดที่เรียกใช้ว่าผู้เรียกคาดหวังให้ list ต้นฉบับไม่ถูกแตะต้องหรือไม่
+- โค้ดเอาผลลัพธ์ต่อจาก `.sort()` โดยตรงหรือเปล่า (`.sort()[:3]`, `x = lst.sort()`)? `.sort()` คืนค่า `None` เสมอ — บรรทัดนั้นคือ bug
+- grid แบบ 2 มิติถูกสร้างด้วย `[[default] * cols] * rows` หรือเปล่า? ทุกแถวคือ list object *ตัวเดียวกัน* — มองหารูปแบบ comprehension (`[[default] * cols for _ in range(rows)]`) แทน
+- `+=` ปรากฏบนสิ่งที่อาจเป็น tuple ในโค้ดที่สันนิษฐานว่า object ต้นฉบับถูกแก้ไขใน place หรือเปล่า? tuple จะ rebind แทนที่จะแก้ไขใน place
+- tuple ถูกใช้เป็น dict key หรือ set element โดยไม่ตรวจว่าทุก element ข้างในเป็น hashable หรือเปล่า?
+
+<SpotTheBug code={`def top_three(scores):
+    return scores.sort(reverse=True)[:3]
+
+
+print(top_three([42, 7, 99, 3, 56]))`}>
+`list.sort()` เรียงใน place และคืนค่า `None` เสมอ — มันไม่ใช่ `sorted()` ดังนั้น `scores.sort(reverse=True)` คืนค่า `None` และ `None[:3]` จะ raise `TypeError: 'NoneType' object is not subscriptable` ตรวจสอบแล้วบน Python 3.14: traceback จบด้วยข้อความนี้เป๊ะ ๆ วิธีแก้คือ `return sorted(scores, reverse=True)[:3]` (สร้าง list ใหม่แล้วค่อย slice) หรือแยกเป็นสอง statement: `scores.sort(reverse=True); return scores[:3]`
+</SpotTheBug>
+
+<Callout title="Tuple เปลี่ยนแปลงไม่ได้ — แต่แค่ในระดับบนสุด">
+slot ของ tuple เองไม่สามารถ reassign ได้เลย และ `my_tuple[0] = 99` จะ raise `TypeError: 'tuple' object does not support item assignment` เสมอ
+ความ immutable นี้ทำให้ tuple hashable — ปลอดภัยพอจะเป็น dictionary key หรือ set member — **ก็ต่อเมื่อ element ทุกตัวข้างในก็ hashable ด้วย** tuple ที่มี list อยู่ข้างในจะไม่ hashable เพราะ list ข้างในยังเปลี่ยนแปลงได้
+ใช้ tuple สำหรับ record คงที่ที่ประกอบด้วยข้อมูล immutable ล้วน ๆ ใช้ `NamedTuple` เมื่อต้องการ field ที่มีชื่อด้วย
 </Callout>
 
 export const quizListsTuples = [
     {
-        q: "Method ใดที่เพิ่ม element ไปที่ท้าย list?",
-        options: ["insert()", "extend()", "append()", "add()"],
-        answer: 2
+        q: "โค้ดนี้พิมพ์อะไร?\n\na = [1, 2, 3]\nb = a\nb.append(4)\nprint(a)",
+        options: [
+            "[1, 2, 3]",
+            "[1, 2, 3, 4]",
+            "raise TypeError",
+            "[4]"
+        ],
+        answer: 1,
+        explain: "b = a ไม่ได้ copy list — มันผูกชื่อที่สองเข้ากับ list object ตัวเดิม append() แก้ไข object ที่แชร์กันนั้นใน place ดังนั้นการเปลี่ยนแปลงจึงเห็นผ่านทั้ง a และ b"
     },
     {
-        q: "`list.sort()` คืนค่าอะไร?",
+        q: "โค้ดนี้พิมพ์อะไร?\n\na = [1, [2, 3]]\nc = a[:]\nc[1].append(9)\nprint(a)",
         options: [
-            "list ที่เรียงแล้วใหม่",
-            "None — เรียงลำดับ list ใน place",
-            "element แรก",
-            "ความยาวของ list"
+            "[1, [2, 3]]",
+            "[1, [2, 3, 9]]",
+            "raise TypeError — a[:] อ่านได้อย่างเดียว",
+            "[[2, 3, 9]]"
         ],
-        answer: 1
+        answer: 1,
+        explain: "a[:] คือ shallow copy: มันสร้าง list ชั้นนอกใหม่ แต่ทุก element ข้างในยังเป็น object เดิม inner list [2, 3] ถูกแชร์ระหว่าง a กับ c ดังนั้นการ append เข้า c[1] จึงเห็นผ่าน a ด้วย"
     },
     {
-        q: "ข้อใดเป็น tuple unpacking ที่ถูกต้อง?",
+        q: "`result = [3, 1, 2].sort()` ทำให้ `result` มีค่าเป็นอะไร?",
         options: [
-            "x, y = (1, 2, 3)",
-            "x, y, z = (1, 2, 3)",
-            "x = (1, 2, 3)[0, 1]",
-            "x, y, z = [1, 2]"
+            "[1, 2, 3]",
+            "[3, 1, 2]",
+            "None",
+            "จำนวน element ที่เรียง (3)"
         ],
-        answer: 1
+        answer: 2,
+        explain: "list.sort() เรียงใน place และคืนค่า None เสมอ ไม่ว่าจะเรียงอะไร ถ้าต้องการ list ที่เรียงแล้วเป็นค่า ให้ใช้ sorted([3, 1, 2]) แทน"
     },
     {
-        q: "ทำไม tuple ถึงใช้เป็น dictionary key ได้แต่ list ไม่ได้?",
+        q: "ทำไม `grid = [[0] * 3] * 3; grid[0][0] = 1` ถึงตั้งค่า element แรกของทุกแถว ไม่ใช่แค่แถว 0?",
         options: [
-            "Tuple วนซ้ำได้เร็วกว่า",
-            "Tuple เปลี่ยนแปลงไม่ได้จึง hashable",
-            "Tuple รองรับ attribute __hash__ โดยค่าเริ่มต้น",
-            "ทั้ง B และ C"
+            "เป็น bug ใน CPython list multiplication",
+            "[[0] * 3] * 3 สร้าง reference สามอันที่ชี้ไปที่ inner list object ตัวเดียวกันเป๊ะ",
+            "การ assign เข้า grid[0][0] broadcast ไปทุกแถวโดยปริยาย",
+            "เกิดเฉพาะกับค่า integer 0 เท่านั้น ค่าอื่นจะทำงานต่างออกไป"
         ],
-        answer: 3
+        answer: 1,
+        explain: "[[0] * 3] * 3 สร้าง inner list [0, 0, 0] ขึ้นมาหนึ่งตัวก่อน แล้วทำซ้ำ reference ไปที่ object ตัวเดียวกันนั้นสามครั้งเพื่อสร้าง list ชั้นนอก ทั้งสาม 'แถว' จึงเป็น alias ของ list เดียวกัน การแก้แถวใดแถวหนึ่งจึงแก้ทุกแถว วิธีแก้คือใช้ comprehension: [[0] * 3 for _ in range(3)] ซึ่งสร้าง inner list ใหม่ทุกรอบ"
+        },
+    {
+        q: "โค้ดนี้พิมพ์อะไร?\n\nt = (1, 2)\nu = t\nt += (3,)\nprint(u)",
+        options: [
+            "(1, 2)",
+            "(1, 2, 3)",
+            "raise TypeError — tuple ไม่รองรับ +=",
+            "(1, 2, 1, 2, 3)"
+        ],
+        answer: 0,
+        explain: "tuple ไม่มี __iadd__ ใน place ดังนั้น t += (3,) จึงถอยไปใช้ t = t + (3,) — สร้าง tuple ใหม่ทั้งหมด และมีแค่ชื่อ t เท่านั้นที่ถูก rebind ไปยังมัน u ยังชี้ไปที่ (1, 2) เดิม ซึ่งไม่เคยถูกแก้ไขเลย (tuple แก้ไขไม่ได้อยู่แล้ว)"
+    },
+    {
+        q: "function หนึ่งรับ list มา ต้องการคะแนนสูงสุด 3 อันดับ และต้องไม่แก้ list ของผู้เรียกใช้ วิธีเขียนแบบไหนถูกต้อง?",
+        options: [
+            "return scores.sort(reverse=True)[:3]",
+            "scores.sort(reverse=True); return scores[:3]",
+            "return sorted(scores, reverse=True)[:3]",
+            "return scores[:3].sort(reverse=True)"
+        ],
+        answer: 2,
+        explain: "sorted(scores, reverse=True) สร้างและคืนค่า list ใหม่ทั้งหมด โดยไม่แตะ scores ของผู้เรียกใช้ และ [:3] ก็ slice list ใหม่นั้นอย่างปลอดภัย ตัวเลือก A เอาผลลัพธ์ต่อจาก .sort() ที่คืนค่า None (ได้ TypeError) ตัวเลือก B แก้ list ต้นฉบับของผู้เรียกใช้ใน place ซึ่งขัดกับเงื่อนไข ตัวเลือก D slice ก่อน (โอเค) แต่แล้วเรียก .sort() บน slice นั้นและ return ค่า None ของมัน"
     }
 ];
 

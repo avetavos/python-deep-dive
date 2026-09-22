@@ -1,6 +1,6 @@
 ---
 title: Dataclasses
-description: '@dataclass สร้าง __init__, __repr__ และ __eq__ อัตโนมัติ — พร้อม defaults, field() และ frozen=True'
+description: '@dataclass สร้าง __init__, __repr__ และ __eq__ -- พร้อม field(), frozen=True, slots, order, kw_only และการเลือกระหว่าง dataclass/NamedTuple/TypedDict/pydantic'
 sidebar:
   order: 5
 ---
@@ -9,11 +9,13 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## ปัญหา boilerplate
 
-Class ที่เก็บข้อมูลมักต้องการ `__init__`, `__repr__` และ `__eq__` — ทั้งหมดเขียนด้วยมือด้วย logic เหมือนกัน: copy constructor arguments ลงใน `self.attr`, format attributes เป็น string, เปรียบเทียบ attribute ทีละตัว
-`@dataclass` สร้างทั้งหมดนี้จาก type annotations ระดับ class
+Class ที่เก็บ data มักต้องการ `__init__`, `__repr__` และ `__eq__` — ทั้งหมดเขียนด้วยมือด้วย logic ที่เหมือนกัน: copy constructor argument ไปใส่ `self.attr`, format attribute เป็น string, เทียบทีละ attribute
+`@dataclass` สร้างทั้งหมดนี้ให้จาก type annotation ระดับ class
 
 ```python
 from dataclasses import dataclass
@@ -26,13 +28,13 @@ class Point:
 
 Python สร้าง:
 
-- `__init__(self, x: float, y: float)` ที่กำหนด `self.x` และ `self.y`
+- `__init__(self, x: float, y: float)` ที่ตั้งค่า `self.x` และ `self.y`
 - `__repr__` ที่ return `"Point(x=1.0, y=2.0)"`
-- `__eq__` ที่เปรียบเทียบทุก field
+- `__eq__` ที่เทียบทุก field
 
-## Default values
+## ค่า default
 
-Scalar defaults ทำงานเหมือน keyword arguments:
+Scalar default ทำงานเหมือน keyword argument:
 
 ```python
 @dataclass
@@ -42,10 +44,19 @@ class Config:
     debug: bool = False
 ```
 
-## `field()` สำหรับ mutable defaults
+## `field(default_factory=list)` และ error ตัวจริงของ mutable default
 
-ไม่สามารถใช้ mutable object (list, dict) เป็น default โดยตรง — Python จะใช้ instance เดียวร่วมกันระหว่าง object ทั้งหมด
-ใช้ `field(default_factory=...)` แทน:
+คุณใช้ object mutable (list, dict) เป็น default ตรงๆ ไม่ได้ — Python จะแชร์ instance เดียวข้ามทุก object
+`@dataclass` ไม่ใช่แค่เตือนเรื่องนี้ มัน **ปฏิเสธการสร้าง class เลย**:
+
+```python
+@dataclass
+class BadInventory:
+    name: str
+    tags: list[str] = []  # mutable default -- dataclass refuses this at CLASS-DEFINITION time
+```
+
+แค่ define `BadInventory` ก็ raise `ValueError: mutable default <class 'list'> for field tags is not allowed: use default_factory` แล้ว — ก่อนที่คุณจะสร้าง instance ด้วยซ้ำ นี่เข้มงวดกว่า mutable default argument ของ function ธรรมดา (สอนในโมดูล Functions) ที่*ทำงาน*เงียบๆ จนกว่า shared state จะกัดคุณ — field ของ dataclass เปลี่ยน mistake แบบเดียวกันให้เป็น error ที่ดังทันที วิธีแก้คือ `field(default_factory=...)`:
 
 ```python
 from dataclasses import dataclass, field
@@ -53,22 +64,22 @@ from dataclasses import dataclass, field
 @dataclass
 class Inventory:
     name: str
-    tags: list = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     quantity: int = 0
 ```
 
 `field` ยังรับ:
 
-| Parameter | ผล |
+| Parameter | ผลลัพธ์ |
 |---|---|
-| `default_factory` | เรียกโดยไม่มี argument เพื่อสร้าง default ของแต่ละ instance |
-| `repr=False` | ยกเว้น field จาก `__repr__` |
-| `compare=False` | ยกเว้นจาก `__eq__` (และจาก ordering methods ด้วยถ้าตั้ง `order=True`) |
-| `init=False` | ยกเว้นจาก `__init__`; กำหนดด้วยตนเองใน `__post_init__` |
+| `default_factory` | ถูกเรียกโดยไม่มี argument เพื่อสร้าง default ของแต่ละ instance |
+| `repr=False` | ไม่รวม field นี้ใน `__repr__` |
+| `compare=False` | ไม่รวมใน `__eq__` (และ ordering method ถ้าคุณตั้ง `order=True` ด้วย) |
+| `init=False` | ไม่รวมใน `__init__`; ตั้งค่าเองใน `__post_init__` |
 
-## `frozen=True` — immutable records
+## `frozen=True` + `object.__setattr__` ใน `__post_init__`
 
-`frozen=True` ทำให้ dataclass ไม่สามารถแก้ไขได้: สร้าง `__setattr__` และ `__delattr__` ที่ raise `FrozenInstanceError` และยังสร้าง `__hash__` ทำให้ใช้ frozen instances เป็น dict keys หรือใน sets ได้
+`frozen=True` ทำให้ dataclass immutable: มันสร้าง `__setattr__` และ `__delattr__` ที่ raise `FrozenInstanceError` เมื่อพยายาม assign และยังสร้าง `__hash__` ให้ด้วย ทำให้ frozen instance ใช้เป็น dict key หรืออยู่ใน set ได้
 
 ```python
 @dataclass(frozen=True)
@@ -78,9 +89,100 @@ class Color:
     blue: int
 ```
 
-## เพิ่ม custom methods
+`red.red = 128` raise `FrozenInstanceError: cannot assign to field 'red'` ยืนยันแล้วบน 3.14 นั่นเป็นปัญหาทันทีที่คุณต้องการคำนวณ field ที่*ได้มา*(derived)ครั้งเดียวใน `__post_init__` — การ assign ธรรมดาตรงนั้นก็ถูกบล็อกเช่นกัน โดยตั้งใจ ทางออกคือ `object.__setattr__` ซึ่ง bypass `__setattr__` ของ dataclass เอง ใช้อย่างตั้งใจแค่ครั้งเดียวตอน construction:
 
-Dataclass ยังคงเป็น class ปกติ — เพิ่ม method ใดก็ได้ตามต้องการ:
+```python
+@dataclass(frozen=True, slots=True)
+class Color:
+    red: int
+    green: int
+    blue: int
+    hex: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        # frozen blocks self.hex = ...; bypass it deliberately, once, during construction
+        object.__setattr__(self, "hex", f"#{self.red:02x}{self.green:02x}{self.blue:02x}")
+```
+
+## `slots=True`
+
+การเพิ่ม `slots=True` (3.10+) สร้าง `__slots__` ให้ class ตัดการมี `__dict__` ต่อ instance ออกไป Instance ใช้หน่วยความจำน้อยลงและการเข้าถึง attribute เร็วขึ้นเล็กน้อย แต่คุณจะเพิ่ม attribute ที่ไม่ได้ประกาศเป็น field ไม่ได้อีกต่อไป และ multiple inheritance กับ class `__slots__` อื่นจะถูกจำกัดมากขึ้น `Color` ด้านบนรวม `frozen=True` กับ `slots=True` — คู่ที่พบบ่อยสำหรับ value object เล็กๆ ที่ใช้จำนวนมาก
+
+## `order=True` และ `kw_only`
+
+`order=True` สร้าง `__lt__`, `__le__`, `__gt__`, `__ge__` จากลำดับ field — ถ้าไม่มีมัน `<` และเพื่อนจะ raise `TypeError` บน dataclass instance สองตัว `kw_only=True` บังคับให้ทุก field ต้องส่งแบบ keyword ซึ่งมีประโยชน์เมื่อ dataclass มีหลาย field ที่ type เดียวกันซึ่งลำดับ positional สับสนง่าย:
+
+```python
+@dataclass(order=True, kw_only=True)
+class Version:
+    major: int
+    minor: int
+    patch: int = 0
+
+v1 = Version(major=1, minor=2)
+v2 = Version(major=1, minor=3)
+print(v1 < v2)   # True -- compares (major, minor, patch) tuples in field order
+```
+
+`Version(1, 2)` — เรียกแบบ positional — raise `TypeError: Version.__init__() takes 1 positional argument but 3 were given`; ทั้ง `uvx mypy --strict` และ `uvx pyright` ก็ปฏิเสธการเรียกนี้แบบ static เช่นกัน (`Too many positional arguments for "Version"` / `Expected 0 positional arguments`) — type checker จับการละเมิด `kw_only` ได้ก่อนที่คุณจะรันโค้ดด้วยซ้ำ
+
+## `asdict` deep-copy nested dataclass
+
+`dataclasses.asdict` แปลง dataclass (รวม nested dataclass) เป็น dict ธรรมดาแบบ recursive — และมัน **deep-copy** ไปด้วยระหว่างทาง ดังนั้นการแก้ผลลัพธ์จึงไม่กระทบ original เลย:
+
+```python
+snapshot = asdict(person)
+snapshot["address"]["city"] = "Paris"  # mutating the COPY
+print(person.address.city)             # original untouched -- asdict deep-copies nested dataclasses
+```
+
+นี่ตรงข้ามกับพฤติกรรม aliasing ที่การเข้าถึง attribute ธรรมดาให้คุณ — `person.address` return object `Address` *เดียวกัน* แต่ `asdict(person)["address"]` เป็น dict อิสระ
+
+## `eq=True` โดย default ทำให้ instance unhashable — `frozen`/`unsafe_hash` แก้ได้
+
+`@dataclass` สร้าง `__eq__` โดย default (`eq=True`) และ — เหมือน class ที่เขียนด้วยมือทุกประการ — การสร้าง `__eq__` ทำให้ `__hash__` เป็น `None` Dataclass ธรรมดาที่ไม่ frozen จึง unhashable:
+
+```python
+@dataclass
+class Plain:
+    x: int
+    y: int
+
+hash(Plain(1, 2))  # TypeError: unhashable type: 'Plain'
+```
+
+มีสองวิธีเปิดกลับ: `frozen=True` สร้าง `__hash__` ที่ถูกต้องจาก field (ปลอดภัย เพราะ frozen instance เปลี่ยนไม่ได้หลัง hash ถูกคำนวณ) หรือ `unsafe_hash=True` สร้างให้บน dataclass ที่ *mutable* — ที่ชื่อว่า "unsafe" เพราะไม่มีอะไรห้ามคุณแก้ field หลังจากเอา instance ไปเป็น dict key ซึ่งทำให้ hash table ภายในของ dict เสียหาย
+
+## ตารางเลือกระหว่าง dataclass, `NamedTuple`, `TypedDict`, pydantic
+
+ทั้งสี่อธิบาย "ถุงของ field ที่มีชื่อ" แต่แก้ปัญหาต่างกัน:
+
+| | `@dataclass` | `NamedTuple` | `TypedDict` | pydantic `BaseModel` |
+|---|---|---|---|---|
+| Object ตอน runtime | Class instance ธรรมดา | `tuple` subclass (index ได้, unpack ได้) | `dict` ธรรมดา — ไม่มี runtime type เลย | Class instance ธรรมดา |
+| Mutable | ได้ เว้นแต่ `frozen=True` | ไม่ได้ — tuple immutable | แล้วแต่ที่ `dict` อนุญาต | ได้ เว้นแต่ตั้งค่าให้ frozen |
+| Runtime validation | ไม่มี — annotation ไม่ถูกบังคับใช้ | ไม่มี | ไม่มี | มี — parse และ coerce ตอน construct |
+| เหมาะกับ | Value/record class ทั่วไปที่มี method | Data รูปทรงตายตัวที่ต้องทำตัวเหมือน tuple ด้วย | *รูปทรง* ของ dict ที่คุณมีอยู่แล้ว (เช่น JSON ที่ parse มา) | Input ที่ไม่น่าเชื่อถือ (API request, config file) ที่ต้อง validate จริง |
+
+ใช้ `@dataclass` เป็นตัวเลือกหลัก; `NamedTuple` เมื่อความเข้ากันได้กับ tuple (unpack, index) สำคัญ; `TypedDict` เมื่อคุณกำลังอธิบาย dict ที่คุณไม่ได้ควบคุมการสร้าง; pydantic เมื่อ data มาจาก*ภายนอก*โปรแกรมและต้อง validate จริงๆ ไม่ใช่แค่ annotate
+
+## `__match_args__` และ pattern matching
+
+`@dataclass` สร้าง `__match_args__` จากลำดับ field ทำให้ instance ใช้กับ `match`/`case` แบบ positional pattern ได้เลย:
+
+```python
+match p:
+    case Point2(x=0, y=0):
+        return "origin"
+    case Point2(x=x, y=y):
+        return f"({x}, {y})"
+```
+
+`Point2.__match_args__` คือ `('x', 'y')` — นั่นคือสิ่งที่ทำให้ `case Point2(x, y):` (แบบ positional) ทำงานได้เลย นอกเหนือจากรูปแบบ keyword ที่แสดงข้างต้น
+
+## เพิ่ม method เอง
+
+Dataclass ก็ยังเป็น class ธรรมดา — เพิ่ม method อะไรก็ได้ที่ต้องการ:
 
 ```python
 @dataclass
@@ -95,7 +197,8 @@ class Point:
 ## Demo รันได้จริง
 
 export const dataclassesCode = `
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict, FrozenInstanceError
+
 
 @dataclass
 class Point:
@@ -103,24 +206,17 @@ class Point:
     y: float
 
     def distance_from_origin(self) -> float:
-        return (self.x ** 2 + self.y ** 2) ** 0.5
+        return float((self.x**2 + self.y**2) ** 0.5)
 
 
 @dataclass
 class Inventory:
     name: str
-    tags: list = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     quantity: int = 0
 
     def add_tag(self, tag: str) -> None:
         self.tags.append(tag)
-
-
-@dataclass(frozen=True)
-class Color:
-    red: int
-    green: int
-    blue: int
 
 
 p = Point(3.0, 4.0)
@@ -132,62 +228,268 @@ item.add_tag("sale")
 item.add_tag("clearance")
 print(item)
 
+try:
+
+    @dataclass
+    class BadInventory:
+        name: str
+        tags: list[str] = []  # mutable default -- dataclass refuses this at CLASS-DEFINITION time
+
+except ValueError as e:
+    print(f"ValueError: {e}")
+
+
+@dataclass(frozen=True, slots=True)
+class Color:
+    red: int
+    green: int
+    blue: int
+    hex: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        # frozen blocks self.hex = ...; bypass it deliberately, once, during construction
+        object.__setattr__(self, "hex", f"#{self.red:02x}{self.green:02x}{self.blue:02x}")
+
+
 red = Color(255, 0, 0)
 print(red)
-print(red == Color(255, 0, 0))
+print(red.hex)
+try:
+    red.red = 128
+except FrozenInstanceError as e:
+    print(f"FrozenInstanceError: {e}")
 
-# hash(p)  # TypeError: unhashable type: 'Point'
+print(hash(red) == hash(Color(255, 0, 0)))
+
+
+@dataclass(order=True, kw_only=True)
+class Version:
+    major: int
+    minor: int
+    patch: int = 0
+
+
+v1 = Version(major=1, minor=2)
+v2 = Version(major=1, minor=3)
+print(v1 < v2)
+print(sorted([v2, v1], key=lambda v: (v.major, v.minor, v.patch)))
+
+try:
+    Version(1, 2)  # kw_only=True -- positional args are rejected
+except TypeError as e:
+    print(f"TypeError: {e}")
+
+
+@dataclass
+class Address:
+    city: str
+
+
+@dataclass
+class Person:
+    name: str
+    address: Address
+
+
+person = Person("Ada", Address("London"))
+snapshot = asdict(person)
+snapshot["address"]["city"] = "Paris"  # mutating the COPY
+print(person.address.city)  # original untouched -- asdict deep-copies nested dataclasses
+print(snapshot["address"]["city"])
+
+
+@dataclass
+class Plain:
+    x: int
+    y: int
+
+
+try:
+    hash(Plain(1, 2))
+except TypeError as e:
+    print(f"TypeError: {e}")
+
+
+@dataclass(unsafe_hash=True)
+class UnsafeHashable:
+    x: int
+    y: int
+
+
+print(hash(UnsafeHashable(1, 2)) == hash(UnsafeHashable(1, 2)))
+
+
+@dataclass
+class Point2:
+    x: float
+    y: float
+
+
+def describe(point: object) -> str:
+    match point:
+        case Point2(x=0, y=0):
+            return "origin"
+        case Point2(x=x, y=y):
+            return f"({x}, {y})"
+        case _:
+            return "not a point"
+
+
+print(describe(Point2(0, 0)))
+print(describe(Point2(1, 2)))
+print(Point2.__match_args__)
 `.trim();
 
 <Playground code={dataclassesCode} />
 
 <Callout title="Dataclasses remove boilerplate for record-like classes">
-ใช้ `@dataclass` เมื่อ class เป็น container สำหรับข้อมูลเป็นหลัก — configuration objects, DTOs, value objects, named tuples ที่มี methods
-สำหรับ value types ที่ immutable เต็มรูปแบบ เพิ่ม `frozen=True`; สำหรับ defaults ที่ยืดหยุ่นบน mutable list หรือ dict ให้ใช้ `field(default_factory=...)` เสมอ
-ถ้าต้องการ runtime validation บน field values ลองพิจารณา Pydantic's `BaseModel` — สร้างบน idea เดิมแต่เพิ่ม type coercion และ validators
-`@dataclass` สร้าง `__eq__` ให้โดย default และการมี `__eq__` ทำให้ `__hash__` กลายเป็น `None` — dataclass ธรรมดาที่ไม่ได้ frozen อย่าง `Point` จึง unhashable ตามที่บรรทัด comment ด้านบนแสดง (เนื้อหาเต็มไปบทถัดไป)
+ใช้ `@dataclass` เมื่อ class ของคุณเป็น container สำหรับ data field เป็นหลัก — configuration object, DTO, value object, named tuple ที่มี method
+สำหรับ value type ที่ immutable เต็มรูปแบบ เพิ่ม `frozen=True`; สำหรับ default ที่ยืดหยุ่นบน list หรือ dict ที่ mutable ใช้ `field(default_factory=...)` เสมอ
+ถ้าต้องการ runtime validation บนค่า field ใช้ pydantic's `BaseModel` แทน — มันสร้างบนแนวคิด annotation-driven เดียวกันแต่ parse และ coerce จริงตอน construct
+`@dataclass` สร้าง `__eq__` โดย default และการสร้าง `__eq__` ทำให้ `__hash__` เป็น `None` — dataclass ธรรมดา (ไม่ frozen) อย่าง `Plain` จึง unhashable; ใช้ `frozen=True` หรือ `unsafe_hash=True` เพื่อเปิดกลับ
 </Callout>
+
+## Mental Model
+
+<Mermaid code={`flowchart LR
+  Ann["class body: name: type = default"] --> Gen["@dataclass reads __annotations__"]
+  Gen --> Init["generates __init__"]
+  Gen --> Repr["generates __repr__"]
+  Gen --> Eq["generates __eq__ (eq=True by default)"]
+  Eq -.->|"sets, unless frozen/unsafe_hash"| Hash["__hash__ = None"]
+  Gen -->|"frozen=True"| Setattr["generates __setattr__/__delattr__ that raise"]`} title="@dataclass เป็น class decorator ที่อ่าน annotation ครั้งเดียวแล้วเขียน method ลงบน class" />
+
+`@dataclass` ไม่ใช่ syntax วิเศษ — มันเป็น class decorator ธรรมดาที่รันครั้งเดียวตอน class-definition มันอ่าน `__annotations__` ของ class (บรรทัด `name: type`) และการเรียก `field(...)` แล้วสร้าง method ของ Python ธรรมดา (`__init__`, `__repr__`, `__eq__` และอื่นๆ แล้วแต่ flag) ลงบน class โดยตรง เหมือนกับที่คุณเขียนเองด้วยมือทุกประการ นั่นคือเหตุผลที่ mutable default raise ทันทีตอน definition — decorator ตรวจ default ระหว่างสร้าง `__init__` ก่อนที่ instance จะมีอยู่เลย — และเหตุผลที่ `frozen=True` กับ `eq=True` ทำงานร่วมกัน: decorator ตัวเดียวกันตัดสินใจทั้งคู่ ทำให้มันสร้าง `__hash__` ที่สอดคล้องกันได้แทนที่จะให้คุณต้อง reconcile เอง
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| `@dataclass` (default) | ได้ `__init__`/`__repr__`/`__eq__` ฟรี | Instance unhashable เว้นแต่เพิ่ม `frozen` หรือ `unsafe_hash` |
+| `field(default_factory=...)` | ทุก instance ได้ mutable default เป็นของตัวเอง | เขียนยาวกว่า default แบบ literal เล็กน้อย |
+| `frozen=True` | Immutable, hashable, ปลอดภัยเป็น dict key | Field ที่ต้องการคำนวณหลัง `__init__` ต้องใช้ `object.__setattr__` |
+| `slots=True` | หน่วยความจำน้อยลง เข้าถึง attribute เร็วขึ้น | เพิ่ม attribute แบบ dynamic ไม่ได้; multiple inheritance ถูกจำกัดมากขึ้น |
+| `order=True` | ได้ `<`/`<=`/`>`/`>=` ฟรีจากลำดับ field | การเทียบ dataclass ที่รูปทรงไม่เกี่ยวข้องกันก็แค่เทียบ tuple ของค่า — ไม่มีการตรวจเชิงความหมาย |
+| ใช้ pydantic `BaseModel` แทน | Runtime validation และ coercion จริง | มี dependency เพิ่ม และเป็น object ที่หนักกว่า dataclass ธรรมดา |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **Dataclass ที่มี list field ต้องการแค่ default เหมือน field อื่น** `tags: list = []` ไม่ได้แชร์ state เงียบๆ เหมือน mutable default ของ function — `@dataclass` raise `ValueError` ทันทีที่ class body รัน ก่อนจะมี instance ใดๆ
+- **`frozen=True` แปลว่าตั้งค่า field ที่ไหนก็ไม่ได้เลย รวมถึงใน `__post_init__`** `object.__setattr__(self, name, value)` คือทางออกที่มีเอกสารรองรับ ใช้ตั้งค่า field ที่ได้มาแค่ครั้งเดียวตอน construction
+- **Dataclass ทุกตัวใช้เป็น dict key ได้** ได้เฉพาะถ้ามัน hashable — และโดย default (`eq=True`, `frozen=False`) มันไม่ใช่ ต้องใช้ `frozen=True` หรือ `unsafe_hash=True` เพื่อเปิดใช้
+- **`asdict` แค่ return `vars(instance)`** มัน convert nested dataclass เป็น dict แบบ recursive และ deep-copy field ที่ mutable ดังนั้นการแก้ผลลัพธ์จึงไม่กระทบ instance เดิม
+- **NamedTuple, TypedDict และ pydantic BaseModel ใช้แทนกันได้กับ dataclass เลือกตัวที่พิมพ์สั้นที่สุด** พวกมันต่างกันที่ mutability, runtime identity และมีอะไร validate data หรือไม่ — ตัวเลือกที่ถูกต้องขึ้นกับว่า data มาจากไหนและคุณจะเอาไปทำอะไรต่อ
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อ dataclass ที่ generate มา ตรวจสิ่งเหล่านี้:
+
+- Field ที่มี mutable default แบบ literal (`tags: list = []`, `meta: dict = {}`) แทนที่จะเป็น `field(default_factory=...)` — โค้ดนี้ไม่รันเลยด้วยซ้ำ `@dataclass` raise `ValueError` ทันที
+- Class `frozen=True` ที่มี `self.field = value` ธรรมดาอยู่ที่ไหนก็ตามนอกเหนือจาก `object.__setattr__` ที่ตั้งใจใน `__post_init__` — นั่นคือ `FrozenInstanceError` ที่รอเกิดขึ้น
+- Dataclass ที่ใช้เป็น dict key หรือสมาชิก set โดยไม่มี `frozen=True`/`unsafe_hash=True` — default เป็น unhashable, `TypeError` ตอนใช้งาน
+- `unsafe_hash=True` บน dataclass ที่ field ถูกแก้หลัง construction — hash ของ object เปลี่ยนได้ขณะอยู่ใน set หรือ dict ทำให้ lookup เสียหายแบบเงียบๆ
+- โครงสร้าง nested-dataclass ที่ถูก convert ด้วย `vars()` หรือสร้าง dict เองแทน `asdict()` ทำให้ขาด deep-copy semantics และรั่ว reference ไปยัง nested object เดิม
+
+<SpotTheBug code={`from dataclasses import dataclass, field
+
+@dataclass
+class Order:
+    items: list = field(default_factory=list)
+    tags: list = []  # meant as "no tags by default"
+
+    def add_tag(self, tag: str) -> None:
+        self.tags.append(tag)`} lang="python">
+`tags: list = []` เป็น mutable default แบบ literal บน dataclass field — `@dataclass` ปฏิเสธการสร้าง class เลย ยืนยันแล้ว: การ import module นี้ raise `ValueError: mutable default <class 'list'> for field tags is not allowed: use default_factory` ที่บรรทัด `class Order:` ก่อนที่ `Order` จะถูกสร้าง instance ด้วยซ้ำ แก้แบบเดียวกับที่ `items` ด้านบนทำถูกต้องอยู่แล้ว: `tags: list = field(default_factory=list)`
+</SpotTheBug>
 
 export const quizDataclasses = [
   {
-    q: "`@dataclass` สร้าง dunder methods ใดอัตโนมัติ?",
+    q: "`@dataclass` สร้าง dunder method ไหนให้อัตโนมัติ?",
     options: [
       "__new__ และ __del__",
       "__init__, __repr__ และ __eq__",
       "__str__ และ __hash__",
       "__iter__ และ __next__"
     ],
-    answer: 1
+    answer: 1,
+    explain: "โดย default @dataclass สร้าง __init__ (จาก field ที่ annotate), __repr__ และ __eq__ __hash__ ไม่ได้ถูกสร้างโดย default -- การสร้าง __eq__ กลับทำให้มันเป็น None เว้นแต่ตั้ง frozen หรือ unsafe_hash"
   },
   {
-    q: "ทำไมถึงเขียน `tags: list = []` เป็น dataclass field default ไม่ได้?",
+    q: "ทำไมเขียน `tags: list = []` เป็น default ของ dataclass field ไม่ได้?",
     options: [
-      "List ไม่ได้รับอนุญาตเป็น field type",
-      "List object เดียวกันจะถูกใช้ร่วมกันระหว่าง instance ทั้งหมด",
+      "List ไม่อนุญาตให้เป็น field type",
+      "@dataclass raise ValueError ตอน class-definition -- มันปฏิเสธการสร้าง class เลย",
       "ต้องใช้ tuple แทน",
-      "Dataclass ไม่รองรับ mutable fields"
+      "Dataclass ไม่รองรับ mutable field"
     ],
-    answer: 1
+    answer: 1,
+    explain: "ต่างจาก mutable default ของ function ธรรมดา (ที่ทำงานเงียบๆ จนกว่า shared state จะกัดคุณ) @dataclass ตรวจจับ mutable default แบบ literal และ raise ValueError('mutable default ... use default_factory') ทันที ก่อนจะมี instance ใดถูกสร้าง"
   },
   {
     q: "`frozen=True` เพิ่มอะไรให้ dataclass?",
     options: [
       "ทำให้ทุก field เป็น optional",
-      "ป้องกันการแก้ไข field และสร้าง __hash__",
-      "Sort field ตามตัวอักษรอัตโนมัติ",
-      "เปิดใช้งาน pickling"
+      "สร้าง __setattr__/__delattr__ ที่ raise FrozenInstanceError และ __hash__ ที่ใช้งานได้",
+      "เรียง field ตามตัวอักษรอัตโนมัติ",
+      "เปิดใช้ pickling"
     ],
-    answer: 1
+    answer: 1,
+    explain: "frozen=True บล็อกการ assign attribute หลัง __init__ (raise FrozenInstanceError) และเพราะ instance เปลี่ยนไม่ได้อีก มันสร้าง __hash__ ที่ถูกต้องจาก field ให้ด้วย"
   },
   {
-    q: "`field(repr=False)` ใช้สำหรับอะไร?",
+    q: "`field(repr=False)` ใช้ทำอะไร?",
     options: [
-      "ยกเว้น field จาก __init__",
-      "ยกเว้น field จาก __repr__ output",
+      "ไม่รวม field ใน __init__",
+      "ไม่รวม field นั้นใน __repr__ output",
       "ทำให้ field เป็น read-only",
-      "กำหนด factory default"
+      "ตั้ง factory default"
     ],
-    answer: 1
+    answer: 1,
+    explain: "repr=False เอาแค่ field นั้นออกจาก __repr__ string ที่สร้างให้ -- มันยังมีส่วนร่วมใน __init__ และ __eq__ เว้นแต่จะปิดแยกต่างหาก"
+  },
+  {
+    q: "```python\n@dataclass(frozen=True)\nclass Point:\n    x: float\n    y: float\n\np = Point(1.0, 2.0)\np.x = 5.0\n```\nบรรทัดสุดท้ายเกิดอะไรขึ้น?",
+    options: [
+      "p.x กลายเป็น 5.0 ตามปกติ",
+      "FrozenInstanceError: cannot assign to field 'x'",
+      "AttributeError: can't set attribute",
+      "ไม่เกิดอะไรเลย -- การ assign ถูกละเว้นแบบเงียบๆ"
+    ],
+    answer: 1,
+    explain: "frozen=True สร้าง __setattr__ ที่ raise dataclasses.FrozenInstanceError สำหรับการ assign ใดๆ หลัง construction ข้อความที่ยืนยันแล้วบน 3.14: \"cannot assign to field 'x'\""
+  },
+  {
+    q: "```python\n@dataclass(order=True, kw_only=True)\nclass Version:\n    major: int\n    minor: int\n\nVersion(1, 2)\n```\nเกิดอะไรขึ้น?",
+    options: [
+      "สร้าง Version(major=1, minor=2) ตามปกติ",
+      "TypeError -- kw_only=True ปฏิเสธ positional argument",
+      "ValueError -- order=True ต้องการอย่างน้อย 3 field",
+      "ทำงานได้แต่ major กับ minor สลับกัน"
+    ],
+    answer: 1,
+    explain: "kw_only=True เอา positional parameter ออกจาก __init__ ที่สร้างให้ทั้งหมด -- ทุก field ต้องส่งแบบ keyword Version(1, 2) raise TypeError: Version.__init__() takes 1 positional argument but 3 were given และทั้ง mypy --strict และ pyright ก็ปฏิเสธการเรียกนี้แบบ static ด้วย"
+  },
+  {
+    q: "```python\nperson = Person(\"Ada\", Address(\"London\"))\nsnapshot = asdict(person)\nsnapshot[\"address\"][\"city\"] = \"Paris\"\nprint(person.address.city)\n```\nโค้ดนี้พิมพ์อะไร?",
+    options: [
+      "Paris -- asdict return reference ไปยัง nested object เดิม",
+      "London -- asdict deep-copy nested dataclass เป็น dict ธรรมดา",
+      "AttributeError -- asdict ไม่รองรับ nested dataclass",
+      "Ada"
+    ],
+    answer: 1,
+    explain: "asdict แปลง nested dataclass เป็น dict ใหม่แบบ recursive พร้อม deep-copy ระหว่างทาง การแก้ snapshot ที่ return มาจึงไม่กระทบ person.address เดิม ซึ่งยังเป็น 'London'"
+  },
+  {
+    q: "คุณกำลัง model data ที่มาจาก JSON ของ API ภายนอกที่ไม่น่าเชื่อถือและต้อง validate ก่อนใช้ ตัวไหนเหมาะที่สุด?",
+    options: [
+      "@dataclass -- แค่ annotation ก็เพียงพอเป็น validation แล้ว",
+      "NamedTuple -- tuple ปลอดภัยเสมอ",
+      "TypedDict -- มันบังคับ type ตอน runtime อัตโนมัติ",
+      "pydantic BaseModel -- มันจริงๆ parse และ validate ค่าตอน construct"
+    ],
+    answer: 3,
+    explain: "dataclass, NamedTuple และ TypedDict ล้วนอธิบายแค่รูปทรง -- ไม่มีตัวไหนตรวจหรือ coerce ค่าตอน runtime BaseModel ของ pydantic คือตัวที่สร้างมาเพื่อ validate และ coerce input ที่ไม่น่าเชื่อถือตอนมันถูก construct โดยเฉพาะ"
   }
 ];
 

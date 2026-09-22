@@ -1,6 +1,6 @@
 ---
 title: Properties and Class Methods
-description: '@property for getters/setters, computed attributes, @classmethod, and @staticmethod in Python.'
+description: '@property as a descriptor, writing your own descriptor, cached_property, @classmethod returning Self, and @staticmethod in Python.'
 sidebar:
   order: 4
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## The `@property` decorator
 
@@ -52,6 +54,50 @@ A property can compute its value on the fly with no backing storage:
 
 `t.fahrenheit` looks like a plain attribute to the caller, but it is recalculated each time.
 
+## `property` *is* a descriptor — write your own in 10 lines
+
+`@property` is not special syntax the interpreter hard-codes — it is a class, `property`, that implements the **descriptor protocol**: `__get__`, `__set__`, and optionally `__delete__`. Any class that implements those methods and is stored as a *class* attribute behaves the same way. Here is a hand-written descriptor that reimplements the validating `celsius` property from scratch, in about ten lines:
+
+```python
+class Celsius:
+    def __set_name__(self, owner: type, name: str) -> None:
+        self.name = f"_{name}"          # remembers the attribute name it's bound to
+
+    def __get__(self, obj: object, objtype: type | None = None) -> float:
+        if obj is None:
+            return self                  # accessed on the class itself, e.g. Thermostat.celsius
+        return getattr(obj, self.name, 0.0)
+
+    def __set__(self, obj: object, value: float) -> None:
+        if value < -273.15:
+            raise ValueError("Temperature below absolute zero!")
+        setattr(obj, self.name, value)
+
+
+class Thermostat:
+    celsius = Celsius()   # a descriptor instance, used exactly like @property
+```
+
+`t.celsius = 21.0` calls `Celsius.__set__`; `t.celsius` calls `Celsius.__get__` — identical behavior to `@property` with a setter, because that's genuinely what `property` is under the hood: `hasattr(property, "__get__")` and `hasattr(property, "__set__")` are both `True`. Understanding this explains a lot of "surprising" behavior elsewhere in Python: `classmethod`, `staticmethod`, and functions themselves (bound methods) are all descriptors too — attribute access on an instance is really the descriptor protocol running, every time.
+
+## `functools.cached_property`
+
+A `@property` recomputes on every access. `@cached_property` (from `functools`) computes the value once, on first access, and stores it as a plain entry in the instance's `__dict__` — every access after that is a normal (fast) attribute lookup, not a re-run of the method:
+
+```python
+from functools import cached_property
+
+class Report:
+    def __init__(self, rows: list[int]) -> None:
+        self.rows = rows
+
+    @cached_property
+    def total(self) -> int:
+        return sum(self.rows)   # only runs once per instance
+```
+
+`r.total` accessed twice runs the summing method exactly once; `r.__dict__["total"]` shows the cached result sitting there as an ordinary attribute after the first access. Because the cache lives in `__dict__`, a `cached_property` requires the instance to have one (it will not work on a `slots=True` class unless `"total"` is listed as a slot) — and since the cache is just an instance attribute, invalidating it is `del obj.total`, which forces the next access to recompute.
+
 ## `@classmethod` — alternative constructors
 
 A class method receives the **class** (`cls`) as its first argument instead of the instance.
@@ -69,7 +115,19 @@ print(boiling.celsius)   # 100.0
 ```
 
 Subclasses automatically inherit the class method and `cls` will refer to the subclass — so the factory creates an instance of the correct type.
-Annotate the return type with `typing.Self` (`from typing import Self`), not the string literal `"Temperature"` — the string annotation makes a type checker infer the base class even when `cls` is a subclass. With the old annotation, `uvx mypy --strict` on a subclass that adds a method reports exactly this: `` "Temperature" has no attribute "to_kelvin"  [attr-defined] ``. `Self` fixes it because it always refers to whatever class the method was actually called on.
+Annotate the return type with `typing.Self` (`from typing import Self`), not the string literal `"Temperature"` — the string annotation makes a type checker infer the base class even when `cls` is a subclass. With the old annotation, `uvx mypy --strict` on a subclass that adds a method reports exactly this: `` "Temperature" has no attribute "to_kelvin"  [attr-defined] ``. `Self` fixes it because it always refers to whatever class the method was actually called on — confirmed with a real subclass:
+
+```python
+class Kelvin(Temperature):
+    def to_kelvin(self) -> float:
+        return self.celsius + 273.15
+
+k = Kelvin.from_fahrenheit(32)
+print(type(k))       # <class '__main__.Kelvin'>
+print(k.to_kelvin())  # 273.15 -- only type-checks because from_fahrenheit's return type is Self
+```
+
+`k` really is a `Kelvin` at runtime regardless of the annotation — but only the `Self` annotation lets `uvx mypy --strict` and `uvx pyright` both confirm `k.to_kelvin()` is valid without a manual cast.
 
 ## `@staticmethod` — utility functions
 
@@ -89,7 +147,57 @@ print(Temperature.absolute_zero())   # -273.15
 ## Full runnable demo
 
 export const propertiesCode = `
+from functools import cached_property
 from typing import Self
+
+
+class Celsius:
+    def __set_name__(self, owner: type, name: str) -> None:
+        self.name = f"_{name}"
+
+    def __get__(self, obj: object, objtype: type | None = None) -> float:
+        if obj is None:
+            return self  # type: ignore[return-value]
+        return getattr(obj, self.name, 0.0)
+
+    def __set__(self, obj: object, value: float) -> None:
+        if value < -273.15:
+            raise ValueError("Temperature below absolute zero!")
+        setattr(obj, self.name, value)
+
+
+class Thermostat:
+    celsius = Celsius()  # a descriptor instance, used exactly like @property
+
+
+t = Thermostat()
+t.celsius = 21.0
+print(t.celsius)
+try:
+    t.celsius = -300
+except ValueError as e:
+    print(f"ValueError: {e}")
+
+print(hasattr(Celsius, "__get__"), hasattr(Celsius, "__set__"))
+print(hasattr(property, "__get__"), hasattr(property, "__set__"))
+
+
+class Report:
+    def __init__(self, rows: list[int]) -> None:
+        self.rows = rows
+        self.builds = 0
+
+    @cached_property
+    def total(self) -> int:
+        self.builds += 1
+        return sum(self.rows)
+
+
+r = Report([1, 2, 3])
+print(r.total)
+print(r.total)
+print(r.builds)  # computed once -- cached_property stores the result in the instance __dict__
+print(r.__dict__["total"])  # the cache IS an ordinary instance attribute now
 
 
 class Temperature:
@@ -119,14 +227,24 @@ class Temperature:
         return -273.15
 
 
-t = Temperature(100)
-print(t.celsius)
-print(t.fahrenheit)
-t.celsius = 0
-print(t.fahrenheit)
-t2 = Temperature.from_fahrenheit(212)
+t2 = Temperature(100)
 print(t2.celsius)
+print(t2.fahrenheit)
+t2.celsius = 0
+print(t2.fahrenheit)
+t3 = Temperature.from_fahrenheit(212)
+print(t3.celsius)
 print(Temperature.absolute_zero())
+
+
+class Kelvin(Temperature):
+    def to_kelvin(self) -> float:
+        return self.celsius + 273.15
+
+
+k = Kelvin.from_fahrenheit(32)
+print(type(k))
+print(k.to_kelvin())
 `.trim();
 
 <Playground code={propertiesCode} />
@@ -135,7 +253,72 @@ print(Temperature.absolute_zero())
 Java and older Python code uses explicit getter/setter methods like `get_celsius()` and `set_celsius(value)`.
 In Python, `@property` gives you validation and computed values while keeping the call site looking like plain attribute access: `t.celsius = 0` instead of `t.set_celsius(0)`.
 Start with a plain attribute; promote it to a `@property` later if you need validation or lazy computation — callers never need to change their code.
+`@property` is itself a descriptor, so once you outgrow it — validation shared across many classes, or a computed value you want cached — writing your own descriptor or reaching for `cached_property` is a small step, not a new mental model.
 </Callout>
+
+## Mental Model
+
+<Mermaid code={`flowchart TD
+  A["obj.attr ="] --> B{"type(obj) defines attr as a data descriptor? (has __set__)"}
+  B -->|"yes"| C["descriptor.__set__(obj, value) runs -- property setter, custom descriptor"]
+  B -->|"no"| D["plain assignment into obj.__dict__['attr']"]
+  E["obj.attr"] --> F{"type(obj) defines attr as a descriptor? (has __get__)"}
+  F -->|"yes, and it's a DATA descriptor (__set__ too)"| G["descriptor wins even over obj.__dict__"]
+  F -->|"yes, but non-data (only __get__, e.g. a plain method)"| H["obj.__dict__ wins if present, else descriptor.__get__ runs"]
+  F -->|"no"| I["obj.__dict__, then the class's MRO"]`} title="Descriptors sit between plain attribute lookup and the instance __dict__" />
+
+`@property`, `cached_property`, `classmethod`, `staticmethod`, and even a plain function stored on a class are all descriptors — the mechanism the classes lesson's attribute-lookup Mental Model glossed over as "class `__dict__`". A **data descriptor** (defines both `__get__` and `__set__`, like `property`) takes priority over the instance's own `__dict__` — that's why a computed `@property` can't be shadowed by `obj.attr = x` the way a plain class attribute can. A **non-data descriptor** (only `__get__`, like `cached_property` before its first access, or a plain method) loses to an instance `__dict__` entry with the same name — which is exactly how `cached_property` "caches": after the first access it writes an entry into `obj.__dict__`, and every later lookup finds that entry before the descriptor ever runs again.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| `@property` | Validation and computed values behind plain-attribute syntax | Recomputes on every access |
+| Custom descriptor | Reusable validation/logic shared across many classes and attributes | More boilerplate than a single `@property`; the protocol (`__get__`/`__set__`/`__set_name__`) has to be learned once |
+| `@cached_property` | Computed once, then as fast as a normal attribute | Requires an instance `__dict__` (not compatible with `slots=True` unless the name is a slot); stale cache if the underlying data changes |
+| `@classmethod` + `Self` | Alternative constructors that work correctly for subclasses | Returning the wrong literal type annotation (`"Temperature"` instead of `Self`) silently breaks subclass type-checking |
+| `@staticmethod` | Groups a utility function under the class namespace | No access to `self` or `cls` — indistinguishable from a module-level function except for the namespace |
+
+## Common Misconceptions
+
+- **`@property` is special interpreter syntax, unrelated to normal classes.** It's an ordinary built-in class implementing the descriptor protocol (`__get__`/`__set__`) — you can write your own version in about ten lines.
+- **A property without a setter can still be assigned, just without validation.** It can't be assigned at all — attempting `obj.attr = x` on a read-only property raises `AttributeError`, not a silent no-op.
+- **`cached_property` re-runs its function every time, just faster.** It runs exactly once — the first access writes the value into the instance `__dict__`, and every access after that is a normal dict lookup that never calls the function again.
+- **Annotating a classmethod's return type as the literal class name (`-> "Temperature"`) is just as correct as `Self`.** A type checker takes the literal name at face value even when `cls` is a subclass, producing false `attr-defined` errors on subclass-only methods; `Self` tracks the actual calling class.
+- **`@staticmethod` and a module-level function are meaningfully different at runtime.** They behave the same when called — the only difference is namespacing (`ClassName.util()` vs a free function) and discoverability.
+
+## Reading AI-generated code
+
+Before trusting generated properties and class methods, check for:
+
+- A `@classmethod` alternative constructor annotated `-> "ClassName"` (a string / forward reference to the literal class) instead of `-> Self` — this silently breaks type-checking the moment someone subclasses it.
+- A `@cached_property` on a class with `slots=True` and no slot named for the cached attribute — this raises `AttributeError: 'ClassName' object has no attribute '__dict__'` at first access, since there's nowhere to store the cached value.
+- Business logic or side effects (network calls, mutation of unrelated state) hidden inside a `@property` getter — a caller reading `obj.attr` has no syntactic hint that it might be slow or fail.
+- A hand-written descriptor's `__get__` that doesn't handle `obj is None` (the case where the descriptor is accessed on the class itself, e.g. `Thermostat.celsius`) — it should return `self` (or a similar sentinel) rather than crashing.
+- A `@staticmethod` that references `self` or `cls` at all — that's a sign it should be an instance or class method instead.
+
+<SpotTheBug code={`class Config:
+    def __init__(self) -> None:
+        self._data = {"retries": 3}
+
+    @property
+    def retries(self) -> int:
+        return self._data["retries"]
+
+    @classmethod
+    def from_env(cls) -> "Config":
+        return cls()
+
+
+class StrictConfig(Config):
+    def validate(self) -> bool:
+        return self.retries > 0
+
+
+cfg = StrictConfig.from_env()
+cfg.validate()`} lang="python">
+`from_env` is annotated `-> "Config"` instead of `-> Self`. At runtime `StrictConfig.from_env()` really does return a `StrictConfig`, so `cfg.validate()` runs fine — but a type checker takes the literal annotation at face value and infers `cfg: Config`, which has no `validate` method. Verified: `uvx mypy --strict` on this file reports `"Config" has no attribute "validate"  [attr-defined]`, and `uvx pyright` reports the equivalent `reportAttributeAccessIssue`, even though the code runs correctly. Fix it by importing `Self` from `typing` and annotating `from_env(cls) -> Self`.
+</SpotTheBug>
 
 export const quizProperties = [
   {
@@ -146,7 +329,8 @@ export const quizProperties = [
       "Makes it private",
       "Caches its return value forever"
     ],
-    answer: 1
+    answer: 1,
+    explain: "@property lets a method be accessed with plain attribute syntax (obj.name, no parentheses) while still running code on every access -- it does not cache anything by itself (that's what cached_property is for)."
   },
   {
     q: "How do you make a `@property` writable?",
@@ -156,7 +340,8 @@ export const quizProperties = [
       "Use `@property.writable` instead",
       "A property is always writable by default"
     ],
-    answer: 1
+    answer: 1,
+    explain: "A property with only a getter is read-only -- assigning to it raises AttributeError. @name.setter registers the method that runs on assignment."
   },
   {
     q: "What is the first parameter of a `@classmethod`?",
@@ -166,7 +351,8 @@ export const quizProperties = [
       "type — the metaclass",
       "No parameter; it is implicit"
     ],
-    answer: 1
+    answer: 1,
+    explain: "A classmethod receives the class it was called on (cls) instead of an instance -- that's what makes it possible for cls(...) to construct the correct subclass."
   },
   {
     q: "When is `@staticmethod` the right choice?",
@@ -176,7 +362,52 @@ export const quizProperties = [
       "When the method is a utility that does not need the instance or class",
       "When you want the method to be inherited by subclasses differently"
     ],
-    answer: 2
+    answer: 2,
+    explain: "staticmethod receives neither self nor cls -- it's for a utility that conceptually belongs to the class's namespace but needs no access to instance or class state."
+  },
+  {
+    q: "What relationship does `@property` have to the descriptor protocol?",
+    options: [
+      "None -- property is special interpreter syntax",
+      "property is a built-in class that implements __get__ and __set__",
+      "property only works because of __getattr__",
+      "property is implemented entirely in the class body's metaclass"
+    ],
+    answer: 1,
+    explain: "property is an ordinary class in the builtins that implements the descriptor protocol (__get__/__set__/__delete__). Any class that implements those methods and is stored as a class attribute behaves the same way -- confirmed by hasattr(property, '__get__') being True."
+  },
+  {
+    q: "```python\nclass Report:\n    def __init__(self, rows):\n        self.rows = rows\n        self.calls = 0\n\n    @cached_property\n    def total(self):\n        self.calls += 1\n        return sum(self.rows)\n\nr = Report([1, 2, 3])\nr.total\nr.total\nprint(r.calls)\n```\nWhat does this print?",
+    options: [
+      "0",
+      "1",
+      "2",
+      "AttributeError -- cached_property can only be read once"
+    ],
+    answer: 1,
+    explain: "cached_property runs the method on first access and stores the result directly in r.__dict__['total']. The second r.total finds that dict entry and never calls the method again, so calls stays 1."
+  },
+  {
+    q: "```python\nclass Base:\n    @classmethod\n    def make(cls) -> \"Base\":\n        return cls()\n\nclass Sub(Base):\n    def extra(self) -> str:\n        return \"hi\"\n\ns = Sub.make()\ns.extra()\n```\nWhat does `uvx mypy --strict` report?",
+    options: [
+      "No errors -- the annotation is fine",
+      "\"Base\" has no attribute \"extra\" [attr-defined]",
+      "SyntaxError on the classmethod decorator",
+      "A warning about circular imports"
+    ],
+    answer: 1,
+    explain: "The string annotation -> \"Base\" makes the type checker infer make()'s return type as exactly Base, even when called via Sub. mypy --strict reports attr-defined on s.extra() because Base has no extra method. Replacing the annotation with -> Self (from typing) fixes it."
+  },
+  {
+    q: "Why can a hand-written descriptor's `__get__` be called with `obj=None`?",
+    options: [
+      "It never can -- obj is always an instance",
+      "It happens when the descriptor is accessed on the class itself, e.g. Thermostat.celsius instead of an instance",
+      "Only when the descriptor raises an exception",
+      "obj is None only during __init__"
+    ],
+    answer: 1,
+    explain: "Accessing a descriptor through the class (ClassName.attr) rather than an instance calls __get__ with obj=None and objtype set to the class -- a well-behaved __get__ checks for this and returns something sensible (often self) instead of crashing."
   }
 ];
 

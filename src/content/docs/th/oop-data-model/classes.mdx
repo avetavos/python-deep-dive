@@ -1,6 +1,6 @@
 ---
 title: Classes และ Inheritance
-description: 'class, __init__, instance vs class attributes, methods, self และ inheritance ด้วย super() ใน Python'
+description: 'class, __init__ vs __new__, instance vs class attributes, MRO และ cooperative super(), isinstance vs type(), duck typing vs ABC vs Protocol'
 sidebar:
   order: 2
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## การกำหนด class
 
@@ -50,58 +52,295 @@ rex.bark()   # Python calls Dog.bark(rex) under the hood
 การแก้ไข class attribute ผ่าน instance จะสร้าง *shadow* instance attribute และ **ไม่** เปลี่ยน class attribute ของ instance อื่น
 ใช้ class attribute เฉพาะสำหรับ constant หรือ shared state ที่เป็นของ class จริงๆ
 
-## Inheritance และ `super()`
+## Shared mutable class attribute — bug ที่เกิดขึ้นจริง
 
-Subclass สืบทอด methods ทั้งหมดจาก parent
-ใช้ `super()` เพื่อเรียก method ของ parent — ที่พบบ่อยที่สุดคือ `super().__init__()` เพื่อ initialise state ของ parent
+Class attribute คือ object หนึ่งตัวที่ class เป็นเจ้าของ และทุก instance ที่ไม่ได้ shadow มันจะอ่าน *object เดียวกัน* นั่นไม่มีปัญหาถ้า default เป็น immutable อย่าง string แต่จะกลายเป็น bug ทันทีที่ default เป็น mutable — `list` หรือ `dict` — เพราะ `.append()` ของทุก instance จะแก้ object ตัวเดียวกัน:
 
 ```python
-class Animal:
-    def __init__(self, name: str, sound: str) -> None:
-        self.name = name
-        self.sound = sound
+class Dog:
+    tricks: list[str] = []  # BUG: one list object shared by every instance
 
-    def speak(self) -> str:
-        return f"{self.name} says {self.sound}"
-
-
-class Dog(Animal):
-    def __init__(self, name: str) -> None:
-        super().__init__(name, "woof")   # delegate to Animal.__init__
-
-    def fetch(self, item: str) -> str:
-        return f"{self.name} fetches the {item}!"
+    def add_trick(self, trick: str) -> None:
+        self.tricks.append(trick)  # mutates the SHARED class attribute
 ```
 
-`super()` ใช้ได้โดยไม่ต้องส่ง argument ใน Python 3 — ไม่จำเป็นต้องระบุ class หรือ instance อย่างชัดเจน
+`rex.add_trick("sit")` และ `fido.add_trick("roll over")` ต่างก็แก้ list ตัวเดียวกันทุกประการ — `rex.tricks` จบลงเป็น `['sit', 'roll over']` และ `rex.tricks is fido.tricks` ได้ `True` วิธีแก้คือทำให้ `tricks` เป็น attribute ระดับ *instance* สร้างขึ้นใหม่ทุกครั้งใน `__init__`:
+
+```python
+class FixedDog:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.tricks: list[str] = []  # instance attribute -- one list per dog
+```
+
+ตอนนี้แต่ละ dog มี list เป็นของตัวเอง `good_rex.tricks is good_fido.tricks` ได้ `False` นี่คือ bug แบบเดียวกับ mutable default argument (สอนในโมดูล Functions) แค่สวมหน้ากากคนละแบบ — object mutable ตัวเดียวถูกแชร์โดยไม่ตั้งใจข้ามเจ้าของหลายราย
+
+## `__init__` vs `__new__`
+
+`__init__` initialise instance ที่ *ถูกสร้างแล้ว* — มันไม่ return อะไรเลย `__new__` คือตัวที่ **สร้าง** instance จริงๆ มันรันก่อน รับ class (`cls`) แทน `self` และต้อง return object กลับมา (ปกติผ่าน `super().__new__(cls)`) คุณแทบไม่ต้อง override `__new__` เลย — สองเหตุผลที่พบบ่อยคือทำ singleton และ subclass built-in type ที่ immutable อย่าง `tuple` หรือ `str` ซึ่งต้อง fix ค่าก่อนที่ `__init__` จะมีโอกาสตั้งค่าอะไรได้:
+
+```python
+class Singleton:
+    _instance: "Singleton | None" = None
+
+    def __new__(cls) -> "Singleton":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+```
+
+เรียก `Singleton()` สองครั้งจะได้ object *เดียวกัน* ทั้งสองครั้ง (`a is b` เป็น `True`) — `__new__` ตัดวงจร construction แทนที่จะสร้าง instance ใหม่ทุกครั้งที่เรียก
+
+## MRO และ cooperative `super().__init__(**kwargs)`
+
+เมื่อ class มี base มากกว่าหนึ่ง — multiple inheritance — Python ต้องการลำดับที่แน่นอนสำหรับค้นหา method ลำดับนั้นคือ **Method Resolution Order** (MRO) คำนวณด้วย C3 linearization algorithm และเข้าถึงได้ผ่าน `ClassName.__mro__` สำหรับ **diamond** — สอง class ที่ใช้ ancestor ร่วมกัน — MRO จะเยี่ยมแต่ละ class เพียงครั้งเดียว:
+
+```python
+class Base:
+    def __init__(self, **kwargs: object) -> None:
+        print("Base.__init__", kwargs)
+        super().__init__()
+
+class Left(Base):
+    def __init__(self, **kwargs: object) -> None:
+        print("Left.__init__")
+        super().__init__(**kwargs)
+
+class Right(Base):
+    def __init__(self, **kwargs: object) -> None:
+        print("Right.__init__")
+        super().__init__(**kwargs)
+
+class Diamond(Left, Right):
+    def __init__(self, **kwargs: object) -> None:
+        print("Diamond.__init__")
+        super().__init__(**kwargs)
+```
+
+<Mermaid code={`flowchart TD
+  Diamond --> Left
+  Diamond --> Right
+  Left --> Base
+  Right --> Base
+  Base --> object`} title="Diamond inheritance: Diamond.__mro__ เยี่ยม Left, Right แล้ว Base เพียงครั้งเดียว" />
+
+`Diamond.__mro__` คือ `[Diamond, Left, Right, Base, object]` แต่ละ `__init__` เรียก `super().__init__(**kwargs)` — **cooperative** super หมายความว่ามันส่งต่อไปตามลำดับ MRO แทนที่จะกระโดดตรงไปหา parent ของตัวเอง `Diamond(value=1)` จะพิมพ์ `Diamond.__init__`, แล้ว `Left.__init__`, แล้ว `Right.__init__`, แล้ว `Base.__init__ {'value': 1}` — `super()` ใน `Left` เรียก `Right.__init__` ไม่ใช่ `Base.__init__` เพราะมันตาม MRO ไม่ใช่ base ของ class เอง ลืม `**kwargs` (หรือทิ้ง `super().__init__()` ไปเลย) ใน link ไหนก็ตามจะทำให้ chain ขาด — bug ที่พบบ่อยในโค้ดที่ AI เขียน
+
+## `isinstance` vs `type(x) ==`
+
+ทั้งสองถามว่า "type นี้ถูกไหม" แต่เห็นต่างกันเรื่อง subclass:
+
+```python
+class Animal: pass
+class Dog2(Animal): pass
+
+d = Dog2()
+isinstance(d, Animal)   # True  -- Dog2 IS-A Animal
+type(d) == Animal       # False -- type(d) is Dog2, not Animal
+type(d) == Dog2         # True
+```
+
+`isinstance` เดินตาม MRO จึงรู้จำ subclass ได้ถูกต้อง `type(x) ==` ต้องการ type ที่*ตรงเป๊ะ*และทำลาย polymorphism แบบเงียบๆ ทันทีที่มีใคร subclass class ของคุณ ใช้ `isinstance` เป็นหลักเว้นแต่คุณมีเหตุผลเฉพาะที่จะปฏิเสธ subclass
+
+## Composition over inheritance
+
+Inheritance บอกว่า "is-a" ส่วน composition บอกว่า "has-a" — class ถือ object อีกตัวเป็น attribute แล้ว delegate ให้มันทำงาน แทนที่จะสืบทอด behavior:
+
+```python
+class Engine:
+    def start(self) -> str:
+        return "vroom"
+
+class Car:
+    def __init__(self) -> None:
+        self.engine = Engine()  # Car HAS an Engine -- composition
+
+    def start(self) -> str:
+        return self.engine.start()
+```
+
+Composition หลีกเลี่ยงปัญหา fragile-base-class (การแก้ parent ที่ลึกทำให้ subclass ที่ห่างไกลพัง) และให้คุณสลับ `Engine` เป็น implementation อื่นได้โดยไม่แตะ class hierarchy ของ `Car` ใช้ inheritance เมื่อความสัมพันธ์เป็น "is-a" จริงๆ และคุณต้องการสืบทอด *interface* พร้อม behavior เท่านั้น กรณีอื่นให้ใช้ composition
+
+## Duck typing vs `ABC` vs `Protocol`
+
+โดยปกติ Python ไม่ตรวจ type ก่อนเรียก method — ถ้า object มี method ที่ถูกต้อง การเรียกก็ทำงานได้เลย ("ถ้าร้องเหมือนเป็ด ก็เป็นเป็ด..."):
+
+```python
+class Duck:
+    def quack(self) -> str:
+        return "Quack!"
+
+class Person:
+    def quack(self) -> str:
+        return "I'm quacking!"
+
+def make_it_quack(thing) -> str:
+    return thing.quack()   # no shared base class required
+```
+
+`abc.ABC` เลือกใช้ **nominal** typing: subclass ต้องสืบทอดจาก abstract base อย่างชัดเจน และ Python ปฏิเสธการสร้าง instance ของ class ที่ยังไม่ได้ implement `@abstractmethod` ครบทุกตัว — `Shape()` บน `Shape` ที่เป็น abstract จะ raise `TypeError: Can't instantiate abstract class Shape without an implementation for abstract method 'area'` ตรวจตอน instantiation จริงตอน runtime
+
+```python
+from abc import ABC, abstractmethod
+
+class Shape(ABC):
+    @abstractmethod
+    def area(self) -> float: ...
+```
+
+`typing.Protocol` ให้ **structural** typing ที่ตรวจแบบ static: class จะ satisfy `Protocol` แค่มี method ที่ถูกต้อง ไม่ต้อง inherit และไม่มีการตรวจตอน runtime เลย (เว้นแต่คุณเติม `@runtime_checkable`)
+
+```python
+from typing import Protocol
+
+class Quacker(Protocol):
+    def quack(self) -> str: ...
+
+def make_it_quack_typed(thing: Quacker) -> str:
+    return thing.quack()
+
+make_it_quack_typed(Duck())   # Duck never mentions Quacker -- structural match, mypy/pyright both accept it
+```
+
+ใช้ duck typing สำหรับสคริปต์เร็วๆ ใช้ `ABC` เมื่อต้องการ contract ที่บังคับใช้ มี document และ implementation ร่วมกัน และใช้ `Protocol` เมื่อต้องการ static structural checking โดยไม่บังคับให้ทุกคนที่ implement ต้อง inherit จาก type ของคุณ
+
+## Classes ก็เป็น objects เหมือนกัน
+
+`class` ไม่ได้แค่สร้าง type — มันสร้าง **object** ซึ่งเป็น instance ของ `type` (metaclass ที่เป็น built-in) `type(Dog2)` คือ `<class 'type'>` และ `type(type)` ก็เช่นกัน — `type` เป็น metaclass ของตัวเอง จุดที่ chain หยุด
+
+```python
+type(Dog2)             # <class 'type'>
+isinstance(Dog2, type) # True
+```
+
+อีกเรื่องที่เกี่ยวข้อง คือ **name mangling**: attribute ที่ตั้งชื่อด้วย underscore นำหน้าสองตัว (และ trailing underscore ไม่เกินหนึ่งตัว) ภายใน class body อย่าง `self.__secret` จะถูก compiler เขียนใหม่เป็น `self._ClassName__secret` มันมีไว้เพื่อหลีกเลี่ยงการชนชื่อโดยไม่ตั้งใจใน subclass ไม่ใช่ privacy จริง — attribute ยังเข้าถึงได้จากภายนอกในชื่อ `obj._ClassName__secret` Static type checker เข้มงวดกว่า interpreter อีก: `uvx mypy --strict` บน `m._Mangled__secret` รายงาน `` "Mangled" has no attribute "_Mangled__secret"  [attr-defined] `` และ `uvx pyright` รายงาน `Cannot access attribute "_Mangled__secret" for class "Mangled"` — ทั้งคู่ไม่เปิดชื่อที่ถูก mangle เป็นส่วนหนึ่งของ public surface ของ class แม้ว่า interpreter จะ return `42` ให้เฉยๆ
 
 ## Demo รันได้จริง
 
 export const classesCode = `
-class Animal:
-    kingdom: str = "Animalia"
+class Dog:
+    tricks: list[str] = []  # BUG: one list object shared by every instance
 
-    def __init__(self, name: str, sound: str) -> None:
-        self.name = name
-        self.sound = sound
-
-    def speak(self) -> str:
-        return f"{self.name} says {self.sound}"
-
-
-class Dog(Animal):
     def __init__(self, name: str) -> None:
-        super().__init__(name, "woof")
+        self.name = name
 
-    def fetch(self, item: str) -> str:
-        return f"{self.name} fetches the {item}!"
+    def add_trick(self, trick: str) -> None:
+        self.tricks.append(trick)  # mutates the SHARED class attribute
 
 
-dog = Dog("Rex")
-print(dog.speak())
-print(dog.fetch("ball"))
-print(Dog.kingdom)
-print(isinstance(dog, Animal))
+class FixedDog:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.tricks: list[str] = []  # instance attribute -- one list per dog
+
+    def add_trick(self, trick: str) -> None:
+        self.tricks.append(trick)
+
+
+rex = Dog("Rex")
+fido = Dog("Fido")
+rex.add_trick("sit")
+fido.add_trick("roll over")
+print(rex.tricks)
+print(rex.tricks is fido.tricks)
+
+good_rex = FixedDog("Rex")
+good_fido = FixedDog("Fido")
+good_rex.add_trick("sit")
+good_fido.add_trick("roll over")
+print(good_rex.tricks)
+print(good_rex.tricks is good_fido.tricks)
+
+
+class Singleton:
+    _instance: "Singleton | None" = None
+
+    def __new__(cls) -> "Singleton":
+        if cls._instance is None:
+            print("creating the one instance")
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+
+a = Singleton()
+b = Singleton()
+print(a is b)
+
+
+class ImmutablePoint(tuple[float, float]):
+    def __new__(cls, x: float, y: float) -> "ImmutablePoint":
+        return super().__new__(cls, (x, y))
+
+    @property
+    def x(self) -> float:
+        return self[0]
+
+    @property
+    def y(self) -> float:
+        return self[1]
+
+
+p = ImmutablePoint(1, 2)
+print(p.x, p.y, tuple(p))
+
+
+class Base:
+    def __init__(self, **kwargs: object) -> None:
+        print("Base.__init__", kwargs)
+        super().__init__()
+
+
+class Left(Base):
+    def __init__(self, **kwargs: object) -> None:
+        print("Left.__init__")
+        super().__init__(**kwargs)
+
+
+class Right(Base):
+    def __init__(self, **kwargs: object) -> None:
+        print("Right.__init__")
+        super().__init__(**kwargs)
+
+
+class Diamond(Left, Right):
+    def __init__(self, **kwargs: object) -> None:
+        print("Diamond.__init__")
+        super().__init__(**kwargs)
+
+
+print([c.__name__ for c in Diamond.__mro__])
+Diamond(value=1)
+
+
+class Animal:
+    pass
+
+
+class Dog2(Animal):
+    pass
+
+
+d = Dog2()
+print(isinstance(d, Animal))
+print(type(d) == Animal)
+print(type(d) == Dog2)
+
+print(type(Dog2))
+print(type(type))
+print(isinstance(Dog2, type))
+
+
+class Mangled:
+    def __init__(self) -> None:
+        self.__secret = 42  # rewritten by the compiler to _Mangled__secret
+
+    def reveal(self) -> int:
+        return self.__secret
+
+
+m = Mangled()
+print(m.reveal())
+print(m._Mangled__secret)  # still reachable -- mangling is not real privacy
 `.trim();
 
 <Playground code={classesCode} />
@@ -112,6 +351,57 @@ print(isinstance(dog, Animal))
 parameter `self` ทำให้เห็นชัดเจนทันทีว่า function ทำงานกับ instance และทำให้ method resolution ของ Python ทำงานได้โดยไม่มี magic ที่ซ่อนอยู่
 </Callout>
 
+## Mental Model
+
+<Mermaid code={`flowchart LR
+  L1["1. instance __dict__"] --> L2["2. class __dict__ (MRO order)"]
+  L2 --> L3["3. type(instance) itself, if all else fails"]
+  L2 -.->|"not found anywhere"| L4["AttributeError"]`} title="Attribute lookup: instance dict ก่อน แล้วค่อยไล่ MRO chain ของ class" />
+
+Instance คือ object บางๆ ที่ `__dict__` ของตัวเองเก็บ attribute ของ*ตัวมันเอง* เวลาค้นหา `obj.attr` Python ตรวจ `__dict__` ของ instance ก่อน ถ้าไม่เจอก็เดินตาม MRO ของ class ทีละ class จนกว่าจะเจอ `attr` หรือหมด class แล้ว raise `AttributeError` การ assign (`obj.attr = x`) เขียนลง `__dict__` ของ *instance* เสมอ — ไม่เคยแก้ class — นี่คือเหตุผลที่การ shadow class attribute ผ่าน instance ไม่กระทบ class attribute ที่ instance อื่นเห็น และเหตุผลที่ bug shared-mutable-class-attribute จะกัดก็ต่อเมื่อคุณ *แก้ object ในที่เดิม* (`.append`) แทนที่จะ assign object ใหม่
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| Class attribute | Shared state สำเนาเดียวในหน่วยความจำ | แก้ในที่เดิมจะรั่วไปทุก instance |
+| Override `__new__` | ควบคุม instance creation ได้เต็มที่ (singleton, immutable subclass) | ผิดพลาดง่าย แทบไม่จำเป็นต้องใช้ |
+| Multiple inheritance + cooperative `super()` | reuse จาก base มากกว่าหนึ่ง MRO ที่แน่นอน | ทุก class ใน chain ต้องเรียก `super().__init__(**kwargs)` ไม่งั้น chain ขาด |
+| `isinstance` | เคารพ subclassing / polymorphism | ยอมรับกว้างกว่าการเทียบ type แบบเป๊ะเล็กน้อย |
+| `ABC` | Contract บังคับใช้ implementation ร่วมกัน fail เร็วตอน instantiation | บังคับ inheritance retrofit class ที่ไม่เกี่ยวข้องไม่ได้ |
+| `Protocol` | Structural ไม่ต้อง inherit ใช้กับ class ที่ไม่ได้เป็นเจ้าของได้ | static-only โดย default ไม่มี guarantee ของ `isinstance` เว้นแต่ `@runtime_checkable` |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **Class attribute เป็นแค่ "ค่า default" ที่ copy ไปให้แต่ละ instance** มันไม่ได้ copy — ทุก instance ที่ไม่ได้ shadow มันจะแชร์ object *เดียวกัน* การแก้ class attribute ที่ mutable ในที่เดิมจะกระทบทุก instance
+- **`__init__` สร้าง object** `__new__` ต่างหากที่สร้าง `__init__` แค่ initialise สิ่งที่มีอยู่แล้ว การ override `__new__` คือวิธีที่ singleton และ immutable-type subclass ทำงาน
+- **`isinstance(x, C)` กับ `type(x) == C` ใช้แทนกันได้** ทั้งสองเห็นตรงกันเฉพาะตอน `x` เป็น `C` เป๊ะๆ ไม่เคยเป็น subclass — `type(x) == C` ได้ `False` สำหรับทุก instance ของ subclass
+- **Diamond inheritance หายากพอที่จะไม่สนใจ cooperative behavior ของ `super()`** Class ไหนก็ตามที่อาจถูกผสมเข้า multiple inheritance ควรเรียก `super().__init__(**kwargs)` และส่ง kwargs ที่ไม่ได้ใช้ต่อไป ไม่งั้นจะทำให้ chain ขาดแบบเงียบๆ สำหรับใครก็ตามที่เอาไปรวมกับอย่างอื่น
+- **Attribute ที่ mangle ชื่อ (`__secret`) เป็น private จริงๆ** มันเข้าถึงได้จากภายนอกในชื่อ `obj._ClassName__secret` ตอน runtime — mangling แค่ป้องกันการชนชื่อโดยไม่ตั้งใจใน subclass และ type checker ปฏิเสธการเข้าถึงชื่อที่ mangle จากภายนอกแม้ interpreter จะยอมให้
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อ class ที่ generate มา ตรวจสิ่งเหล่านี้:
+
+- Attribute ระดับ class ที่ assign เป็น mutable literal — `items = []`, `config = {}` — ที่ method ไหนก็ตามแก้ในที่เดิม (`.append`, `.update`, `[key] =`) default นั้นถูกแชร์โดยทุก instance ไม่ใช่ของใหม่ต่อ instance
+- Subclass ใน multiple-inheritance chain ที่ `__init__` เรียก `super().__init__()` โดยไม่ส่ง argument หรือข้ามการเรียก `super()` ไปเลย ทำให้ kwargs ที่ class ถัดไปใน MRO ต้องการหายไป
+- `type(x) == SomeClass` ที่ใช้ในจุดที่ instance ของ subclass ควรนับด้วย — นี่ปฏิเสธทุก instance ของ subclass แบบเงียบๆ
+- `__new__` ที่ override แล้วลืม `return` instance หรือเรียก `cls(...)` แบบ recursive แทนที่จะเป็น `super().__new__(cls)` — ทั้งสองแบบทำให้ construction พัง
+- Class ที่ inherit จาก class ที่ไม่เกี่ยวข้องแค่เพื่อ reuse method เดียว — สัญญาณว่า composition (attribute แบบ `has-a`) คือเครื่องมือที่ถูกต้อง ไม่ใช่ inheritance
+
+<SpotTheBug code={`class ShoppingCart:
+    items = []  # meant as "default empty cart"
+
+    def add(self, item: str) -> None:
+        self.items.append(item)
+
+cart_a = ShoppingCart()
+cart_b = ShoppingCart()
+cart_a.add("book")
+print(cart_b.items)`} lang="python">
+`items = []` เป็น attribute ระดับ **class** ไม่ใช่ default ต่อ instance — มี list object เดียวเท่านั้น และทุก `ShoppingCart` ที่ไม่ได้ shadow `items` จะแชร์มัน `cart_a.add("book")` แก้ list ที่แชร์นั้นในที่เดิม ทำให้ `cart_b.items` พิมพ์ `['book']` ทั้งที่ไม่เคยเพิ่มอะไรให้ `cart_b` เลย ยืนยันแล้ว: `cart_a.items is cart_b.items` ได้ `True` แก้โดยสร้าง list ใน `__init__` แทน: `self.items: list[str] = []` ให้แต่ละ cart มี list เป็นของตัวเอง
+</SpotTheBug>
+
 export const quizClasses = [
   {
     q: "`__init__` ใน Python class มีจุดประสงค์อะไร?",
@@ -121,7 +411,8 @@ export const quizClasses = [
       "ถูกเรียกเมื่อ instance ถูกลบ",
       "กำหนด constant ระดับ class"
     ],
-    answer: 1
+    answer: 1,
+    explain: "__init__ รันหลังจาก instance ถูกสร้างแล้ว (สร้างโดย __new__) และตั้งค่า attribute ของมัน มันไม่เคยสร้างหรือ return instance เอง"
   },
   {
     q: "คุณกำหนด `species = 'Canis'` โดยตรงใน class body เป็น attribute ประเภทใด?",
@@ -131,7 +422,8 @@ export const quizClasses = [
       "Class attribute ที่ทุก instance ใช้ร่วมกัน",
       "Private attribute"
     ],
-    answer: 2
+    answer: 2,
+    explain: "อะไรก็ตามที่ assign โดยตรงใน class body (ไม่ใช่ใน method ไม่ใช่บน self) จะกลายเป็น class attribute — object เดียวที่เก็บบน class และแชร์โดยทุก instance ที่ไม่ได้ shadow มัน"
   },
   {
     q: "ภายใน instance method `self` อ้างถึงอะไร?",
@@ -141,7 +433,8 @@ export const quizClasses = [
       "Instance ที่เฉพาะเจาะจงที่ถูกเรียก method",
       "Parent class"
     ],
-    answer: 2
+    answer: 2,
+    explain: "self เป็นแค่ positional parameter ตัวแรกที่ Python bind ให้อัตโนมัติกับ instance ที่ถูกเรียก method — rex.bark() ส่ง rex เป็น self"
   },
   {
     q: "`super().__init__(name, sound)` ภายใน subclass ทำอะไร?",
@@ -151,7 +444,52 @@ export const quizClasses = [
       "Override __init__ ของ parent โดยสมบูรณ์",
       "Raise TypeError ถ้า parent ไม่มี __init__"
     ],
-    answer: 1
+    answer: 1,
+    explain: "super() คืน proxy ที่ส่งต่อการเรียกไปยัง class ถัดไปใน MRO — ในที่นี้คือ __init__ ของ parent — ทำให้ subclass reuse setup logic ของ parent แทนที่จะเขียนซ้ำ"
+  },
+  {
+    q: "```python\nclass Dog:\n    tricks: list[str] = []\n\n    def add_trick(self, t):\n        self.tricks.append(t)\n\nrex = Dog()\nfido = Dog()\nrex.add_trick(\"sit\")\nprint(fido.tricks)\n```\nโค้ดนี้พิมพ์อะไร?",
+    options: [
+      "[] -- fido มี list เป็นของตัวเอง",
+      "['sit'] -- fido แชร์ list object เดียวกับ rex",
+      "AttributeError: 'Dog' object has no attribute 'tricks'",
+      "TypeError: tricks is read-only"
+    ],
+    answer: 1,
+    explain: "tricks เป็น class attribute -- list เดียวที่ Dog ทุกตัวแชร์กัน rex.add_trick แก้ list ที่แชร์นั้นในที่เดิม ทำให้ fido.tricks เห็นการเปลี่ยนแปลงเดียวกัน: ['sit'] rex.tricks is fido.tricks ได้ True"
+  },
+  {
+    q: "```python\nclass Base:\n    def __init__(self, **kw): print(\"Base\", kw); super().__init__()\nclass Left(Base):\n    def __init__(self, **kw): print(\"Left\"); super().__init__(**kw)\nclass Right(Base):\n    def __init__(self, **kw): print(\"Right\"); super().__init__(**kw)\nclass Diamond(Left, Right):\n    def __init__(self, **kw): print(\"Diamond\"); super().__init__(**kw)\n\nDiamond(value=1)\n```\nลำดับการพิมพ์คืออะไร?",
+    options: [
+      "Diamond, Left, Base, Right",
+      "Diamond, Left, Right, Base",
+      "Diamond, Right, Left, Base",
+      "Base, Left, Right, Diamond"
+    ],
+    answer: 1,
+    explain: "Diamond.__mro__ คือ [Diamond, Left, Right, Base, object] แต่ละ super().__init__() ส่งต่อไปยัง class ถัดไปใน MRO นั้น ไม่ใช่ parent ตรงของตัวเอง ดังนั้น super() ของ Left จึงไปถึง Right ก่อน Base"
+  },
+  {
+    q: "`class Dog2(Animal): pass` และ `d = Dog2()`. ข้อไหนถูกต้อง?",
+    options: [
+      "isinstance(d, Animal) เป็น False เพราะ d เป็น Dog2 ไม่ใช่ Animal",
+      "type(d) == Animal เป็น True เพราะ Dog2 สืบทอดทุกอย่างจาก Animal",
+      "isinstance(d, Animal) เป็น True แต่ type(d) == Animal เป็น False",
+      "ทั้ง isinstance(d, Animal) และ type(d) == Animal เป็น False"
+    ],
+    answer: 2,
+    explain: "isinstance เดินตาม MRO ดังนั้น Dog2 จึงนับเป็น Animal ได้ถูกต้อง type(d) == Animal ต้องการ type ที่ตรงเป๊ะ -- type(d) คือ Dog2 จึงได้ False แม้ d จะ IS-A Animal ก็ตาม"
+  },
+  {
+    q: "Class หนึ่งกำหนด `self.__token = \"abc\"` ภายใน `__init__` จากภายนอก class อ่านค่านี้อย่างไร?",
+    options: [
+      "obj.__token -- double underscore ไม่มีผลอะไรจากภายนอก",
+      "obj._ClassName__token -- compiler เปลี่ยนชื่อผ่าน name mangling",
+      "อ่านจากภายนอก class ไม่ได้เลยไม่ว่าชื่อใด",
+      "obj.token -- Python ตัด leading underscore ทั้งสองตัวอัตโนมัติ"
+    ],
+    answer: 1,
+    explain: "Name mangling เขียน self.__token ใหม่เป็น self._ClassName__token ทุกที่ที่ปรากฏใน class body มันเข้าถึงได้จากภายนอกในชื่อที่ mangle แล้ว -- ไม่ใช่ privacy จริง แค่ป้องกันการชนชื่อสำหรับ subclass"
   }
 ];
 

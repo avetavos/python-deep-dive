@@ -1,6 +1,6 @@
 ---
 title: 'Basics & Syntax'
-description: 'Python''s design philosophy, readability principles, and your first runnable script.'
+description: 'Python''s design philosophy, everything-is-an-object, readability principles, and your first runnable script.'
 sidebar:
   order: 1
 ---
@@ -9,6 +9,7 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Python's design philosophy
 
@@ -44,14 +45,32 @@ for i in range(5):
 Mixing tabs and spaces causes a `TabError`.
 The community standard (PEP 8) is **4 spaces** — configure your editor once and forget about it.
 
+## The "everything is an object" thesis
+
+This is the single idea the rest of the course keeps coming back to: in Python, *everything you can name is an object* — not just the things that look like data. A number, a function, a class, a module, and even a type itself all have an identity (`id()`), a type (`type()`), and a set of attributes:
+
+```python
+print(type(42))            # <class 'int'>
+print((42).bit_length())   # 6 -- an int has methods, because it's an object
+print(type(print))         # <class 'builtin_function_or_method'>
+print(type(int))           # <class 'type'> -- int itself is an instance of type
+print(type(type))          # <class 'type'> -- type is an instance of itself
+```
+
+`int` is not a special primitive keyword — it is an object of type `type` (a class), the same way `Dog` would be if you defined it yourself. `print` is not special syntax either — it is a callable object, retrievable, assignable to another name, and passable as an argument like any other value. This single fact is why almost every later lesson can be explained in terms of "what object does this name refer to, and what happens when you call a method or operator on it" — there is no separate rulebook for "primitives" versus "objects."
+
+## How this course teaches you to read AI-generated code
+
+Every lesson from here on ends with two things aimed specifically at code you didn't write yourself: a short **"Reading AI-generated code"** checklist, and at least one **`<SpotTheBug>`** exercise with real, broken-looking-plausible code and a hidden explanation. The bugs in those exercises are not contrived — they are the same handful of patterns (mutable default arguments, `is` vs `==`, aliasing, forgetting `is None`, shadowing a builtin) that show up constantly in generated Python, because a language model reproduces common *shapes* of code without necessarily reasoning through Python's specific object and scoping semantics. Treat every checklist as a list of "things to grep for" before trusting a diff, not just exam material.
+
 ## What this module covers
 
 | Lesson | Core concept |
 |---|---|
-| **Variables & Types** | Dynamic typing, built-in types, truthiness |
-| **Control Flow** | `if`/`elif`/`else`, `for`, `while`, walrus `:=` |
-| **Functions** | `def`, parameters, return values, LEGB scope |
-| **Strings** | Methods, slicing, f-strings, immutability |
+| **Variables & Types** | Names vs objects, `is` vs `==`, mutability, truthiness |
+| **Control Flow** | `if`/`elif`/`else`, `match`, the iterator protocol, `for`, `while` |
+| **Functions** | `def`, mutable defaults, `*args`/`**kwargs`, LEGB scope |
+| **Strings** | Methods, slicing, `bytes` vs `str`, f-strings, immutability |
 
 Each lesson is self-contained and ends with a runnable playground, a callout, a quiz, and a progress checkpoint.
 
@@ -81,6 +100,71 @@ print("First program complete.")
 
 <Playground code={basicsIndexCode} />
 
+The second playground shows the "everything is an object" thesis in action, including a checking pattern that looks reasonable but breaks once subclassing is involved.
+
+export const basicsIndexDepthCode = `
+# 1. Everything is an object -- including functions, types, and type itself.
+print(type(42))
+print((42).bit_length())
+print(type(print))
+print(type(int))
+print(type(type))
+
+# 2. type(x) == SomeClass vs isinstance(x, SomeClass) with a subclass.
+class Animal:
+    pass
+
+class Dog(Animal):
+    pass
+
+fido = Dog()
+print(type(fido) == Animal)     # BUG-prone check: False, even though Dog IS an Animal
+print(isinstance(fido, Animal)) # True -- respects subclassing
+`.trim();
+
+<Playground code={basicsIndexDepthCode} />
+
+## Mental Model
+
+```text
+name "x"  ---->  object (id, type, value)
+name "describe"  ---->  function object (also has id, type, value)
+name "int"  ---->  class object, itself an instance of type
+name "type"  ---->  the class of every class, an instance of itself
+```
+
+Every box on the right side is the same kind of thing — an object with an identity and a type — no matter whether the name on the left refers to what you'd casually call "data" or "code." Reading Python fluently means asking, for any name, "what object does this refer to right now," rather than sorting names into separate mental categories of primitive vs. object.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Uniform object model | One mental model covers numbers, functions, classes, and modules | No separate "fast path" for primitives — everything carries object overhead |
+| `type()` reveals the exact class | Precise, unambiguous introspection | Comparing `type(x) == SomeClass` silently rejects legitimate subclasses |
+| Readability-first philosophy (PEP 20) | A canonical, discoverable way to do most things | Occasionally trades raw performance or terseness for clarity |
+| 4-space indentation as syntax | Forces consistently readable block structure across any codebase | Mixing tabs and spaces is a hard error (`TabError`), not just a style nit |
+
+## Common Misconceptions
+
+- **"Numbers, strings, and booleans are primitives; only custom classes are objects."** They are all objects — `type(42)` is `int`, a real class, and `(42).bit_length()` proves it has methods like any other object.
+- **"`type(x) == SomeClass` is the same as `isinstance(x, SomeClass)`."** It is not — `type(x) == SomeClass` is `False` for any subclass instance, while `isinstance` respects the whole class hierarchy.
+- **"Python's readability rules (PEP 8/PEP 20) are just style preferences with no real effect."** They shape what "looks right" enough that deviations are often exactly where bugs hide — a codebase that follows one obvious way to do things is easier to read for bugs, human or AI-generated.
+- **"A function or a class isn't really a value the way a number is."** Both are objects that can be assigned to a variable, stored in a list, or passed as an argument — `type(print)` and `type(int)` prove neither is special syntax.
+
+## Reading AI-generated code
+
+- Does a type check use `type(x) == SomeClass` where `isinstance(x, SomeClass)` is actually intended? The first silently rejects valid subclasses.
+- Does the code assume "primitives" (numbers, booleans, strings) behave differently from "real objects" — for example assuming they have no methods or can't be subclassed?
+- Whenever a lesson from here on gives you a checklist, does the code under review actually get checked against it, or does the review stop at "does it run"?
+- Is a function or class being treated as something other than an ordinary value — for example, never assigned to a variable or passed as an argument, when doing so would simplify the code?
+
+<SpotTheBug code={`def is_valid_item(item):
+    if type(item) == dict:
+        return "id" in item
+    return False`} lang="python">
+`type(item) == dict` only accepts a value whose type is *exactly* `dict` — a perfectly reasonable `dict` subclass (for example one returned by a library, or `collections.UserDict`, or a developer's own `class Config(dict): ...`) fails this check even though it behaves like a dict in every way that matters here. `isinstance(item, dict)` checks the whole class hierarchy and accepts subclasses too. The fix: `if isinstance(item, dict): return "id" in item`.
+</SpotTheBug>
+
 <Callout title="Python is fully object-oriented">
 Everything in Python is an object — integers, strings, functions, classes, and even modules.
 This means every value has a type (`type(42)` returns `int`), a set of attributes, and a set of methods.
@@ -89,6 +173,28 @@ You never need to "box" a primitive into a wrapper class as you would in Java.
 
 export const quizBasicsIndex = [
   {
+    q: "```python\nclass Animal:\n    pass\n\nclass Dog(Animal):\n    pass\n\nfido = Dog()\nprint(type(fido) == Animal)\nprint(isinstance(fido, Animal))\n```\nWhat does this print?",
+    options: [
+      "True\nTrue",
+      "False\nTrue",
+      "True\nFalse",
+      "False\nFalse"
+    ],
+    answer: 1,
+    explain: "type(fido) is exactly Dog, not Animal, so type(fido) == Animal is False. isinstance walks the whole class hierarchy, so isinstance(fido, Animal) is True because Dog subclasses Animal."
+  },
+  {
+    q: "```python\nprint(type(int))\nprint(type(type))\n```\nWhat does this print?",
+    options: [
+      "<class 'int'>\n<class 'int'>",
+      "<class 'type'>\n<class 'type'>",
+      "<class 'object'>\n<class 'object'>",
+      "A TypeError, because int and type aren't values"
+    ],
+    answer: 1,
+    explain: "int is itself an object -- an instance of the class type, the same way a custom class you define is. type is an instance of itself: the class of every class."
+  },
+  {
     q: "What does PEP 20 ('The Zen of Python') emphasise most strongly?",
     options: [
       "Maximum performance over clarity",
@@ -96,7 +202,8 @@ export const quizBasicsIndex = [
       "Compatibility with C and C++",
       "Strict static typing at all times"
     ],
-    answer: 1
+    answer: 1,
+    explain: "The Zen of Python's most-quoted lines ('Beautiful is better than ugly,' 'There should be one -- and preferably only one -- obvious way to do it') prioritize readability and a canonical approach over other concerns."
   },
   {
     q: "How does Python delimit code blocks such as function bodies and if-statements?",
@@ -106,12 +213,8 @@ export const quizBasicsIndex = [
       "Consistent indentation",
       "Semicolons at the end of each line"
     ],
-    answer: 2
-  },
-  {
-    q: "Which PEP defines Python's community style guide (4-space indentation, line length, etc.)?",
-    options: ["PEP 8", "PEP 20", "PEP 3000", "PEP 484"],
-    answer: 0
+    answer: 2,
+    explain: "Python uses indentation itself as the block-delimiting syntax; mixing tabs and spaces inconsistently raises a TabError rather than silently misparsing."
   },
   {
     q: "In Python, what is true of integers, strings, and functions?",
@@ -121,7 +224,8 @@ export const quizBasicsIndex = [
       "Only functions are objects; integers are primitives",
       "They must be declared before use"
     ],
-    answer: 1
+    answer: 1,
+    explain: "There is no primitive/object split in Python -- an int, a str, and a function are all objects, each with its own type, attributes, and methods."
   }
 ];
 

@@ -1,6 +1,6 @@
 ---
 title: Functions
-description: 'Defining functions with def, parameters and return values, multiple returns via tuples, docstrings, and LEGB scope.'
+description: 'def, parameters, *args/**kwargs, mutable default arguments, positional-only parameters, LEGB scope, and UnboundLocalError in Python.'
 sidebar:
   order: 4
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Defining a function
 
@@ -26,7 +28,7 @@ print(greet("Bob", greeting="Hi")) # Hi, Bob!
 ```
 
 The second parameter has a **default value** — callers may omit it.
-Default values are evaluated once at function definition time, not at call time.
+Default values are evaluated **once**, when the `def` statement runs — not on every call. That single fact is behind two of the most common bugs in AI-generated Python, covered below.
 
 ## Parameters and calling conventions
 
@@ -43,6 +45,65 @@ demo(1, normal=2, kw_only=3) # OK
 - **Positional-only** (before `/`): cannot be passed by keyword.
 - **Normal**: positional or keyword.
 - **Keyword-only** (after `*`): must be passed by keyword.
+
+Positional-only parameters exist so a library can rename an internal parameter later without breaking any caller — nobody could have been passing it by that name, because the language forbids it:
+
+```python
+def power(base, /, exponent=2):
+    return base ** exponent
+
+print(power(3))          # 9
+try:
+    power(base=3)         # base is positional-only -- keyword form rejected
+except TypeError as e:
+    print(f"power(base=3) -> TypeError: {e}")
+```
+
+## `*args`, `**kwargs`, and unpacking at the call site
+
+A parameter prefixed with `*` collects any extra positional arguments into a `tuple`; one prefixed with `**` collects extra keyword arguments into a new `dict`. The same `*`/`**` syntax works in reverse at a **call site**, spreading a sequence or mapping back out into separate arguments:
+
+```python
+def total(*args, **kwargs):
+    print("args:", args, "kwargs:", kwargs)
+    return sum(args) + sum(kwargs.values())
+
+numbers = [1, 2, 3]
+extra = {"bonus": 10}
+print(total(*numbers, **extra))
+# args: (1, 2, 3) kwargs: {'bonus': 10}
+# 16
+```
+
+This pattern — `def wrapper(*args, **kwargs): return inner(*args, **kwargs)` — is exactly how a generic wrapper or decorator forwards whatever it was called with, without knowing the wrapped function's real signature.
+
+## Mutable default arguments
+
+A default value is evaluated once and stored on the function object itself — so a **mutable** default (a `list`, `dict`, or `set` literal) is the *same object*, shared and potentially mutated, across every call that doesn't override it:
+
+```python
+def add_item(item, items=[]):  # BUG: the same list object is reused across calls
+    items.append(item)
+    return items
+
+print(add_item("apple"))   # ['apple']
+print(add_item("banana"))  # ['apple', 'banana'] -- "apple" leaked in from the last call
+```
+
+Nothing about the second call mentioned `"apple"` — the bug is invisible until a second call happens to run, which is exactly why it survives code review and a quick test. The fix is the **`None` sentinel** pattern: default to `None`, then create a fresh mutable object inside the function body when nothing was passed:
+
+```python
+def add_item_fixed(item, items=None):
+    if items is None:   # a brand-new list every call that doesn't supply one
+        items = []
+    items.append(item)
+    return items
+
+print(add_item_fixed("apple"))   # ['apple']
+print(add_item_fixed("banana"))  # ['banana']
+```
+
+The same "evaluated once" rule bites any default meant to be "the current time" or "a fresh object" — `def log_event(message, at=datetime.now()):` freezes `at` at the moment the module is imported, not at call time. Use the same `None`-sentinel fix: `at=None`, then `at = at if at is not None else datetime.now()` inside the body.
 
 ## Returning multiple values
 
@@ -102,8 +163,42 @@ def outer():
 print(outer())  # 60
 ```
 
-Use `global name` to rebind a module-level variable from inside a function.
-Use `nonlocal name` to rebind a variable from an enclosing (non-global) scope.
+Reading a name only needs LEGB lookup to find it. **Assigning** to a name inside a function is different: Python decides, at *compile* time, that any name assigned anywhere in a function body is local to that function — for the *entire* function, even on lines before the assignment. That is what makes `count += 1` dangerous:
+
+```python
+counter = 0
+
+def increment_buggy():
+    counter += 1  # BUG: this assignment makes counter LOCAL for the whole function
+    return counter
+
+increment_buggy()  # UnboundLocalError: cannot access local variable 'counter'
+                    # where it is not associated with a value
+```
+
+`counter += 1` is really `counter = counter + 1` — a read *and* an assignment. Because `counter` is assigned somewhere in this function, Python treats it as local everywhere in the function, including the read on the right-hand side, which now happens before the local `counter` has ever been given a value. Use `global name` to tell Python explicitly that a reassignment should rebind the module-level variable; use `nonlocal name` for the same thing one level up, in an enclosing (non-global) function:
+
+```python
+def increment_fixed():
+    global counter
+    counter += 1
+    return counter
+
+print(increment_fixed())  # 1
+print(increment_fixed())  # 2
+```
+
+## `callable`
+
+`callable(obj)` tells you whether `obj` can be called with `()` — true for functions, classes, and any object whose class defines `__call__`, false for plain data like an `int` or a `str`:
+
+```python
+print(callable(len))    # True
+print(callable(42))     # False
+print(callable(power))  # True -- functions are callable objects too
+```
+
+This is a quick way to check "is this actually a function I can invoke" before calling something that arrived as a parameter — useful when reading code that accepts a callback.
 
 ## Full runnable demo
 
@@ -142,6 +237,133 @@ print(f"no_return() gives: {result}")
 
 <Playground code={functionsCode} />
 
+The second playground is a tour of every pitfall above, all shown failing on purpose and then fixed.
+
+export const functionsDepthCode = `
+from datetime import datetime
+import time
+
+# 1. Mutable default argument: evaluated ONCE, at def time, then shared/reused.
+def add_item(item, items=[]):  # BUG: the same list object is reused across calls
+    items.append(item)
+    return items
+
+print("call 1:", add_item("apple"))
+print("call 2:", add_item("banana"))   # apple is still there -- shared default!
+
+def add_item_fixed(item, items=None):
+    if items is None:      # None sentinel: a fresh list every call
+        items = []
+    items.append(item)
+    return items
+
+print("fixed call 1:", add_item_fixed("apple"))
+print("fixed call 2:", add_item_fixed("banana"))
+
+# 2. A default value that looks dynamic but is frozen at def time.
+def log_event(message, at=datetime.now()):  # BUG: at is fixed once, at import time
+    return f"{at.isoformat()}: {message}"
+
+first = log_event("start")
+time.sleep(0.05)
+second = log_event("still running")
+print("same timestamp both calls:", first.split(":")[0:2] == second.split(":")[0:2])
+
+def log_event_fixed(message, at=None):
+    at = at if at is not None else datetime.now()
+    return f"{at.isoformat()}: {message}"
+
+# 3. *args / **kwargs and call-site unpacking.
+def total(*args, **kwargs):
+    print("args:", args, "kwargs:", kwargs)
+    return sum(args) + sum(kwargs.values())
+
+numbers = [1, 2, 3]
+extra = {"bonus": 10}
+print("total:", total(*numbers, **extra))
+
+# 4. Positional-only parameters.
+def power(base, /, exponent=2):
+    return base ** exponent
+
+print("power(3):", power(3))
+try:
+    power(base=3)  # base is positional-only -- keyword form rejected
+except TypeError as e:
+    print(f"power(base=3) -> TypeError: {e}")
+
+# 5. UnboundLocalError from count += 1 without global.
+counter = 0
+
+def increment_buggy():
+    counter += 1  # BUG: this makes counter a LOCAL name -- read before assignment
+    return counter
+
+try:
+    increment_buggy()
+except UnboundLocalError as e:
+    print(f"increment_buggy() -> UnboundLocalError: {e}")
+
+def increment_fixed():
+    global counter
+    counter += 1
+    return counter
+
+print("increment_fixed():", increment_fixed())
+print("increment_fixed():", increment_fixed())
+
+# 6. callable().
+print("callable(len):", callable(len))
+print("callable(42):", callable(42))
+print("callable(power):", callable(power))
+`.trim();
+
+<Playground code={functionsDepthCode} />
+
+## Mental Model
+
+A function call creates a fresh **frame** — its own local namespace — and throws it away when the call returns. Name lookup for a *read* walks outward through frames using LEGB. An *assignment* never walks outward on its own: Python decides which frame a name belongs to before the function even runs, based on whether that name is assigned anywhere in the body — which is why an unqualified `counter += 1` creates a local `counter` instead of reaching the outer one.
+
+<Mermaid code={legbDiagram} title="Reading a name searches outward through LEGB; assigning targets the local frame unless global/nonlocal says otherwise" />
+
+export const legbDiagram = `flowchart TB
+  L["Local: current function's frame"] --> E["Enclosing: any outer function's frame"]
+  E --> G["Global: the module namespace"]
+  G --> B["Built-in: len, print, callable, ..."]
+  L -.->|"assignment stays here unless declared global/nonlocal"| L`;
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Defaults evaluated once, at def time | Fast — no per-call re-evaluation | A mutable or "current value" default freezes state across calls |
+| `*args` / `**kwargs` | Flexible, forwarding-friendly signatures | The signature no longer documents which arguments are actually expected |
+| Positional-only `/` | A library can rename that parameter later without breaking callers | Slightly more ceremony to read; unfamiliar to newcomers |
+| Implicit `None` return | Every function has a defined, consistent return value | Silently masks a forgotten `return`; easy to use the result and not notice |
+| LEGB with explicit `global`/`nonlocal` | Reading outer names needs no boilerplate | Reassigning one does — forget the declaration and get `UnboundLocalError` |
+
+## Common Misconceptions
+
+- **"A default of `[]` gives a fresh empty list on every call."** It does not — the list is created once, when the `def` statement runs, and that same object is reused on every call that doesn't override it.
+- **"`items=None` alone makes the parameter optional and safe."** `None` is only a sentinel; you still have to write `if items is None: items = []` yourself inside the function body.
+- **"Reading a global variable inside a function requires the `global` keyword."** It does not — only *reassigning* it does. `print(counter)` inside a function needs nothing special; `counter += 1` does.
+- **"A function with no `return` statement is an error, or returns nothing at all."** It returns `None` — a real, valid object — every time, with no exception raised.
+- **"`*args` and `**kwargs` must be named exactly that."** Only the `*` and `**` matter; the names are convention, not syntax — `def f(*values, **options):` works identically.
+
+## Reading AI-generated code
+
+- Does a default value use a mutable literal (`[]`, `{}`, `set()`) or a call that only runs once (`datetime.now()`, `time.time()`, `uuid.uuid4()`)? Both freeze at `def` time, not call time.
+- Does the function reassign (not just read) a name that also exists at module scope, such as `count += 1` or `cache[key] = value` where `cache` itself is reassigned? Look for a missing `global`/`nonlocal`.
+- Does every code path actually `return` a value, or can execution fall off the end of the function and silently produce `None`?
+- Does `*args`/`**kwargs` swallow parameters that should be explicit and documented, hiding what the function really accepts from both readers and type checkers?
+- If the function is meant to be called with certain arguments only positionally (to allow renaming later), is there a `/` in the signature — or is that left to convention and a docstring?
+
+<SpotTheBug code={`def add_item(item, items=[]):
+    items.append(item)
+    return items`} lang="python">
+`items=[]` is evaluated once, when this `def` statement runs, and that single list object is attached to the function and reused on every call that omits `items`. The first call returns `["apple"]`; a second call with a different item does not start from an empty list — it appends onto the same list from before, silently accumulating state across unrelated calls. Fix it with the `None` sentinel: `def add_item(item, items=None): items = items if items is not None else []` (or `if items is None: items = []` in the body), so each call that doesn't supply `items` gets a brand-new list.
+</SpotTheBug>
+
 <Callout title="Functions return None by default">
 If a function body ends without a `return` statement, or contains a bare `return` with no value,
 Python automatically returns `None`.
@@ -153,44 +375,60 @@ Use `sorted(lst)` (returns a new list) when you need the return value.
 
 export const quizFunctions = [
   {
-    q: "What does a Python function return if it has no `return` statement?",
+    q: "```python\ndef add_item(item, items=[]):\n    items.append(item)\n    return items\n\nprint(add_item(\"a\"))\nprint(add_item(\"b\"))\n```\nWhat does this print?",
     options: [
-      "0",
-      "An empty string",
-      "None",
-      "It raises a RuntimeError"
+      "['a']\n['b']",
+      "['a']\n['a', 'b']",
+      "Raises TypeError on the second call",
+      "['b']\n['a', 'b']"
     ],
-    answer: 2
+    answer: 1,
+    explain: "The default list is created once, at def time, and shared across every call that omits items. The second call appends onto the same list the first call already mutated."
   },
   {
-    q: "Given `def f(a, b=5): ...`, which call is valid?",
+    q: "```python\ncounter = 0\n\ndef increment():\n    counter += 1\n    return counter\n\nincrement()\n```\nWhat happens?",
     options: [
-      "f()",
-      "f(1)",
-      "f(b=3)",
-      "f(1, 2, 3)"
+      "Returns 0",
+      "Returns 1",
+      "Raises UnboundLocalError",
+      "Raises NameError"
     ],
-    answer: 1
+    answer: 2,
+    explain: "Assigning to counter anywhere in the function body makes it local for the whole function. counter += 1 reads that local counter before it has ever been given a value -- UnboundLocalError, not NameError."
   },
   {
-    q: "In the LEGB rule, what does 'E' stand for?",
+    q: "When are Python's default argument values evaluated?",
     options: [
-      "External scope",
-      "Enclosing function scope",
-      "Exported module scope",
-      "Exception handler scope"
+      "Every time the function is called",
+      "Once, when the def statement runs",
+      "Once, the first time the function is called",
+      "Never, until the value is actually used"
     ],
-    answer: 1
+    answer: 1,
+    explain: "A default is computed once, when def executes and the function object is created, not per call -- which is exactly why mutable defaults and datetime.now() defaults freeze."
   },
   {
-    q: "What is the result of `low, high = min_max([3, 1, 4])`?",
+    q: "```python\ndef power(base, /, exponent=2):\n    return base ** exponent\n```\nWhich call raises a TypeError?",
     options: [
-      "low=3, high=4",
-      "low=1, high=4",
-      "low=1, high=3",
-      "A tuple (1, 4) is assigned to low"
+      "power(3)",
+      "power(3, 4)",
+      "power(base=3)",
+      "power(3, exponent=4)"
     ],
-    answer: 1
+    answer: 2,
+    explain: "The / marks base as positional-only -- it can never be passed by keyword, so power(base=3) is rejected even though 3 is a perfectly valid value."
+  },
+  {
+    q: "What does `callable(42)` return?",
+    options: ["True", "False", "TypeError", "42"],
+    answer: 1,
+    explain: "An int has no __call__ method, so it cannot be invoked with (). callable() returns False for plain data values like numbers and strings."
+  },
+  {
+    q: "```python\ndef total(*args, **kwargs):\n    return sum(args) + sum(kwargs.values())\n\nnumbers = [1, 2, 3]\nextra = {\"bonus\": 10}\nprint(total(*numbers, **extra))\n```\nWhat does this print?",
+    options: ["16", "TypeError", "6", "[1, 2, 3, 10]"],
+    answer: 0,
+    explain: "*numbers unpacks [1, 2, 3] into three positional arguments captured by *args; **extra unpacks {'bonus': 10} into a keyword argument captured by **kwargs. sum((1,2,3)) + sum((10,)) == 16."
   }
 ];
 

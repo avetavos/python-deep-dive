@@ -1,6 +1,6 @@
 ---
 title: 'OOP และ Data Model'
-description: 'ภาพรวมของการเขียนโปรแกรมเชิงวัตถุใน Python และ special-method protocol ที่ขับเคลื่อน built-in syntax'
+description: 'ภาพรวมของ Python object-oriented programming, chain instance → class → type และ special-method protocol ที่ขับเคลื่อน built-in syntax'
 sidebar:
   order: 1
 ---
@@ -9,11 +9,13 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
-## ทุกอย่างใน Python คือ object
+## ทุกอย่างใน Python เป็น object
 
-Python เป็นภาษาที่เน้น object-oriented อย่างเต็มรูปแบบ: จำนวนเต็ม, string, function, module — ทุกค่าล้วนเป็น **object** ที่มี identity, type และ value
-**class** คือแบบพิมพ์เขียว ส่วน **object** (หรือ *instance*) คือสิ่งที่สร้างจาก class นั้นด้วย `ClassName(...)`
+Python เป็นภาษา object-oriented เต็มรูปแบบ: integer, string, function, module — ทุกค่าเป็น **object** ที่มี identity, type และ value
+**Class** คือ blueprint; **object** (หรือ *instance*) คือสิ่งที่คุณสร้างจาก blueprint นั้นด้วย `ClassName(...)`
 
 ```python
 x = 42
@@ -23,12 +25,12 @@ print(id(x))      # unique memory address
 
 ## Special-method protocol
 
-Python เปิดเผย operation ของ built-in แทบทั้งหมดผ่าน **dunder methods** (เมธอดที่มี double-underscore เช่น `__init__`, `__repr__`, `__add__`)
-เมื่อเขียน `a + b` Python จะเรียก `a.__add__(b)`
-เมื่อเขียน `len(obj)` Python จะเรียก `obj.__len__()`
-เมื่อเขียน `repr(obj)` Python จะเรียก `obj.__repr__()`
+Python เปิดให้เข้าถึง built-in operation เกือบทั้งหมดผ่าน **dunder methods** (method double-underscore อย่าง `__init__`, `__repr__`, `__add__`)
+เมื่อคุณเขียน `a + b`, Python เรียก `a.__add__(b)`
+เมื่อคุณเขียน `len(obj)`, Python เรียก `obj.__len__()`
+เมื่อคุณเขียน `repr(obj)`, Python เรียก `obj.__repr__()`
 
-กลไกนี้เรียกว่า **Python Data Model** — ทำให้ class ของเราผสานเข้ากับ built-in syntax และฟังก์ชันของ standard library ได้อย่างราบรื่น
+Protocol นี้เรียกว่า **Python Data Model** — มันทำให้ class ของคุณผสานเข้ากับ built-in syntax และ function ของ standard library ได้อย่างไร้รอยต่อ
 
 ## Class ที่เรียบง่ายที่สุด
 
@@ -42,17 +44,28 @@ class Point:
         return f"Point({self.x}, {self.y})"
 ```
 
-- `__init__` คือ **initialiser** — ทำงานทันทีหลังสร้าง object และกำหนด instance attribute
-- `__repr__` ให้ string representation ที่อ่านง่ายสำหรับนักพัฒนา
+- `__init__` คือ **initialiser** — มันรันทันทีหลัง object ถูกสร้างและตั้งค่า instance attribute
+- `__repr__` ให้ object มี string representation ที่เป็นมิตรกับ developer
 
-## สิ่งที่ module นี้ครอบคลุม
+## Class ก็เป็น object เหมือนกัน: instance → class → type
+
+Chain ไม่หยุดแค่ "object มี class" Class เองก็เป็น object และมี type ด้วย — `type(Point)` คือ `<class 'type'>` `type` คือ **metaclass** ที่เป็น built-in: type ของทุก class ธรรมดา รวมถึงตัวมันเอง (`type(type)` คือ `type` — chain จบตรงนั้น)
+
+<Mermaid code={`flowchart LR
+  p1["p1 (a Point instance)"] -->|"type(p1)"| Point["Point (the class)"]
+  Point -->|"type(Point)"| Type["type (the metaclass)"]
+  Type -->|"type(type)"| Type`} title="Type chain ของทุก object จบที่ type ซึ่งเป็น type ของตัวเอง" />
+
+นี่ไม่ใช่กรณีพิเศษของชื่อ built-in ตัวเดียว — มันคือวิธีที่ทุก class ใน Python ถูกสร้าง รวมถึง class ที่คุณเขียนเองด้วย `Point.__mro__` คือ `(Point, object)`: แม้ class ที่ไม่มี base ชัดเจนก็สืบทอดจาก `object` ในที่สุด ซึ่งเป็นรากของ class hierarchy ทุกตัว บทถัดไปในโมดูลนี้ใช้ chain นี้ตลอด: `isinstance(x, C)` เดินตามมัน `super()` เดินตาม MRO ที่มันสร้างสำหรับ base หลายตัว และ metaclass (เครื่องมือขั้นสูงที่แทบไม่จำเป็นต้องใช้) ก็แค่ class ที่ instance ของมันเป็น class เอง — subclass ของ `type` ขึ้นไปอีกหนึ่งชั้นจากที่โค้ดทั่วไปต้องไปถึง
+
+## สิ่งที่โมดูลนี้ครอบคลุม
 
 | บทเรียน | หัวข้อ |
 |---|---|
-| 1. Classes | `class`, `__init__`, instance vs class attributes, inheritance |
-| 2. Dunder methods | `__repr__`, `__eq__`, `__len__`, `__getitem__`, `__add__` |
-| 3. Properties | `@property`, computed attributes, `@classmethod`, `@staticmethod` |
-| 4. Dataclasses | `@dataclass`, defaults, `field`, `frozen=True` |
+| 1. Classes | `class`, `__init__` vs `__new__`, shared mutable class attribute, MRO/diamond inheritance, `isinstance` vs `type()`, duck typing vs `ABC`/`Protocol` |
+| 2. Dunder methods | `__repr__`/`__str__`, `__eq__`/`__hash__`, `NotImplemented`, `__iter__`/`__next__`, `__call__`, `__getattr__`/`__getattribute__` |
+| 3. Properties | `@property` ในฐานะ descriptor, การเขียน descriptor เอง, `cached_property`, `@classmethod` ที่ return `Self` |
+| 4. Dataclasses | `@dataclass`, `field`, `frozen=True`, `slots=True`, `order=True`, `kw_only`, dataclass เทียบกับ `NamedTuple`/`TypedDict`/pydantic |
 
 ## Demo รันได้จริง
 
@@ -68,62 +81,174 @@ class Point:
     def __add__(self, other: "Point") -> "Point":
         return Point(self.x + other.x, self.y + other.y)
 
+
 p1 = Point(1, 2)
 p2 = Point(3, 4)
 print(p1)
 print(p1 + p2)
 print(type(p1))
 print(isinstance(p1, Point))
+print(type(Point))       # the class itself is an instance of type
+print(type(type(p1)))    # same thing, spelled through the instance
+print(type(type))        # type is its own metaclass -- the chain stops here
+print(Point.__mro__)
+
+
+class Base:
+    def __init__(self) -> None:
+        self.ready = True
+        print("Base.__init__ ran")
+
+
+class Broken(Base):
+    def __init__(self, name: str) -> None:
+        self.name = name  # forgot super().__init__() -- Base.__init__ never runs
+
+
+b = Broken("widget")
+print(b.name)
+try:
+    print(b.ready)
+except AttributeError as e:
+    print(f"AttributeError: {e}")
 `.trim();
 
 <Playground code={oopIndexCode} />
 
 <Callout title="Classes integrate with Python syntax via dunder methods">
-คุณไม่จำเป็นต้องเรียก `__add__` โดยตรง — แค่เขียน `p1 + p2`
-Python จะค้นหา `__add__` บน operand ทางซ้ายและเรียกให้อัตโนมัติ
-ทุก operator, ฟังก์ชัน built-in และ language construct มี dunder method ที่ class ของคุณสามารถ implement ได้
+คุณไม่ต้องเรียก `__add__` ตรงๆ — คุณเขียน `p1 + p2`
+Python ค้นหา `__add__` บน operand ซ้ายแล้วเรียกให้คุณ
+Operator, built-in function และ language construct ทุกตัวมี dunder method ที่สอดคล้องกันที่ class ของคุณ implement ได้
 </Callout>
+
+## Mental Model
+
+<Mermaid code={`flowchart TD
+  Call["Point(1, 2)"] --> New["type.__call__ runs Point.__new__(Point) -- creates a bare instance"]
+  New --> Init["Point.__init__(instance, 1, 2) -- fills in the attributes"]
+  Init --> Ready["fully-constructed p1"]`} title="การสร้าง instance: __new__ สร้างมันขึ้นมา __init__ เติมค่าให้" />
+
+กลไกทุกอย่างที่โมดูลนี้ครอบคลุม — attribute lookup, MRO, descriptor, การสร้าง dataclass — เป็นความหลากหลายของแนวคิดเดียวกัน: class คือ namespace ของชื่อ instance คือ namespace ที่บางกว่าซ้อนอยู่ด้านบน และ Python มีลำดับที่ชัดเจน ตรวจสอบได้เสมอสำหรับการ resolve ชื่อกับทั้งสอง `Point(1, 2)` ไม่ใช่ magic: `type.__call__` รัน `Point.__new__` เพื่อสร้าง object เปล่าๆ แล้วรัน `Point.__init__` เพื่อเติมค่า — การแบ่งสองขั้นตอนแบบเดียวกับที่บท Classes ใช้อธิบาย singleton และ immutable-type subclass ถามตัวเองต่อไปว่า "object อะไร type อะไร ลำดับไหน" ระหว่างอ่านโค้ดที่เต็มไปด้วย class แล้ว Data Model ที่เหลือจะไม่รู้สึกเหมือนรายการ dunder method ที่ไม่เกี่ยวข้องกันอีกต่อไป
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| ทุกอย่างเป็น object | Mental model เดียวที่ใช้ได้กับ int, function, class และ module | "Object" ไม่ได้แปลว่า "instance ของ class ที่ฉันเขียน" อีกต่อไป — มันรวมสิ่งที่รู้สึกเหมือน syntax ด้วย |
+| Data Model (dunder method) | Class ของคุณผสานเข้ากับ `+`, `len()`, `for`, `with` และ built-in อื่นๆ ทุกตัว | Dunder ทุกตัวที่คุณ implement คือ contract ที่ต้องรักษาให้ถูกต้อง ไม่งั้น built-in syntax จะทำงานผิดแบบสับสน |
+| Object model ที่ลึกและสม่ำเสมอ (instance → class → type) | กฎเดียวกันอธิบาย classmethod, metaclass และ isinstance ได้ทั้งหมด | ชั้น metaclass เป็น complexity จริงที่มองข้ามได้ง่ายจนกว่าบางอย่าง (ORM, framework) จะใช้มันกับคุณ |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **มีแค่สิ่งที่คุณสร้างด้วย `class` เท่านั้นที่เป็น "object"** Integer, string, function, module และ class เองล้วนเป็น object ทั้งหมด — `type(42)`, `type(print)` และ `type(int)` ล้วน return class จริง
+- **Class ต่างจาก object ที่มันสร้างอย่างพื้นฐาน** Class ก็เป็น object เหมือนกัน — เป็น instance ของ `type` — นั่นคือเหตุผลที่ `type(Point)` เป็นคำถามที่มีความหมายและมีคำตอบจริง
+- **ระบบ dunder method เป็นรายการตายตัวที่ใช้หรือไม่ใช้ก็ได้** มันเป็น protocol แบบเปิด — class ไหนก็ opt-in บางส่วนของมันได้ และ Python เรียกแค่ method ที่จำเป็นสำหรับ syntax ที่ใช้จริงเท่านั้น
+- **`isinstance`, `super()` และการสร้าง dataclass เป็น feature ที่ไม่เกี่ยวข้องกันที่ต้องท่องจำแยกกัน** ทั้งหมดเป็นผลจาก object model เดียวกัน: `isinstance` เดินตาม class hierarchy `super()` เดินตาม MRO และ `@dataclass` ก็แค่เขียน method ธรรมดาลงบน class ด้วยกฎเดียวกับที่ method ที่เขียนด้วยมือทุกตัวทำตาม
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อ class hierarchy ที่ generate มาแค่มองผ่านๆ ตรวจสิ่งเหล่านี้:
+
+- `__init__` ของ subclass เรียก `super().__init__(...)` ไหม? การข้ามมันเป็น bug ที่พบบ่อยที่สุดตัวหนึ่งในโค้ดที่ generate มา — attribute ที่ parent ตั้งค่า (รวมถึงตัวที่ method อื่นพึ่งพา) จะไม่มีอยู่บน subclass เลย และ failure จะปรากฏทีหลังเป็น `AttributeError` ที่ห่างไกลจากจุดที่ขาดการเรียก
+- โค้ดเทียบ type ด้วย `type(x) == SomeClass` ในจุดที่ตั้งใจจะเช็คแบบ `isinstance` (ที่เคารพ subclass) ชัดเจนไหม?
+- มี object mutable ถูก assign เป็น class-level attribute ที่ method ไหนก็ตามแก้ในที่เดิมไหม? ทุก instance จะแชร์มัน
+- Comparison dunder (`__eq__`) ถูกกำหนดโดยไม่มี `__hash__` ที่เข้าคู่กันไหม แล้ว class นั้นถูกเอาไปใช้ใน set หรือเป็น dict key ทีหลังไหม?
+- มี inheritance chain ที่ลึกในจุดที่ความสัมพันธ์แบบ `has-a` (composition) จะง่ายกว่าและเปราะบางน้อยกว่า "subclass อีกตัวก็พอ" ไหม?
+
+<SpotTheBug code={`class Connection:
+    def __init__(self, host: str) -> None:
+        self.host = host
+        self.is_open = True
+
+
+class LoggingConnection(Connection):
+    def __init__(self, host: str, log_prefix: str) -> None:
+        self.log_prefix = log_prefix  # forgot super().__init__(host)
+
+
+conn = LoggingConnection("db.example.com", "[DB]")
+print(conn.log_prefix)
+print(conn.is_open)`} lang="python">
+`LoggingConnection.__init__` ไม่เคยเรียก `super().__init__(host)` เลย ดังนั้น `Connection.__init__` จึงไม่เคยรัน — `self.host` และ `self.is_open` ไม่เคยถูกตั้งค่า `conn.log_prefix` พิมพ์ได้ปกติ แต่ `conn.is_open` raise `AttributeError: 'LoggingConnection' object has no attribute 'is_open'` ยืนยันแล้วบน 3.14 นี่คือ bug ที่พบบ่อยที่สุดตัวหนึ่งในโมดูลนี้ที่เชื่อมหลายบทเข้าด้วยกัน: มันดูเหมือน cooperative-`super()` chain จากบท Classes ทุกประการ ยกเว้นการเรียกหายไปทั้งหมด ทำให้ chain ไม่เคยเริ่มต้น แก้โดยเพิ่ม `super().__init__(host)` เป็นบรรทัดแรกของ `LoggingConnection.__init__`
+</SpotTheBug>
 
 export const quizOopIndex = [
   {
-    q: "Dunder method ใดที่ทำงานเมื่อเขียน `obj = MyClass(1, 2)`?",
+    q: "Dunder method ไหนรันเมื่อคุณเขียน `obj = MyClass(1, 2)`?",
     options: [
       "__new__",
       "__init__",
       "__create__",
       "__call__"
     ],
-    answer: 1
+    answer: 1,
+    explain: "__new__ สร้าง instance ก่อนจริงๆ (ปกติมองไม่เห็น ผ่าน default implementation) แล้ว __init__ ถึงรันบน instance ที่สร้างแล้วเพื่อตั้งค่า attribute __create__ ไม่มีอยู่จริง; __call__ คือสิ่งที่ทำให้ object เรียกได้แบบ MyClass(...) แต่มันคือ type.__call__ ที่ orchestrate __new__ และ __init__ อยู่เบื้องหลัง"
   },
   {
-    q: "Python เรียก method ใดภายใต้ hood เมื่อเขียน `len(my_list)`?",
+    q: "Python เรียกอะไรภายในเมื่อคุณเขียน `len(my_list)`?",
     options: [
       "my_list.length()",
       "my_list.__len__()",
       "len.__call__(my_list)",
       "my_list.size()"
     ],
-    answer: 1
+    answer: 1,
+    explain: "len() เป็น wrapper บางๆ ที่เรียก __len__ บน argument ของมัน -- นี่คือ Data Model ที่ทำงานจริง: built-in function ส่งต่อไปยัง dunder method แทนที่จะมี logic เฉพาะ type อยู่ในตัวมันเอง"
   },
   {
-    q: "คำศัพท์ใดหมายถึงระบบ dunder method ที่ผสาน class เข้ากับ Python syntax?",
+    q: "คำที่ใช้เรียกระบบ dunder method ที่ผสาน class เข้ากับ Python syntax คืออะไร?",
     options: [
       "The magic system",
       "The protocol buffer",
       "The Python Data Model",
       "The operator registry"
     ],
-    answer: 2
+    answer: 2,
+    explain: "Python Data Model คือชื่อทางการของ protocol นี้ -- มันถูก document ไว้เป็นบทของตัวเองใน Python reference และนิยาม contract ของ dunder method ทุกตัว"
   },
   {
-    q: "ข้อความใดเกี่ยวกับ object ใน Python เป็นความจริง?",
+    q: "ข้อความไหนเกี่ยวกับ Python object เป็นจริง?",
     options: [
-      "เฉพาะ class instance เท่านั้นที่เป็น object; primitive เช่น int ไม่ใช่",
+      "มีแค่ class instance เท่านั้นที่เป็น object; primitive อย่าง int ไม่ใช่",
       "ทุกค่าใน Python เป็น object ที่มี identity, type และ value",
       "Function ไม่ใช่ object",
-      "Object มีอยู่เฉพาะ runtime หลังจากการจัดสรรที่ชัดเจนเท่านั้น"
+      "Object มีอยู่แค่ตอน runtime หลัง allocation อย่างชัดเจนเท่านั้น"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Integer, string, function และ class ล้วนเป็น object ใน Python -- type(42), type(print) และ type(int) ล้วน return class จริง ยืนยันว่าไม่มี category พิเศษที่ไม่ใช่ object"
+  },
+  {
+    q: "```python\nclass Point:\n    pass\n\nprint(type(Point))\nprint(type(type(Point)))\n```\nโค้ดนี้พิมพ์อะไร?",
+    options: [
+      "<class 'Point'> แล้ว <class 'Point'>",
+      "<class 'type'> แล้ว <class 'type'>",
+      "<class 'object'> แล้ว <class 'type'>",
+      "TypeError -- class ไม่มี type"
+    ],
+    answer: 1,
+    explain: "Point เองเป็น object ที่ type ของมันคือ metaclass ชื่อ type type ก็เป็น type ของตัวเองด้วย (type(type) คือ type) ทั้งสองบรรทัดจึงพิมพ์ <class 'type'>"
+  },
+  {
+    q: "```python\nclass Base:\n    def __init__(self):\n        self.ready = True\n\nclass Broken(Base):\n    def __init__(self, name):\n        self.name = name\n\nb = Broken(\"x\")\nprint(b.ready)\n```\nบรรทัดสุดท้ายเกิดอะไรขึ้น?",
+    options: [
+      "พิมพ์ True",
+      "พิมพ์ None",
+      "AttributeError: 'Broken' object has no attribute 'ready'",
+      "TypeError: Base.__init__() was never called"
+    ],
+    answer: 2,
+    explain: "Broken.__init__ ไม่เคยเรียก super().__init__() ดังนั้น Base.__init__ (ที่ตั้งค่า self.ready) จึงไม่เคยรัน b.ready ไม่มีอยู่จริง -- ยืนยันแล้ว: AttributeError: 'Broken' object has no attribute 'ready'"
+  },
+  {
+    q: "`Point.__mro__` return อะไรสำหรับ class ที่กำหนดเป็น `class Point: pass` ที่ไม่มี base ชัดเจน?",
+    options: [
+      "แค่ (Point,) -- class ที่ไม่มี base ไม่มี MRO chain",
+      "(Point, object) -- ทุก class สืบทอดจาก object ในที่สุด",
+      "Tuple ว่างเปล่า",
+      "(object, Point) -- object มาก่อนเสมอ"
+    ],
+    answer: 1,
+    explain: "ทุก class สืบทอดจาก object โดย implicit แม้จะไม่ได้เขียนไว้ และ __mro__ จะแสดง class เองก่อนเสมอ จบที่ object -- (Point, object) ในกรณีนี้"
   }
 ];
 

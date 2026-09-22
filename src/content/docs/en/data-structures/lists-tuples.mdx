@@ -1,6 +1,6 @@
 ---
 title: Lists and Tuples
-description: 'Mutable lists with sort and slice vs immutable tuples with unpacking and named indexing in Python 3.14.'
+description: 'Aliasing vs copying, sort() vs sorted(), mutable lists vs immutable tuples, NamedTuple, and deque in Python 3.14.'
 sidebar:
   order: 2
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Lists — ordered, mutable sequences
 
@@ -36,9 +38,9 @@ print(fruits)                # ['apple', 'avocado', 'cherry', 'date']
 | `index(x)` | Return index of first occurrence of `x` |
 | `count(x)` | Count occurrences of `x` |
 
-### Sorting
+### Sorting: in place vs a new list, and stability
 
-`list.sort()` sorts in place and returns `None`.
+`list.sort()` sorts **in place and returns `None`**.
 Pass a `key` function to sort by an arbitrary criterion.
 
 ```python
@@ -51,7 +53,98 @@ words.sort(key=len)
 print(words)    # ['apple', 'banana', 'cherry']
 ```
 
-Use `sorted(iterable)` instead of `.sort()` when you need a new list and want to leave the original unchanged.
+Use `sorted(iterable)` instead of `.sort()` when you need a new list and want to leave the original unchanged — `sorted()` always returns the list, `.sort()` never does. Chaining off `.sort()` (`x = lst.sort()`, or `lst.sort()[:3]`) is a real bug: `x`/the slice target is `None`.
+
+Both `.sort()` and `sorted()` are **stable**: elements that compare equal under `key` keep their original relative order. This matters for multi-key sorting — sort by the least significant key first, then by the most significant:
+
+```python
+people = [('carol', 30), ('alice', 30), ('dave', 25), ('bob', 25)]
+people.sort(key=lambda p: p[1])
+print(people)  # [('dave', 25), ('bob', 25), ('carol', 30), ('alice', 30)]
+```
+
+Stability alone only guarantees the *original* order survives within an age group — it does not alphabetize the names. For a true multi-key sort, put every key in one tuple:
+
+```python
+people.sort(key=lambda p: (p[1], p[0]))
+print(people)  # [('bob', 25), ('dave', 25), ('alice', 30), ('carol', 30)]
+```
+
+## Aliasing: assignment never copies
+
+`b = a` does **not** create a second list — it binds a second name to the *same* object. Mutating through either name is visible through both:
+
+```python
+a = [1, 2, 3]
+b = a
+b.append(4)
+print(a)  # [1, 2, 3, 4] — a changed too, even though only b was touched
+```
+
+`a[:]` (or `list(a)`, or `a.copy()`) makes a **shallow copy**: a new outer list, but every element is the *same object* it was before. If the elements are themselves mutable, they are still shared:
+
+```python
+a = [1, [2, 3]]
+c = a[:]
+c[1].append(9)
+print(a)  # [1, [2, 3, 9]] — the inner list is shared, so a saw the mutation too
+```
+
+Only `copy.deepcopy()` recursively duplicates nested mutable structure so nothing is shared:
+
+```python
+import copy
+a = [1, [2, 3]]
+d = copy.deepcopy(a)
+d[1].append(100)
+print(a)  # [1, [2, 3]] — untouched; d's inner list is an independent object
+```
+
+### The `[[0] * n] * m` trap
+
+`[[0] * 3] * 3` multiplies a *list object*, not the values inside it — every row of the resulting grid is the same inner list, aliased three times:
+
+```python
+grid = [[0] * 3] * 3
+grid[0][0] = 1
+print(grid)  # [[1, 0, 0], [1, 0, 0], [1, 0, 0]] — every row "changed"
+```
+
+The fix is a comprehension, which evaluates `[0] * 3` freshly on every iteration:
+
+```python
+grid = [[0] * 3 for _ in range(3)]
+grid[0][0] = 1
+print(grid)  # [[1, 0, 0], [0, 0, 0], [0, 0, 0]]
+```
+
+## In-place mutation vs rebinding: `+=` on a list vs a tuple
+
+`+=` looks like one operator, but it does something different depending on the type on the left. On a list, `+=` calls `__iadd__`, which extends the list **in place** — every alias sees the change. On a tuple, there is no in-place `__iadd__`; Python falls back to `t = t + (...)`, which builds a brand-new tuple and **rebinds the name** — aliases still point at the old tuple:
+
+```python
+la = [1, 2]
+lb = la
+la += [3]
+print(la, lb)  # [1, 2, 3] [1, 2, 3] — same object, both names see it
+
+ta = (1, 2)
+tb = ta
+ta += (3,)
+print(ta, tb)  # (1, 2, 3) (1, 2) — ta now points at a new tuple; tb is unaffected
+```
+
+## Membership testing: `in` on a list vs a set
+
+`x in some_list` checks elements one at a time — `O(n)` in the size of the list. `x in some_set` hashes `x` and looks up a bucket — `O(1)` on average, regardless of how large the set is. Both give the same boolean answer; only the cost differs, and it only shows up as the collection grows:
+
+```python
+names_list = ['alice', 'bob', 'carol']
+names_set = {'alice', 'bob', 'carol'}
+print('bob' in names_list, 'bob' in names_set)  # True True — same answer, different cost
+```
+
+If a function does repeated `in` checks against a list that could grow large, converting it to a `set` (or `frozenset`, if it must not change) is a one-line performance fix.
 
 ## Tuples — ordered, immutable sequences
 
@@ -62,6 +155,31 @@ Use tuples to represent fixed records where position carries meaning.
 rgb = (255, 128, 0)   # an orange colour
 point = (3.0, 4.0)    # a 2-D coordinate
 row = (1, 'Alice', 42)  # a database row
+```
+
+"Immutable" only means a tuple's own slots can't be reassigned — it says nothing about whether an *element* inside the tuple is itself mutable:
+
+```python
+t = (1, [2, 3])
+t[0] = 99          # TypeError: 'tuple' object does not support item assignment
+```
+
+```python
+t[1].append(4)     # allowed — the list inside the tuple can still change
+print(t)            # (1, [2, 3, 4])
+```
+
+That mutable element also has a consequence for hashing: a tuple is only hashable — and only usable as a dict key or set member — if *every* element it contains is hashable.
+
+```python
+d = {t: 'value'}   # TypeError: cannot use 'tuple' as a dict key (unhashable type: 'list')
+```
+
+A tuple of only hashable elements works fine as a key:
+
+```python
+point = (1, 2)
+by_point = {point: 'ok'}
 ```
 
 ### Tuple unpacking
@@ -79,7 +197,7 @@ print(first)             # 1
 print(rest)              # [2, 3, 4, 5]
 ```
 
-### Accessing tuple fields by index
+### Accessing tuple fields by index — or by name
 
 Without a name, tuple fields are accessed by integer index.
 Assign constants for readability:
@@ -95,7 +213,47 @@ print(RGB[GREEN])  # 128
 print(RGB[BLUE])   # 0
 ```
 
-For a more ergonomic approach, use `collections.namedtuple` or `typing.NamedTuple`.
+`typing.NamedTuple` gives the same tuple (index access, unpacking, equality, hashability) plus named attribute access, in about three lines. A `@dataclass` looks similar but is a different kind of object — mutable by default, and not usable as a dict key unless you opt in:
+
+```python
+from typing import NamedTuple
+from dataclasses import dataclass
+
+class PointNT(NamedTuple):
+    x: int
+    y: int
+
+@dataclass
+class PointDC:
+    x: int
+    y: int
+```
+
+```python
+pnt = PointNT(1, 2)
+pnt.x = 99  # AttributeError: can't set attribute — still a tuple, still immutable
+```
+
+```python
+pdc = PointDC(1, 2)
+pdc.x = 99  # allowed — a dataclass instance is a plain, mutable object
+```
+
+Reach for `NamedTuple` when the value is a small, fixed, hashable record (safe as a dict key, safe to pass around without worrying who mutates it). Reach for `@dataclass` when you want a mutable object with class-like behavior (methods, inheritance, `field(default_factory=...)`).
+
+## Beyond list: `deque` for both ends
+
+A `list`'s `insert(0, x)` and `pop(0)` are `O(n)` — every other element has to shift. `collections.deque` is a double-ended queue with `O(1)` append and pop at **both** ends, at the cost of `O(n)` random access by index (no slicing):
+
+```python
+from collections import deque
+dq = deque([1, 2, 3])
+dq.appendleft(0)
+dq.append(4)
+print(dq)  # deque([0, 1, 2, 3, 4])
+```
+
+Use `deque` for queues, sliding windows, and undo/history buffers; keep `list` when you mostly index, slice, or append at the end only.
 
 ## Full runnable demo
 
@@ -133,48 +291,258 @@ print('red:', RGB[0], 'green:', RGB[1], 'blue:', RGB[2])
 
 <Playground code={listsTuplesCode} />
 
-<Callout title="Tuples are immutable — use them for fixed records">
-Once created, a tuple cannot be changed.
-Attempting `my_tuple[0] = 99` raises `TypeError: 'tuple' object does not support item assignment`.
-This immutability makes tuples safe to use as dictionary keys and in sets — they are hashable as long as every element is hashable.
-Use tuples whenever the data represents a fixed record and mutation would be a bug.
+The playground below is where the depth topics above actually run — aliasing vs shallow vs deep copy, the `[[0]*3]*3` trap, `.sort()` vs `sorted()` with stability, `+=` on a list vs a tuple, a tuple's mutable element blocking hashing, `NamedTuple` vs `dataclass`, and `deque`:
+
+export const listsTuplesAliasingCode = `
+import copy
+
+# --- aliasing vs shallow copy vs deep copy ---
+a = [1, [2, 3]]
+b = a                    # alias: same object
+c = a[:]                 # shallow copy: new outer list, same inner list
+d = copy.deepcopy(a)     # deep copy: fully independent
+
+b.append(4)
+c[1].append(99)
+d[1].append(100)
+
+print('a:', a)
+print('b:', b)
+print('c:', c)
+print('d:', d)
+
+# --- [[0]*3]*3 shares rows ---
+grid = [[0] * 3] * 3
+grid[0][0] = 1
+print('broken grid:', grid)
+
+fixed = [[0] * 3 for _ in range(3)]
+fixed[0][0] = 1
+print('fixed grid:', fixed)
+
+# --- list.sort() returns None; sorted() returns a new list ---
+nums = [3, 1, 2]
+result = nums.sort()
+print('sort() return value:', result)
+print('nums after sort():', nums)
+
+nums2 = [3, 1, 2]
+nums2_sorted = sorted(nums2)
+print('sorted() return value:', nums2_sorted)
+print('nums2 unchanged:', nums2)
+
+# --- stability + multi-key sort ---
+people = [('carol', 30), ('alice', 30), ('dave', 25), ('bob', 25)]
+people.sort(key=lambda p: p[1])
+print('stable by age:', people)
+
+people.sort(key=lambda p: (p[1], p[0]))
+print('multi-key age,name:', people)
+
+# --- membership: list O(n) vs set O(1), same result different cost ---
+names_list = ['alice', 'bob', 'carol']
+names_set = {'alice', 'bob', 'carol'}
+print('in list:', 'bob' in names_list, '  in set:', 'bob' in names_set)
+
+# --- += mutates a list in place (shared); += on a tuple rebinds (not shared) ---
+la = [1, 2]
+lb = la
+la += [3]
+print('list +=:', la, lb)
+
+ta = (1, 2)
+tb = ta
+ta += (3,)
+print('tuple +=:', ta, tb)
+
+# --- tuple is immutable but its mutable elements are not ---
+t = (1, [2, 3])
+try:
+    t[0] = 99
+except TypeError as e:
+    print(type(e).__name__ + ':', e)
+t[1].append(4)
+print('tuple with mutated inner list:', t)
+
+# --- that same tuple can't be a dict key because it contains a list ---
+try:
+    d2 = {t: 'value'}
+except TypeError as e:
+    print(type(e).__name__ + ':', e)
+
+frozen_point = (1, 2)
+d3 = {frozen_point: 'ok'}
+print('hashable tuple as key:', d3)
+
+# --- NamedTuple vs dataclass, three lines each ---
+from typing import NamedTuple
+from dataclasses import dataclass
+
+class PointNT(NamedTuple):
+    x: int
+    y: int
+
+@dataclass
+class PointDC:
+    x: int
+    y: int
+
+pnt = PointNT(1, 2)
+pdc = PointDC(1, 2)
+print('namedtuple:', pnt, pnt.x, pnt[0], pnt == PointNT(1, 2))
+print('dataclass:', pdc, pdc.x, pdc == PointDC(1, 2))
+try:
+    pnt.x = 99
+except AttributeError as e:
+    print(type(e).__name__ + ':', e)
+pdc.x = 99
+print('dataclass is mutable:', pdc)
+
+# --- deque: O(1) at both ends vs list's O(n) insert(0, ...) ---
+from collections import deque
+dq = deque([1, 2, 3])
+dq.appendleft(0)
+dq.append(4)
+print('deque:', dq)
+lst = [1, 2, 3]
+lst.insert(0, 0)
+print('list insert(0, ...):', lst)
+`.trim();
+
+<Playground code={listsTuplesAliasingCode} />
+
+## Mental Model
+
+export const listsTuplesMentalModel = `flowchart LR
+  subgraph Names
+    a["a"]
+    b["b = a"]
+    c["c = a[:]"]
+    d["d = deepcopy(a)"]
+  end
+  subgraph Objects["heap objects"]
+    OUTER1["list #1 [1, ref, 4]"]
+    OUTER2["list #2 (shallow copy) [1, ref]"]
+    INNER["inner list #3 [2, 3, 99]"]
+    OUTER3["list #4 (deep copy) [1, ref]"]
+    INNER2["inner list #5 [2, 3, 100]"]
+  end
+  a --> OUTER1
+  b --> OUTER1
+  c --> OUTER2
+  OUTER1 --> INNER
+  OUTER2 --> INNER
+  d --> OUTER3
+  OUTER3 --> INNER2`;
+
+<Mermaid code={listsTuplesMentalModel} title="a and b share one list object; c is a new outer list that still shares the inner list; only d (deepcopy) is fully independent" />
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| `list` (mutable) | append/sort/mutate in place, no copying to change it | every alias shares the mutation — easy to change something you didn't mean to |
+| `tuple` (immutable) | safe to hash, share, and use as a dict key or set member | fixed size and order; "immutable" only protects the tuple's own slots, not a mutable element inside it |
+| `list.sort()` (in place) | no new list allocated | returns `None` — chaining off it (`.sort()[:3]`) is a `TypeError` |
+| `sorted()` (new list) | original is untouched, safe to chain | always allocates a new list, even for a quick peek |
+| `deque` | `O(1)` append/pop at both ends | `O(n)` random access by index, no slicing |
+
+## Common Misconceptions
+
+- **"`b = a` copies the list"** — fact: it binds a second name to the same object; mutating through `b` also changes what `a` sees.
+- **"`a[:]` makes a fully independent copy"** — fact: `a[:]` is a shallow copy — nested mutable elements (like an inner list) are still shared.
+- **"`list.sort()` returns the sorted list"** — fact: `.sort()` always returns `None`; only `sorted()` returns a new list.
+- **"A tuple is always safe as a dict key"** — fact: only if every element inside it is hashable — a tuple holding a list raises `TypeError: unhashable type: 'list'`.
+- **"`+=` behaves the same on a list and a tuple"** — fact: on a list it mutates in place (aliases see it); on a tuple it rebuilds a new tuple and rebinds the name (aliases do not see it).
+
+## Reading AI-generated code
+
+- Does a function that receives a list mutate it in place *and* `return` it? Check every call site for whether the caller expects the original list to survive untouched.
+- Does the code chain directly off `.sort()` (`.sort()[:3]`, `x = lst.sort()`)? `.sort()` always returns `None` — that line is a bug.
+- Is a 2D grid built with `[[default] * cols] * rows`? Every row is the *same* list object — look for the comprehension form (`[[default] * cols for _ in range(rows)]`) instead.
+- Does `+=` appear on something that might be a tuple, in code that assumes the original object was mutated in place? Tuples rebind instead of mutating.
+- Is a tuple used as a dict key or set element without checking that every element inside it is itself hashable?
+
+<SpotTheBug code={`def top_three(scores):
+    return scores.sort(reverse=True)[:3]
+
+
+print(top_three([42, 7, 99, 3, 56]))`}>
+`list.sort()` sorts in place and always returns `None` — it is not `sorted()`. So `scores.sort(reverse=True)` returns `None`, and `None[:3]` raises `TypeError: 'NoneType' object is not subscriptable`. Verified on Python 3.14: the traceback ends with exactly that message. The fix is either `return sorted(scores, reverse=True)[:3]` (build a new list and slice it), or two statements: `scores.sort(reverse=True); return scores[:3]`.
+</SpotTheBug>
+
+<Callout title="Tuples are immutable — but only at the top level">
+A tuple's own slots can never be reassigned, and `my_tuple[0] = 99` always raises `TypeError: 'tuple' object does not support item assignment`.
+That immutability makes a tuple hashable — safe as a dictionary key or set member — **only if every element inside it is also hashable**. A tuple holding a list is not hashable, because the list inside it can still change.
+Use tuples for fixed records made entirely of immutable data; reach for `NamedTuple` when you also want named fields.
 </Callout>
 
 export const quizListsTuples = [
     {
-        q: "Which method adds an element to the END of a list?",
-        options: ["insert()", "extend()", "append()", "add()"],
-        answer: 2
+        q: "What does this print?\n\na = [1, 2, 3]\nb = a\nb.append(4)\nprint(a)",
+        options: [
+            "[1, 2, 3]",
+            "[1, 2, 3, 4]",
+            "Raises TypeError",
+            "[4]"
+        ],
+        answer: 1,
+        explain: "b = a does not copy the list — it binds a second name to the same list object. append() mutates that shared object in place, so the change is visible through both a and b."
     },
     {
-        q: "What does `list.sort()` return?",
+        q: "What does this print?\n\na = [1, [2, 3]]\nc = a[:]\nc[1].append(9)\nprint(a)",
         options: [
-            "A new sorted list",
-            "None — it sorts the list in place",
-            "The first element",
-            "The length of the list"
+            "[1, [2, 3]]",
+            "[1, [2, 3, 9]]",
+            "Raises TypeError — a[:] is read-only",
+            "[[2, 3, 9]]"
         ],
-        answer: 1
+        answer: 1,
+        explain: "a[:] is a shallow copy: it creates a new outer list, but every element inside it is still the same object as before. The inner list [2, 3] is shared between a and c, so appending to c[1] is visible through a too."
     },
     {
-        q: "Which of these is a valid tuple unpacking?",
+        q: "What does `result = [3, 1, 2].sort()` bind `result` to?",
         options: [
-            "x, y = (1, 2, 3)",
-            "x, y, z = (1, 2, 3)",
-            "x = (1, 2, 3)[0, 1]",
-            "x, y, z = [1, 2]"
+            "[1, 2, 3]",
+            "[3, 1, 2]",
+            "None",
+            "The number of elements sorted (3)"
         ],
-        answer: 1
+        answer: 2,
+        explain: "list.sort() always sorts in place and returns None, regardless of what it sorted. To get the sorted list as a value, use sorted([3, 1, 2]) instead."
     },
     {
-        q: "Why can tuples be used as dictionary keys but lists cannot?",
+        q: "Why does `grid = [[0] * 3] * 3; grid[0][0] = 1` set the first element of every row, not just row 0?",
         options: [
-            "Tuples are faster to iterate",
-            "Tuples are immutable and therefore hashable",
-            "Tuples support the __hash__ attribute by default",
-            "Both B and C"
+            "It's a bug in CPython's list multiplication",
+            "[[0] * 3] * 3 makes three references to the exact same inner list object",
+            "Assigning to grid[0][0] implicitly broadcasts to all rows",
+            "It only happens with the integer 0 — other values behave differently"
         ],
-        answer: 3
+        answer: 1,
+        explain: "[[0] * 3] * 3 first builds one inner list [0, 0, 0], then repeats a reference to that same object three times to build the outer list. All three 'rows' are aliases of one list, so mutating any of them mutates all of them. The fix is a comprehension: [[0] * 3 for _ in range(3)], which builds a fresh inner list on every iteration."
+        },
+    {
+        q: "What does this print?\n\nt = (1, 2)\nu = t\nt += (3,)\nprint(u)",
+        options: [
+            "(1, 2)",
+            "(1, 2, 3)",
+            "Raises TypeError — tuples don't support +=",
+            "(1, 2, 1, 2, 3)"
+        ],
+        answer: 0,
+        explain: "Tuples have no in-place __iadd__, so t += (3,) falls back to t = t + (3,) — a brand-new tuple is built and only the name t is rebound to it. u still points at the original (1, 2), which was never modified (tuples can't be modified)."
+    },
+    {
+        q: "A function receives a list, needs the top 3 highest scores, and must not change the caller's list. Which implementation is correct?",
+        options: [
+            "return scores.sort(reverse=True)[:3]",
+            "scores.sort(reverse=True); return scores[:3]",
+            "return sorted(scores, reverse=True)[:3]",
+            "return scores[:3].sort(reverse=True)"
+        ],
+        answer: 2,
+        explain: "sorted(scores, reverse=True) builds and returns a brand-new list, leaving the caller's scores untouched, and [:3] slices that new list safely. Option A chains off .sort()'s None return (TypeError). Option B mutates the caller's original list in place, violating the requirement. Option D slices first (fine) but then calls .sort() on the slice and returns its None."
     }
 ];
 

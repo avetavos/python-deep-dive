@@ -1,6 +1,6 @@
 ---
 title: Comprehensions
-description: 'List, dict และ set comprehension พร้อมเงื่อนไขและ nesting — Python 3.14 แบบ idiomatic'
+description: 'List, dict, และ set comprehension เทียบกับ generator expression, scope, filter เทียบ transform, และเมื่อไหร่ไม่ควรใช้ — Python 3.14'
 sidebar:
   order: 4
 ---
@@ -9,11 +9,13 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Comprehension คืออะไร?
 
 **comprehension** คือนิพจน์ที่กระชับและอ่านง่าย ใช้สร้าง collection ใหม่โดยการแปลงหรือกรอง iterable
-Python มีสามรูปแบบ: list, dict และ set comprehension
+Python มีสามรูปแบบ: list, dict และ set comprehension บวกกับนิพจน์ที่คล้ายกันอีกแบบที่สร้าง lazy iterator แทน collection — generator expression
 
 ## List comprehensions
 
@@ -55,10 +57,23 @@ comp():  FOR_ITER -> STORE_FAST_LOAD_FAST (x, x) -> LOAD_SMALL_INT 2 -> BINARY_O
 loop():  FOR_ITER -> STORE_FAST (x) -> LOAD_FAST_BORROW (result) -> LOAD_ATTR (append + NULL|self) -> LOAD_FAST_BORROW (x) -> LOAD_SMALL_INT 2 -> BINARY_OP 8 (**) -> CALL 1 -> POP_TOP -> JUMP_BACKWARD
 ```
 
+### Scope: ตัวแปร loop ไม่รั่วออกมา
+
+ตั้งแต่ PEP 709 (Python 3.12) ได้ทำให้เป็นทางการในสิ่งที่ถูกต้องอยู่แล้วสำหรับพฤติกรรม *runtime* ตั้งแต่ Python 3: ตัวแปร `for` ของ comprehension อยู่ใน scope ที่ซ่อนของตัวเอง มันไม่เคยเขียนทับตัวแปรชื่อเดียวกันใน function หรือ module ที่ล้อมรอบเลย:
+
+```python
+x = 'outer'
+squares = [x for x in range(5)]
+print(squares)  # [0, 1, 2, 3, 4]
+print(x)        # 'outer' — completely unaffected by the comprehension's own x
+```
+
+นี่คือการเปลี่ยนพฤติกรรมจริงจาก Python 2 มาเป็น 3: ใน Python 2 ตัวแปร loop ของ list comprehension *รั่ว* เข้า scope ที่ล้อมรอบได้ ถ้าเคยอ่านโค้ดเก่าที่พึ่งพาค่าสุดท้ายของตัวแปร loop ให้รอดหลัง comprehension โค้ดนั้นเขียนไว้สำหรับ Python 2 และต้องใช้ `for` loop แบบชัดเจน (หรือ walrus `:=`) ภายใต้ Python 3
+
 ## Nested comprehensions
 
 สามารถซ้อน `for` หลายตัวเพื่อวนซ้ำข้าม combination
-ประโยค `for` อ่านจากซ้ายไปขวา — `for` ซ้ายสุดเป็น outer loop
+ประโยค `for` อ่านจากซ้ายไปขวา — `for` ซ้ายสุดเป็น outer loop:
 
 ```python
 pairs = [
@@ -68,6 +83,54 @@ pairs = [
     if x != y
 ]
 # [(1, 2), (1, 3), (2, 1), (2, 3), (3, 1), (3, 2)]
+```
+
+การอ่านมันเป็น `for` statement ที่ซ้อนกันเขียนบนบรรทัดเดียว ทำให้ลำดับชัดเจนไม่คลุมเครือ: ประโยค `for` แรกกลายเป็น loop ชั้นนอกสุด เหมือนกับ `for x in range(1, 4): for y in range(1, 4): ...` เป๊ะ ๆ
+
+## Generator expression: lazy และประหยัดหน่วยความจำ
+
+เปลี่ยน `[]` เป็น `()` นิพจน์คล้าย comprehension จะกลายเป็น **generator expression** — มันสร้างค่าทีละตัวตามที่ถูกขอ แทนที่จะสร้าง collection ทั้งหมดในหน่วยความจำล่วงหน้า:
+
+```python
+import sys
+list_version = [n * n for n in range(100_000)]
+gen_version = (n * n for n in range(100_000))
+print(sys.getsizeof(list_version))  # a large number of bytes — every element is materialised
+print(sys.getsizeof(gen_version))   # a small, constant number of bytes — no elements exist yet
+```
+
+ต้นทุนของความ lazy นี้: generator จะหมดสภาพหลังวนครบหนึ่งรอบ เรียก `sum()` บนมันสองครั้งจะไม่ได้คำตอบเดิมสองครั้ง:
+
+```python
+gen = (n for n in range(5))
+print(sum(gen))  # 10
+print(sum(gen))  # 0 — the generator is already exhausted, nothing left to sum
+```
+
+ใช้ generator expression เมื่อต้องการวนซ้ำแค่ครั้งเดียวกับ sequence ขนาดใหญ่หรือไม่จำกัด ใช้ list (หรือ set/dict) comprehension เมื่อต้องวนซ้ำมากกว่าหนึ่งครั้ง, index เข้าไปในผลลัพธ์, หรือตรวจสอบความยาวของมัน
+
+## Filter เทียบกับ transform: `if` clause เทียบ conditional expression
+
+สองอย่างนี้หน้าตาคล้ายกันแต่ทำงานต่างกัน `if` **clause** หลัง `for` กรองว่า item ไหนจะถูกเก็บไว้เลย:
+
+```python
+nums = [1, 2, 3, 4, 5, 6]
+filtered = [n for n in nums if n % 2 == 0]
+# [2, 4, 6] — odd numbers are dropped entirely
+```
+
+conditional **expression** (`a if condition else b`) ก่อน `for` เก็บทุก item ไว้ แต่แปลงค่าต่างกันไปตามเงื่อนไข:
+
+```python
+transformed = [n if n % 2 == 0 else -n for n in nums]
+# [-1, 2, -3, 4, -5, 6] — every element survives, some are negated
+```
+
+ทั้งสองแบบใช้ร่วมกันได้: กรองด้วย `if` หลัง `for` แปลงด้วย `if/else` ในนิพจน์ก่อน `for`:
+
+```python
+both = [n * 10 for n in nums if n % 2 == 0]
+# [20, 40, 60] — filtered AND transformed
 ```
 
 ## Dict comprehensions
@@ -97,6 +160,25 @@ unique_lens = {len(word) for word in ['apple', 'banana', 'cherry', 'date']}
 # {4, 5, 6}  (order not guaranteed)
 ```
 
+## เมื่อไหร่ไม่ควรใช้ comprehension: side effect
+
+หน้าที่ทั้งหมดของ comprehension คือสร้าง collection ถ้า "ค่า" ของแต่ละนิพจน์ถูกทิ้งไป และเหตุผลเดียวที่เขียนมันคือ side effect (print, append ลง structure อื่น, เขียนไฟล์) comprehension ก็ยังคงสร้าง — แล้วทิ้งทันที — list ของสิ่งที่ side effect นั้นคืนค่ามา:
+
+```python
+wasted = [print(f'item {n}') for n in range(3)]
+# item 0
+# item 1
+# item 2
+print(wasted)  # [None, None, None] — a throwaway list nobody asked for
+```
+
+`print()` คืนค่า `None` ดังนั้น `wasted` คือ list ของ `None` สามตัวที่ไม่มีเหตุผลจะมีอยู่ `for` loop ธรรมดาสื่อ intent ตรงไปตรงมาและไม่ allocate อะไรเพิ่มเลย:
+
+```python
+for n in range(3):
+    print(f'item {n}')
+```
+
 ## ตัวอย่างรันได้
 
 export const comprehensionsCode = `
@@ -122,10 +204,100 @@ print('unique lengths:', sorted(unique_lens))
 
 <Playground code={comprehensionsCode} />
 
-<Callout title="Comprehension เป็น idiomatic และเร็ว — หลีกเลี่ยงการใช้เพื่อ side effect">
+playground ด้านล่างคือหัวข้อความลึกด้านบนที่รันจริง — scope ไม่รั่ว, หน่วยความจำของ generator เทียบ list, การวนรอบที่สองของ generator ที่หมดสภาพแล้ว, filter เทียบ transform, ลำดับ nested, และ comprehension ที่ถูกใช้ผิดเพื่อ side effect:
+
+export const comprehensionsDepthCode = `
+import sys
+
+# --- comprehension scope does not leak (Python 3) ---
+x = 'outer'
+squares = [x for x in range(5)]
+print('squares:', squares)
+print('x after list comprehension:', x)
+
+# --- generator expression: lazy, tiny memory footprint ---
+list_version = [n * n for n in range(100_000)]
+gen_version = (n * n for n in range(100_000))
+print('list size (bytes):', sys.getsizeof(list_version))
+print('generator size (bytes):', sys.getsizeof(gen_version))
+print('sum from generator:', sum(gen_version))
+print('sum from exhausted generator (again):', sum(gen_version))
+
+# --- filter (if clause) vs conditional expression (if/else) ---
+nums = [1, 2, 3, 4, 5, 6]
+filtered = [n for n in nums if n % 2 == 0]
+print('filter only (keeps some):', filtered)
+
+transformed = [n if n % 2 == 0 else -n for n in nums]
+print('conditional expr (keeps all, transforms):', transformed)
+
+# combining both: filter AND transform
+both = [n * 10 for n in nums if n % 2 == 0]
+print('filter + transform:', both)
+
+# --- nested comprehension evaluation order ---
+pairs = [(x, y) for x in range(1, 3) for y in ['a', 'b']]
+print('nested order (x outer, y inner):', pairs)
+
+# --- when not to use a comprehension: side effects ---
+# This "works" but builds and immediately discards a list of Nones just
+# to run print() as a side effect -- wasteful and confusing to read.
+wasted = [print(f'item {n}') for n in range(3)]
+print('comprehension used for side effects returns:', wasted)
+`.trim();
+
+<Playground code={comprehensionsDepthCode} />
+
+## Mental Model
+
+export const comprehensionsMentalModel = `flowchart LR
+  L["list comprehension: n*n for n in range(N)"] --> LM["builds every element now<br/>memory grows with N"]
+  G["generator expression: n*n for n in range(N)"] --> GM["builds nothing yet<br/>constant, tiny memory"]
+  GM --> Next["next value computed only when pulled<br/>by for, sum, next, etc."]
+  Next --> Done["exhausted after one full pass<br/>a second pass yields nothing"]`;
+
+<Mermaid code={comprehensionsMentalModel} title="list comprehension จ่ายต้นทุนหน่วยความจำล่วงหน้าทันที ส่วน generator expression เลื่อนทุก element ออกไปจนกว่าจะมีอะไรมาขอจริง ๆ แล้วก็เล่นซ้ำไม่ได้อีก" />
+
+## Trade-offs
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| list/dict/set comprehension | นิพจน์เดียวบอกว่า "สร้างสิ่งนี้จากสิ่งนั้น"; มักเร็วกว่า loop ที่ใช้ `.append()` | สร้าง collection ทั้งหมดในหน่วยความจำทันที |
+| generator expression `(...)` | หน่วยความจำแทบเป็นศูนย์ สร้างค่าตามที่ถูกขอ | ผ่านได้ครั้งเดียว — หมดสภาพหลังวนครบหนึ่งรอบ index หรือ `len()` ไม่ได้ |
+| `if` clause (filter) | ตัด item ที่ไม่ต้องการออกทั้งหมด | เปลี่ยน*ความยาว*ของผลลัพธ์ — สับสนกับ transform ได้ง่าย |
+| `if/else` expression (transform) | เก็บทุก item ไว้ เปลี่ยนแค่ค่า | ไม่กรอง — ทุก item ที่ป้อนเข้ายังปรากฏในผลลัพธ์เสมอ |
+
+## Common Misconceptions
+
+- **"ตัวแปร loop ของ comprehension รั่วเข้า scope ที่ล้อมรอบ"** — ความจริง: ใน Python 3 ตัวแปร `for` ของ comprehension เป็น local ของ comprehension เอง ตัวแปรชื่อเดียวกันข้างนอกไม่ถูกแตะต้อง
+- **"`(x for x in ...)` กับ `[x for x in ...]` เหมือนกันแค่วงเล็บต่างกัน"** — ความจริง: รูปแบบวงเล็บกลมคือ generator expression — lazy, ผ่านได้ครั้งเดียว และใช้หน่วยความจำเกือบคงที่ ต่างจาก list ที่มันดูคล้ายกันผิวเผิน
+- **"comprehension เร็วเพราะรันด้วย C ต่างจาก `for` loop"** — ความจริง: ทั้งสองแบบ compile เป็น Python bytecode ที่ interpreter ตัวเดียวกันรัน ความเร็วที่เพิ่มมาจาก opcode `LIST_APPEND` เฉพาะทางและ (3.12+) การ inline frame ไม่ใช่จาก execution engine ที่ต่างกัน
+- **"`[x for x in items if cond]` กับ `[x if cond else default for x in items]` ทำงานเหมือนกัน"** — ความจริง: อันแรกกรอง (ผลลัพธ์สั้นกว่า `items` ได้) อันที่สองแปลงทุก item และไม่เคยเปลี่ยนความยาวของผลลัพธ์
+- **"`sum()` (หรือวนซ้ำ) generator ได้มากกว่าหนึ่งครั้งเหมือน list"** — ความจริง: generator เป็น iterator แบบใช้ครั้งเดียว พอหมดสภาพแล้ว การผ่านครั้งต่อไปจะไม่ได้อะไรเลย
+
+## อ่านโค้ดที่ AI เขียน
+
+- โค้ดสร้าง generator expression แล้วส่งให้มากกว่าหนึ่ง function ที่แต่ละตัวบริโภคมันจนหมด (เช่น `sum(gen)` ตามด้วย `max(gen)`, หรือสอง `for` loop แยกกันบน `gen` เดียวกัน) หรือเปล่า? มีแค่ผู้บริโภครายแรกเท่านั้นที่เห็นค่าใด ๆ
+- comprehension มีจุดประสงค์เดียวคือ side effect หรือเปล่า — `[fn(x) for x in items]` ที่ผลลัพธ์ไม่เคยถูก assign หรือ assign แล้วไม่เคยถูกใช้? นั่นควรเป็น `for` loop ธรรมดา
+- `range()` ขนาดใหญ่หรือการอ่านไฟล์ถูกครอบด้วย `[...]` (list comprehension) ทั้งที่ต้องการแค่ผ่านเชิงเส้นครั้งเดียวหรือเปล่า? generator expression (หรือ generator เปล่า ๆ ไม่ต้องมี comprehension เลยสำหรับ `sum(x for x in ...)`) จะใช้หน่วยความจำน้อยกว่ามาก
+- conditional expression แบบ `if/else` ถูกใช้ในที่ที่โค้ดต้องการ*กรอง* (ตัด) item ออก หรือ `if` filter clause ถูกใช้ในที่ที่โค้ดต้องการ*แปลง*ทุก item หรือเปล่า? ตรวจว่าความยาวของผลลัพธ์ควรตรงกับความยาวของ input หรือไม่
+- ลำดับของ nested comprehension (`for x ... for y ...`) ตรงกับ outer/inner loop ที่ผู้เขียนตั้งใจไว้ หรือผู้เขียนสมมติว่ามันอ่านจากขวาไปซ้ายหรือเปล่า?
+
+<SpotTheBug code={`def process(data):
+    filtered = (x for x in data if x > 0)
+    total = sum(filtered)
+    count = sum(1 for _ in filtered)
+    return total, count
+
+
+print(process([1, -2, 3, -4, 5]))`}>
+`filtered` คือ generator expression ไม่ใช่ list — มันวนซ้ำได้แค่ครั้งเดียว `sum(filtered)` บริโภคมันจนหมดตอนคำนวณ `total` ดังนั้นพอถึงเวลา `sum(1 for _ in filtered)` รัน `filtered` ก็หมดสภาพไปแล้วและให้ item เป็นศูนย์ ตรวจสอบแล้วบน Python 3.14: โค้ดนี้พิมพ์ `(9, 0)` ไม่ใช่ `(9, 3)` — ไม่มี exception เกิดขึ้นเลย ซึ่งเป็นสิ่งที่ทำให้ bug นี้อันตราย มันล้มเหลวแบบเงียบ ๆ วิธีแก้คือทำให้ค่าที่กรองแล้วเป็นรูปธรรมครั้งเดียว — `filtered = [x for x in data if x > 0]` — เพื่อให้ทั้ง `sum(filtered)` และ `len(filtered)` (ซึ่งแทนที่ `sum(1 for _ in ...)` ตัวที่สองไปเลย) วนซ้ำมันได้อย่างอิสระต่อกัน
+</SpotTheBug>
+
+<Callout title="Comprehension เป็น idiomatic และเร็ว — หลีกเลี่ยง side effect และรู้ว่าเมื่อไหร่ควรใช้แบบ lazy">
 Comprehension สื่อสาร intent ได้ชัดเจน: "สร้าง collection นี้โดยแปลง iterable นั้น"
 ไม่ควรใช้เมื่อวัตถุประสงค์หลักคือ side effect (เช่น การ print หรือเขียนไฟล์สำหรับแต่ละ item) — `for` loop ธรรมดาชัดเจนกว่าในกรณีนั้น
-Generator expression `(x for x in ...)` ใช้ syntax เดียวกันแต่สร้าง lazy iterator แทน เหมาะกว่าเมื่อวนซ้ำเพียงครั้งเดียวกับข้อมูลขนาดใหญ่
+Generator expression `(x for x in ...)` ใช้ syntax เดียวกันแต่สร้าง lazy iterator แบบผ่านครั้งเดียวแทน เหมาะกว่าเมื่อวนซ้ำเพียงครั้งเดียวกับข้อมูลขนาดใหญ่ และใช้ list/set/dict comprehension เมื่อต้องวนซ้ำมากกว่าหนึ่งครั้ง
 </Callout>
 
 export const quizComprehensions = [
@@ -137,37 +309,63 @@ export const quizComprehensions = [
             "[0, 1, 2, 3]",
             "[1, 2, 3, 4]"
         ],
-        answer: 1
+        answer: 1,
+        explain: "range(4) ให้ 0, 1, 2, 3 ยกกำลังสองแต่ละตัวได้ 0, 1, 4, 9"
     },
     {
-        q: "จะเพิ่ม filter ใน list comprehension ได้อย่างไร?",
+        q: "โค้ดนี้พิมพ์อะไร?\n\nx = 'outer'\nresult = [x * 2 for x in [1, 2, 3]]\nprint(x)",
         options: [
-            "[x for x in items where x > 0]",
-            "[x if x > 0 for x in items]",
-            "[x for x in items if x > 0]",
-            "filter(lambda x: x > 0, items)"
+            "'outer'",
+            "6 (2 * 3 ค่าสุดท้ายของ x ใน comprehension)",
+            "raise UnboundLocalError",
+            "[2, 4, 6]"
         ],
-        answer: 2
+        answer: 0,
+        explain: "ใน Python 3 ตัวแปร for ของ comprehension อยู่ใน scope ของตัวเอง และไม่เคยรั่วเข้า scope ที่ล้อมรอบ แม้ชื่อ x จะถูกใช้ซ้ำก็ตาม x ข้างนอกไม่ถูกแตะต้องเลย ดังนั้น print(x) ยังแสดง 'outer'"
     },
     {
-        q: "Comprehension ประเภทใดที่ลบค่าซ้ำออกอัตโนมัติ?",
+        q: "โค้ดนี้พิมพ์อะไร?\n\ngen = (n for n in range(3))\nprint(sum(gen))\nprint(sum(gen))",
         options: [
-            "List comprehension",
-            "Dict comprehension",
-            "Set comprehension",
-            "Generator expression"
+            "3\n3",
+            "3\n0",
+            "0\n3",
+            "raise StopIteration ในการเรียกครั้งที่สอง"
         ],
-        answer: 2
+        answer: 1,
+        explain: "sum(gen) บริโภค generator จนหมดในการเรียกครั้งแรก คำนวณ 0+1+2=3 generator เป็น iterator แบบผ่านครั้งเดียวและไม่มีทางย้อนกลับ ดังนั้น sum(gen) ครั้งที่สองจึงไม่มีอะไรเหลือให้บวกและคืนค่า 0 — ไม่ raise exception"
     },
     {
-        q: "ใน `[f(x, y) for x in A for y in B]` loop ใดเป็น OUTER loop?",
+        q: "นิพจน์ใด FILTER item (ให้ผลลัพธ์สั้นลงได้) แทนที่จะแปลงทุก item?",
         options: [
-            "Loop ที่วนซ้ำ B",
-            "Loop ที่วนซ้ำ A",
-            "ทั้งสอง loop มีความสำคัญเท่ากัน",
-            "Loop ที่มี element มากกว่า"
+            "[n if n % 2 == 0 else -n for n in nums]",
+            "[n for n in nums if n % 2 == 0]",
+            "[abs(n) for n in nums]",
+            "[str(n) for n in nums]"
         ],
-        answer: 1
+        answer: 1,
+        explain: "if clause ที่วางหลัง for จะตัด item ที่ไม่ผ่านเงื่อนไขออก ดังนั้นผลลัพธ์สั้นกว่า nums ได้ อีกสามตัวเลือกเก็บทุก item ไว้และเปลี่ยนแค่ค่าของมัน — ไม่เคยเปลี่ยนความยาวของผลลัพธ์เลย"
+    },
+    {
+        q: "ใน `[(x, y) for x in range(2) for y in range(2)]` loop ไหนรันอยู่ชั้นนอก?",
+        options: [
+            "loop ที่วนซ้ำ y",
+            "loop ที่วนซ้ำ x",
+            "รันพร้อมกันทั้งคู่",
+            "range() ตัวไหนเล็กกว่า"
+        ],
+        answer: 1,
+        explain: "ประโยค for ใน comprehension อ่านจากซ้ายไปขวา เหมือน for statement ที่ซ้อนกันเขียนบนบรรทัดเดียวเป๊ะ ๆ — for ซ้ายสุด (over x ที่นี่) คือ loop ชั้นนอก และ for ขวาสุด (over y) คือ loop ชั้นในที่วนครบทุกรอบสำหรับแต่ละ x"
+    },
+    {
+        q: "function หนึ่งต้องวนซ้ำ sequence ที่กรองแล้วสองครั้งพอดี (ครั้งหนึ่งเพื่อรวม อีกครั้งเพื่อนับ) แบบไหนถูกต้อง?",
+        options: [
+            "filtered = (x for x in data if x > 0); แล้วใช้ filtered สองครั้ง",
+            "filtered = [x for x in data if x > 0]; แล้วใช้ filtered สองครั้ง",
+            "ทำงานเหมือนกันทั้งคู่ — generator expression วนซ้ำกี่ครั้งก็ได้",
+            "ไม่ถูกทั้งคู่ — ต้องเรียก list(data) ก่อนแล้วกรองแยกกันในแต่ละรอบ"
+        ],
+        answer: 1,
+        explain: "generator expression เป็น iterator แบบผ่านครั้งเดียว — การวนรอบที่สองจะไม่เห็นอะไรเลยแบบเงียบ ๆ list comprehension สร้างค่าเป็นรูปธรรมจริง ดังนั้นทั้งสองรอบบน list เดียวกันจึงทำงานถูกต้องและเป็นอิสระต่อกัน"
     }
 ];
 

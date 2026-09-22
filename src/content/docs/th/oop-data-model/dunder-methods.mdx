@@ -1,6 +1,6 @@
 ---
 title: Dunder Methods
-description: 'Python Data Model: __repr__, __str__, __eq__, __len__, __getitem__ และ operator overloading ด้วย __add__'
+description: 'The Python Data Model: __repr__, __str__, __eq__/__hash__, __iter__/__next__, __call__, __getattr__ และ operator overloading'
 sidebar:
   order: 3
 ---
@@ -9,23 +9,25 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Dunder methods คืออะไร?
 
-**Dunder methods** (ย่อมาจาก *double-underscore*) เป็น special methods เช่น `__repr__`, `__eq__` และ `__add__` ที่ Python เรียกอัตโนมัติเพื่อตอบสนองต่อ built-in syntax และฟังก์ชัน
-สิ่งเหล่านี้เป็นกลไกเบื้องหลัง **Python Data Model** — สัญญาที่ทำให้ object ของคุณทำงานเหมือน built-in types
+**Dunder methods** (ย่อจาก *double-underscore*) คือ method พิเศษอย่าง `__repr__`, `__eq__` และ `__add__` ที่ Python เรียกให้อัตโนมัติเมื่อตอบสนองต่อ syntax และ function ที่เป็น built-in
+มันคือกลไกเบื้องหลัง **Python Data Model** — สัญญาที่ทำให้ object ของคุณทำงานเหมือน built-in type
 
-## `__repr__` และ `__str__`
+## `__repr__` และ `__str__` — ใครเรียกอันไหน
 
-ทั้งคู่สร้าง string representation แต่เพื่อกลุ่มเป้าหมายต่างกัน:
+ทั้งคู่สร้าง string representation แต่รับใช้ผู้ใช้ต่างกัน:
 
-| Method | เมื่อไหร่ถูกเรียก | วัตถุประสงค์ |
+| Method | เรียกเมื่อ | จุดประสงค์ |
 |---|---|---|
-| `__repr__` | `repr(obj)`, interactive shell | Representation ที่ชัดเจนสำหรับนักพัฒนา |
-| `__str__` | `str(obj)`, `print(obj)` | การแสดงผลที่อ่านง่ายสำหรับมนุษย์ |
+| `__repr__` | `repr(obj)`, interactive shell, **element ภายใน container** | Developer representation ที่ไม่กำกวม |
+| `__str__` | `str(obj)`, `print(obj)`, f-string `{obj}` | แสดงผลให้มนุษย์อ่านง่าย |
 
-ถ้ากำหนดเฉพาะ `__repr__` Python จะใช้ `__repr__` สำหรับทั้งสองกรณี
-Convention สำหรับ `__repr__` คือ return string ที่ถ้าส่งผ่าน `eval()` จะสร้าง object ขึ้นมาใหม่ได้
+ถ้ากำหนดแค่ `__repr__` Python จะใช้มันทั้งสองกรณี
+Convention ของ `__repr__` คือ return string ที่ถ้าส่งเข้า `eval()` แล้วจะสร้าง object กลับมาได้เหมือนเดิม
 
 ```python
 class Point:
@@ -40,10 +42,12 @@ class Point:
         return f"({self.x}, {self.y})"
 ```
 
+รายละเอียดที่ทำให้คนที่กำหนดทั้งสองตัวแปลกใจ: `print([Point(1, 2)])` พิมพ์ `[Point(1, 2)]` **ไม่ใช่** `[(1, 2)]` list ไม่เคยเรียก `__str__` ของ element ของมันเลย — มันเรียก `__repr__` เสมอ แม้ว่า `print()` บน list เองจะใช้ `__str__` ของ list (ซึ่งสำหรับ list แล้วสร้างจาก `repr` ของแต่ละ element) `__str__` จะถูกเรียกก็ต่อเมื่อคุณ convert หรือ print object นั้น *โดยตรง* เท่านั้น
+
 ## `__eq__` — equality
 
-Python เรียก `__eq__` เมื่อเขียน `a == b`
-หากไม่มี `__eq__` `==` จะ fallback ไปใช้ identity comparison (`is`) — สอง instance แยกกันที่มีข้อมูลเหมือนกันจะไม่เท่ากันเลย
+Python เรียก `__eq__` เมื่อคุณเขียน `a == b`
+ถ้าไม่มี `__eq__`, `==` จะ fallback เป็นการเทียบ identity (`is`) — สอง instance ที่แยกกันแต่มี data เดียวกันจะไม่เคยเท่ากันเลย
 
 ```python
 def __eq__(self, other: object) -> bool:
@@ -52,13 +56,47 @@ def __eq__(self, other: object) -> bool:
     return self.x == other.x and self.y == other.y
 ```
 
-Return `NotImplemented` (ไม่ใช่ `False`) เมื่อ type ไม่เข้ากัน — เพื่อให้ Python ลอง reflected operation บน operand อีกตัว
+## `__eq__` ทำให้ `__hash__` เป็น `None` — `TypeError` ตัวจริง และวิธีแก้สองแบบ
+
+การกำหนด `__eq__` บน class จะปิดการใช้ `__hash__` default ที่สืบทอดจาก `object` — Python ตั้ง `__hash__ = None` ให้อัตโนมัติ เพราะสอง object ที่เท่ากันต้อง hash เท่ากัน และ `__eq__` ที่คุณเขียนเองทำลาย guarantee นั้นที่ interpreter เคยสมมติได้ instance ตอนนี้เป็น **unhashable**:
+
+```python
+class User:
+    def __init__(self, uid: int) -> None:
+        self.uid = uid
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, User) and self.uid == other.uid
+
+cache = {}
+cache[User(1)] = "active"
+```
+
+รันบน 3.14 บรรทัดนี้ raise `TypeError: cannot use 'User' as a dict key (unhashable type: 'User')` — และ `hash(User(1))` ที่เรียกตรงๆ raise `TypeError: unhashable type: 'User'` วิธีแก้สองแบบ:
+
+1. **กำหนด `__hash__` เอง** สร้างจาก field เดียวกับที่ `__eq__` เทียบ: `def __hash__(self) -> int: return hash(self.uid)`
+2. **ใช้ frozen dataclass** (`@dataclass(frozen=True)`) — มันสร้างทั้ง `__eq__` ที่ถูกต้องและ `__hash__` ที่เข้าคู่กันให้อัตโนมัติ ตราบใดที่ทุก field เป็น hashable
+
+วิธีไหนก็ตามจะคืน `hash(obj)` ให้ใช้ได้ และให้ instance อยู่ใน set หรือเป็น dict key ได้อีกครั้ง
+
+## `NotImplemented` และ reflected operators
+
+`NotImplemented` เป็น singleton พิเศษ — ไม่ใช่ exception — ที่ dunder method return เพื่อบอกว่า "ฉันไม่รู้วิธีทำสิ่งนี้กับ type อื่นนั้น ให้ลองถามตัวอื่นดู" จากนั้น Python จะลอง method แบบ **reflected** (`__radd__` สำหรับ `+`, ในรูปแบบเดียวกันสำหรับ operator อื่น) บน operand *อีกฝั่ง* ถ้าทุกตัวเลือก return `NotImplemented` หมด Python จะ fallback ไปค่า default (`==` และ `!=` fallback เป็น identity; operator อื่น raise `TypeError`)
+
+```python
+def __radd__(self, other: object) -> "Vector":
+    # supports sum([...]), which starts by computing 0 + first_item
+    if other == 0:
+        return self
+    return NotImplemented
+```
+
+การสับสน `NotImplemented` กับ `NotImplementedError` (exception จริง มีไว้สำหรับ abstract method) เป็น bug ที่พบบ่อย: `Good(1) == "not a Good"` return `False` เพราะ `NotImplemented` กระตุ้น fallback ปกติของ Python แต่ class ที่ `raise NotImplementedError` จาก `__eq__` แทน จะทำให้*การเปรียบเทียบทั้งหมด*ระเบิด — `Bad(1) == "not a Bad"` raise `NotImplementedError: cannot compare` แทนที่จะ return `False` เงียบๆ ยืนยันแล้วบน 3.14: ทั้งสอง behavior เป็นไปตามที่อธิบายเป๊ะ
 
 ## `__len__` และ `__getitem__`
 
 Implement `__len__` เพื่อรองรับ `len(obj)`
-Implement `__getitem__` เพื่อรองรับ `obj[index]` subscript access
-`__getitem__` เพียงอย่างเดียวก็เพียงพอที่จะทำให้ object iterable ผ่าน `for` loop ได้: legacy iteration fallback ของ Python เรียก `__getitem__` ด้วย 0, 1, 2, ... ไปเรื่อย ๆ จนกว่าจะ raise `IndexError` แล้วหยุดตรงนั้น — `__len__` ไม่เกี่ยวข้องกับ fallback นี้เลย
+Implement `__getitem__` เพื่อรองรับการเข้าถึงแบบ subscript `obj[index]`
 
 ```python
 def __len__(self) -> int:
@@ -68,9 +106,95 @@ def __getitem__(self, index: int) -> float:
     return (self.x, self.y)[index]
 ```
 
+## `__iter__`/`__next__` เทียบกับ `__getitem__` fallback
+
+Iterator protocol จริงๆ คือสอง method: `__iter__` return iterator (บ่อยครั้งคือ `self`) และ `__next__` return ค่าถัดไปหรือ raise `StopIteration` เพื่อบอกจุดจบ:
+
+```python
+class Countdown:
+    def __iter__(self) -> "Countdown":
+        self.current = self.start
+        return self
+
+    def __next__(self) -> int:
+        if self.current <= 0:
+            raise StopIteration
+        self.current -= 1
+        return self.current + 1
+```
+
+`__getitem__` เพียงตัวเดียวก็เพียงพอที่จะทำให้ object iterable ได้เหมือนกัน ผ่าน **fallback แบบ legacy ที่แยกออกไป**: ถ้า class ไม่มี `__iter__` `for` loop ของ Python จะเรียก `__getitem__` ด้วย `0, 1, 2, ...` จนกว่าจะ raise `IndexError` แล้วหยุดตรงนั้น — `__len__` ไม่เกี่ยวข้องกับ fallback นี้เลย `list(LegacySequence([10, 20, 30]))` รันได้ปกติและพิมพ์ `[10, 20, 30]` บน CPython แต่ **ทั้ง `uvx mypy --strict` และ `uvx pyright` ปฏิเสธมัน** — ทั้งสองตัว model แค่ `Iterable` protocol แบบใหม่ (`__iter__`) ไม่รู้จัก `__getitem__` fallback แบบ legacy: mypy รายงาน `No overload variant of "list" matches argument type "LegacySequence"  [call-overload]` และ pyright รายงาน `"LegacySequence" is incompatible with protocol "Iterable[_T@list]" — "__iter__" is not present` นี่คือช่องว่างจริงระหว่างสิ่งที่ CPython รันได้กับสิ่งที่ type checker ปัจจุบันเข้าใจ — ใช้ `__iter__`/`__next__` เมื่อคุณต้องการให้ type checker ยอมรับ
+
+## `__len__`, `__bool__`, `__contains__`
+
+```python
+def __len__(self) -> int:
+    return len(self.items)
+
+def __bool__(self) -> bool:
+    return len(self.items) > 0
+
+def __contains__(self, item: object) -> bool:
+    return item in self.items
+```
+
+`bool(obj)` เรียก `__bool__` ถ้ามี ถ้าไม่มีจะ fallback เป็น `__len__` (ความยาว `0` เป็น falsy) `in` เรียก `__contains__` ถ้ามี ถ้าไม่มีจะ fallback เป็นการ iterate ด้วย `__iter__`/`__getitem__`
+
+## `__call__` — ทำให้ instance เรียกได้เหมือน function
+
+การกำหนด `__call__` ทำให้เรียก instance เหมือน function ได้ — `obj(...)` กลายเป็น `obj.__call__(...)`:
+
+```python
+class Multiplier:
+    def __init__(self, factor: int) -> None:
+        self.factor = factor
+
+    def __call__(self, value: int) -> int:
+        return value * self.factor
+
+double = Multiplier(2)
+double(21)          # 42
+callable(double)    # True
+```
+
+นี่คือวิธีที่ decorator แบบ class และ callback ที่ config ได้ทำงาน — object พก state (`factor`) ที่ function ธรรมดาเก็บไม่ได้โดยไม่มี closure
+
+## `__getattr__` vs `__getattribute__`
+
+`__getattribute__` รันสำหรับ**ทุก**การเข้าถึง attribute บน instance ไม่ว่าจะเจอหรือไม่ — override มันหายากและผิดพลาดง่าย (recursion ไม่มีที่สิ้นสุดถ้ามันเรียก `self.name` แทนที่จะเป็น `object.__getattribute__(self, name)`) `__getattr__` เป็น hook ที่ปลอดภัยกว่า: มันรัน**เฉพาะเมื่อ lookup ปกติล้มเหลวไปแล้ว**เท่านั้น (ทั้ง instance `__dict__` และ MRO ของ class ไม่เจอ) ทำให้เหมาะกับ fallback ที่คำนวณได้หรือ error ที่เป็นมิตรกว่า
+
+```python
+def __getattr__(self, name: str) -> str:
+    # only called when normal attribute lookup FAILS
+    return f"<no setting {name!r}>"
+```
+
+`cfg.loaded` (attribute จริง) ไม่ไปถึง `__getattr__` เลย ส่วน `cfg.missing_setting` ไปถึง เพราะ lookup ปกติล้มเหลวก่อน
+
+## `__del__` ไม่น่าเชื่อถือ
+
+`__del__` รันเมื่อ reference count ของ object ลดเหลือศูนย์ — สำหรับ object ธรรมดาที่ไม่มี cycle บน CPython มันเกิดขึ้นทันทีที่ reference สุดท้ายถูกลบ ดูเหมือน deterministic แต่จะหยุดเป็น deterministic ทันทีที่สอง object อ้างอิงกันเป็น cycle: reference counting อย่างเดียวไม่มีทางทำให้ count ของ cycle เป็นศูนย์ได้ ดังนั้น `__del__` จะไม่รันจนกว่า *cyclic garbage collector* (`gc.collect()` หรือการรันอัตโนมัติเป็นระยะ) จะตัด cycle นั้น — ซึ่งอาจช้ากว่ามาก หรือในกรณีเลวร้ายที่สุด (exception ตอน interpreter shutdown หรือปิด `gc`) อาจไม่รันเลย ยืนยันแล้ว: การลบ node สองตัวที่อ้างอิงกันไม่พิมพ์อะไรเลยจนกว่า `gc.collect()` จะรัน ส่วน object ที่ไม่มี cycle จะพิมพ์จาก `__del__` ทันทีตอน `del` อย่าพึ่ง `__del__` เพื่อปล่อย resource ภายนอก (file, socket, lock) — ใช้ context manager (`__enter__`/`__exit__`) แทน
+
+## `functools.total_ordering`
+
+การ implement comparison operator ทุกตัว (`__lt__`, `__le__`, `__gt__`, `__ge__`) ด้วยมือซ้ำซาก `@total_ordering` เติมส่วนที่เหลือให้จากแค่ `__eq__` กับอีก*หนึ่งตัว*:
+
+```python
+from functools import total_ordering
+
+@total_ordering
+class Money:
+    def __eq__(self, other: object) -> bool:
+        ...
+    def __lt__(self, other: "Money") -> bool:
+        return self.cents < other.cents
+```
+
+`sorted(prices)` และ `Money(100) <= Money(200)` ทำงานได้ทั้งคู่ — `<=` ไม่เคยถูกเขียนด้วยมือ `total_ordering` สร้างมันมาจาก `__eq__` และ `__lt__`
+
 ## Operator overloading ด้วย `__add__`
 
-Arithmetic operators map ไปยัง dunder methods:
+Arithmetic operator ผูกกับ dunder method:
 
 | Operator | Method |
 |---|---|
@@ -88,6 +212,10 @@ def __add__(self, other: "Vector") -> "Vector":
 ## Demo รันได้จริง
 
 export const dunderCode = `
+from functools import total_ordering
+from dataclasses import dataclass
+
+
 class Vector:
     def __init__(self, x: float, y: float) -> None:
         self.x = x
@@ -107,6 +235,11 @@ class Vector:
     def __add__(self, other: "Vector") -> "Vector":
         return Vector(self.x + other.x, self.y + other.y)
 
+    def __radd__(self, other: object) -> "Vector":
+        if other == 0:
+            return self
+        return NotImplemented
+
     def __len__(self) -> int:
         return 2
 
@@ -118,63 +251,302 @@ v1 = Vector(1, 2)
 v2 = Vector(3, 4)
 print(repr(v1))
 print(str(v1))
+print(v1)
+print([v1, v2])  # containers always use repr for elements, even though __str__ exists
 print(v1 == Vector(1, 2))
 print(v1 + v2)
+print(sum([v1, v2]))  # 0 + v1 -> Vector.__radd__ since int.__add__(0, v1) fails
 print(len(v1))
 print(v1[0], v1[1])
 
-# hash(v1)  # TypeError: unhashable type: 'Vector'
+try:
+    hash(v1)
+except TypeError as e:
+    print(f"TypeError: {e}")
+
+
+class HashableVector:
+    def __init__(self, x: float, y: float) -> None:
+        self.x = x
+        self.y = y
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, HashableVector):
+            return NotImplemented
+        return self.x == other.x and self.y == other.y
+
+    def __hash__(self) -> int:  # Fix 1: define __hash__ alongside __eq__
+        return hash((self.x, self.y))
+
+
+hv1 = HashableVector(1, 2)
+hv2 = HashableVector(1, 2)
+print(hash(hv1) == hash(hv2))
+print(len({hv1, hv2}))  # equal + same hash -> the set dedupes them to 1
+
+
+@dataclass(frozen=True)
+class FrozenVector:  # Fix 2: frozen=True generates a working __hash__ for free
+    x: float
+    y: float
+
+
+print(hash(FrozenVector(1, 2)) == hash(FrozenVector(1, 2)))
+
+
+class Countdown:
+    def __init__(self, start: int) -> None:
+        self.start = start
+
+    def __iter__(self) -> "Countdown":
+        self.current = self.start
+        return self
+
+    def __next__(self) -> int:
+        if self.current <= 0:
+            raise StopIteration
+        self.current -= 1
+        return self.current + 1
+
+
+print(list(Countdown(3)))
+
+
+class LegacySequence:
+    def __init__(self, data: list[int]) -> None:
+        self._data = data
+
+    def __getitem__(self, index: int) -> int:
+        return self._data[index]  # raises IndexError once index runs out -- for loop relies on that
+
+
+print(list(LegacySequence([10, 20, 30])))
+
+
+class Basket:
+    def __init__(self, items: list[str]) -> None:
+        self.items = items
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __bool__(self) -> bool:
+        return len(self.items) > 0
+
+    def __contains__(self, item: object) -> bool:
+        return item in self.items
+
+
+empty = Basket([])
+full = Basket(["apple"])
+print(bool(empty), bool(full))
+print("apple" in full)
+print(len(full))
+
+
+class Multiplier:
+    def __init__(self, factor: int) -> None:
+        self.factor = factor
+
+    def __call__(self, value: int) -> int:
+        return value * self.factor
+
+
+double = Multiplier(2)
+print(double(21))
+print(callable(double))
+
+
+class LazyConfig:
+    def __init__(self) -> None:
+        self.loaded = {"debug": False}
+
+    def __getattr__(self, name: str) -> str:
+        # only called when normal attribute lookup FAILS
+        return f"<no setting {name!r}>"
+
+    def __getattribute__(self, name: str) -> object:
+        # called for EVERY attribute access, found or not
+        print(f"looking up {name!r}")
+        return object.__getattribute__(self, name)
+
+
+cfg = LazyConfig()
+print(cfg.loaded)
+print(cfg.missing_setting)
+
+
+@total_ordering
+class Money:
+    def __init__(self, cents: int) -> None:
+        self.cents = cents
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Money):
+            return NotImplemented
+        return self.cents == other.cents
+
+    def __lt__(self, other: "Money") -> bool:
+        return self.cents < other.cents
+
+
+prices = [Money(300), Money(100), Money(200)]
+print([m.cents for m in sorted(prices)])
+print(Money(100) <= Money(200))  # generated by total_ordering from __eq__ + __lt__
 `.trim();
 
 <Playground code={dunderCode} />
 
 <Callout title="Dunder methods hook into built-in syntax and functions">
-คุณไม่เรียก `v1.__add__(v2)` โดยตรงใน application code — แค่เขียน `v1 + v2` และ Python resolve dunder method ให้
-นี่คือสิ่งที่ทำให้ user-defined objects รู้สึกเป็นธรรมชาติ: `len(v)`, `v[0]`, `v1 == v2` และ `print(v)` ทำงานได้ทันทีเมื่อกำหนด dunder ที่สอดคล้องกัน
-รายการทั้งหมดอยู่ใน Python Data Model reference — มี dunders สำหรับ context managers, iteration, attribute access และอีกมากมาย
-การกำหนด `__eq__` ยังทำให้ `__hash__` กลายเป็น `None` ด้วย ทำให้ instance unhashable — ตามที่บรรทัด comment ด้านบนแสดง (เนื้อหาเต็มไปบทถัดไป)
+คุณไม่เคยเรียก `v1.__add__(v2)` ตรงๆ ในโค้ด application — คุณเขียน `v1 + v2` แล้ว Python resolve dunder method ให้คุณ
+นี่คือสิ่งที่ทำให้ object ที่คุณกำหนดเองรู้สึกเป็น native: `len(v)`, `v[0]`, `v1 == v2`, `v(...)` และ `print(v)` ทำงานได้เองทันทีที่ dunder ที่สอดคล้องกันถูกกำหนด
+รายการทั้งหมดอยู่ใน Python Data Model reference — มี dunder สำหรับ context manager (`__enter__`/`__exit__`) ซึ่งโมดูลถัดไปจะสอน
+การกำหนด `__eq__` ยังทำให้ `__hash__` เป็น `None` ด้วย ทำให้ instance unhashable — แก้ด้วยการเขียน `__hash__` เองหรือใช้ `@dataclass(frozen=True)`
 </Callout>
+
+## Mental Model
+
+<Mermaid code={`flowchart TD
+  A["a + b"] --> B{"a.__add__(b) returns NotImplemented?"}
+  B -->|"no"| R1["use a.__add__(b)'s result"]
+  B -->|"yes"| C{"b.__radd__(a) exists and returns NotImplemented?"}
+  C -->|"no"| R2["use b.__radd__(a)'s result"]
+  C -->|"yes"| E["TypeError: unsupported operand type(s)"]`} title="NotImplemented ขับเคลื่อนการ dispatch operator ของ Python โดยเริ่มจาก operand ซ้ายก่อน" />
+
+Syntax ที่เป็น built-in ทุกตัวจริงๆ แล้วคือ lookup-แล้ว-call: `a + b` คือ `type(a).__add__(a, b)` ถูกลองก่อน มีแค่ตอนที่ return `NotImplemented` เท่านั้น Python จึงจะลอง `type(b).__radd__(b, a)` รูปแบบเดียวกัน — "ลอง dunder ตรงก่อน แล้ว fallback ไปอีกตัวที่เกี่ยวข้อง มีแค่ตอนนั้นถึงจะยอมแพ้" — ปรากฏซ้ำทั่วทั้งบทนี้: `bool(x)` ลอง `__bool__` แล้ว fallback เป็น `__len__`; `for` ลอง `__iter__`/`__next__` แล้ว fallback เป็น `__getitem__` protocol; การเข้าถึง attribute ลอง lookup ปกติแล้ว fallback เป็น `__getattr__` การอ่าน class ที่เต็มไปด้วย dunder คือการถามทุกครั้งว่า: syntax แต่ละแบบรัน method ไหนก่อน และ Python ทำอะไรถ้ามันปฏิเสธ?
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| `__eq__` ที่เขียนเอง | Equality แบบ value-based แทน identity | ปิด `__hash__` — ต้องเพิ่มกลับเองถ้าต้องการ hashing |
+| `__iter__`/`__next__` | Iterator protocol จริง type checker เข้าใจ | ต้องเขียนสอง method แทนหนึ่ง |
+| Iteration แบบ `__getitem__` อย่างเดียว | ทำงานได้ด้วย method เดียว เหมาะกับข้อมูลที่ index ได้อยู่แล้ว | mypy/pyright ไม่นับเป็น `Iterable` เฉพาะข้อมูลที่ index เป็นจำนวนเต็มและจบด้วย `IndexError` เท่านั้นที่ใช้ได้ |
+| `__call__` | Instance ทำตัวเหมือน function และพก state ได้ | ใช้เกินความจำเป็นได้ง่ายในจุดที่ function หรือ method ธรรมดาอ่านง่ายกว่า |
+| `__getattr__` | Fallback สะอาดสำหรับ attribute ที่หายไปหรือคำนวณได้ | การตอบให้เงียบๆ กับชื่อ attribute ที่พิมพ์ผิดอาจซ่อน bug จริง |
+| `@total_ordering` | เขียน comparison แค่ 2 ตัว ได้ครบ 4 ตัว | ช้ากว่า operator ที่เขียนเองเล็กน้อย (มี function call เพิ่มต่อการเปรียบเทียบหนึ่งครั้ง) |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **`__str__` ถูกใช้ทุกที่ที่ `__repr__` ไม่ได้ใช้** Container (list, dict, tuple) ใช้ `__repr__` สำหรับ element ของมันเสมอ — `print([obj])` ไม่เคยเรียก `obj.__str__()`
+- **Class ที่มี `__eq__` ใช้ใน set หรือเป็น dict key ได้เหมือนเดิม** การกำหนด `__eq__` ทำให้ `__hash__` เป็น `None` เว้นแต่คุณจะกำหนด `__hash__` ด้วย — class กลายเป็น unhashable โดย `TypeError` เกิดตอนใช้งาน ไม่ใช่ตอน define
+- **การ return `False` กับการ raise `NotImplementedError` จาก `__eq__` เป็นวิธี "ปลอดภัย" ที่บอกปฏิเสธคล้ายกัน** `NotImplemented` (ไม่มีวงเล็บ ไม่ใช่ exception) ให้ Python ลอง operand อีกฝั่งแล้ว fallback อย่างนุ่มนวล ส่วน `NotImplementedError` เป็น exception จริงที่ทำให้การเปรียบเทียบทั้งหมดพัง
+- **`__len__` จำเป็นสำหรับให้ `for` loop ทำงาน** มันไม่เกี่ยวกับ iteration เลย — `__iter__`/`__next__` หรือ `__getitem__` fallback ต่างหากที่ `for` ใช้จริง
+- **`__del__` เป็นที่ปล่อย resource ที่น่าเชื่อถือ เหมือน destructor ใน C++** มันรันทันทีเฉพาะ object ที่ไม่มี cycle บน CPython's refcounting เท่านั้น reference cycle จะทำให้มันรันช้าลงจนกว่า cyclic GC จะทำงาน และอาจไม่รันเลยก่อน interpreter shutdown ในบางกรณี ใช้ context manager แทน
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อ class ที่เต็มไปด้วย dunder ที่ generate มา ตรวจสิ่งเหล่านี้:
+
+- `__eq__` ถูกกำหนดโดยไม่มี `__hash__` ที่เข้าคู่กันไหม? Class จะกลายเป็น unhashable แบบเงียบๆ ไม่มีปัญหาจนกว่าจะมีคนเอา instance ไปใส่ set หรือเป็น dict key ซึ่งจะ raise `TypeError` ห่างไกลจากจุดที่เขียน `__eq__`
+- Comparison dunder `raise NotImplementedError` แทนที่จะ `return NotImplemented` ไหม? นั่นเปลี่ยน "ลอง operand อีกฝั่ง" ให้กลายเป็น crash
+- `__getitem__` ถูกใช้เป็นกลไก iteration *อย่างเดียว* ในโค้ดที่จะถูก type-check ด้วยไหม? `mypy --strict`/`pyright` ปฏิเสธการส่ง object แบบนี้ให้ `list(...)` หรือ parameter ที่เป็น `Iterable[...]` ใดๆ แม้ว่ามันจะรันได้บน CPython
+- `__getattribute__` (ไม่ใช่ `__getattr__`) ถูก override โดยไม่จบด้วย `object.__getattribute__(self, name)` ไหม? การเรียก `self.name` หรือ `getattr(self, name)` แทนจะทำให้ recursion ไม่มีที่สิ้นสุด
+- Logic การ cleanup (ปิด file, ปล่อย lock) อยู่แค่ใน `__del__` เท่านั้นไหม? Resource นั้นอาจเปิดค้างนานกว่าที่ตั้งใจ หรือไม่ถูกปิดเลยถ้าอยู่ใน cycle
+
+<SpotTheBug code={`class User:
+    def __init__(self, uid: int) -> None:
+        self.uid = uid
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, User) and self.uid == other.uid
+
+
+cache = {}
+u = User(1)
+cache[u] = "active"
+print(cache)`} lang="python">
+การกำหนด `__eq__` โดยไม่กำหนด `__hash__` ด้วย ทำให้ `__hash__` เป็น `None` บน class — instance กลายเป็น unhashable `cache[u] = "active"` raise `TypeError: cannot use 'User' as a dict key (unhashable type: 'User')` บน 3.14 ที่จุด assignment เลย ไม่ใช่ตอน define class แก้โดยเพิ่ม `__hash__` ที่เข้าคู่กัน: `def __hash__(self) -> int: return hash(self.uid)` — สร้างจาก field เดียวกับที่ `__eq__` เทียบ — หรือเปลี่ยนไปใช้ `@dataclass(frozen=True)` ซึ่งสร้างคู่ที่ถูกต้องให้อัตโนมัติ
+</SpotTheBug>
 
 export const quizDunder = [
   {
-    q: "ความแตกต่างระหว่าง `__repr__` และ `__str__` คืออะไร?",
+    q: "อะไรคือความต่างระหว่าง `__repr__` และ `__str__`?",
     options: [
-      "ไม่มีความแตกต่าง เป็น alias กัน",
-      "__repr__ สำหรับนักพัฒนา (ชัดเจน), __str__ สำหรับผู้ใช้ (อ่านง่าย)",
-      "__str__ สำหรับนักพัฒนา, __repr__ สำหรับผู้ใช้",
-      "__repr__ ใช้เฉพาะใน f-string"
+      "ไม่มีความต่าง มันเป็น alias กัน",
+      "__repr__ สำหรับ developer (ไม่กำกวม), __str__ สำหรับ end user (อ่านง่าย)",
+      "__str__ สำหรับ developer, __repr__ สำหรับ end user",
+      "__repr__ ใช้เฉพาะใน f-string เท่านั้น"
     ],
-    answer: 1
+    answer: 1,
+    explain: "__repr__ มุ่งให้ไม่กำกวม (ในอุดมคติ eval() ได้); __str__ มุ่งให้อ่านง่ายสำหรับ end user ถ้ากำหนดแค่ __repr__ Python จะใช้มันทั้งสองกรณี"
   },
   {
-    q: "`__eq__` ควร return `NotImplemented` แทน `False` เมื่อใด?",
+    q: "`__eq__` ควร return `NotImplemented` แทน `False` เมื่อไหร่?",
     options: [
-      "เมื่อทั้งสอง operand เท่ากัน",
-      "เมื่อ operand อีกตัวมี type ที่ไม่เข้ากัน",
+      "เมื่อ operand ทั้งสองเท่ากัน",
+      "เมื่อ operand อีกฝั่งเป็น type ที่เข้ากันไม่ได้",
       "เมื่อ self เป็น None",
       "เมื่อการเปรียบเทียบจะ raise exception"
     ],
-    answer: 1
+    answer: 1,
+    explain: "NotImplemented บอก Python ว่า 'ฉันตัดสินไม่ได้ ลอง __eq__ ของ operand อีกฝั่ง หรือ fallback' -- การ return False ตรงๆ จะเท่ากับยืนยันผิดๆ ว่า object ไม่เท่ากันแน่นอน"
   },
   {
-    q: "`v1 + v2` เรียก dunder method ใดบน `v1`?",
+    q: "`v1 + v2` เรียก dunder method ไหนบน `v1`?",
     options: [
       "__plus__",
       "__sum__",
       "__add__",
       "__combine__"
     ],
-    answer: 2
+    answer: 2,
+    explain: "Arithmetic operator ผูกกับชื่อ dunder โดยตรง -- + คือ __add__, - คือ __sub__, * คือ __mul__ และต่อไปตามนี้"
   },
   {
-    q: "Class หนึ่ง implement เฉพาะ `__getitem__` (ไม่มี `__iter__`, ไม่มี `__len__`) `for` loop รู้ได้อย่างไรว่าเมื่อไหร่ควรหยุด?",
+    q: "```python\nclass Item:\n    def __getitem__(self, i):\n        return [10, 20, 30][i]\n\nfor v in Item():\n    print(v)\n```\n`for` loop รู้ได้อย่างไรว่าเมื่อไหร่ควรหยุด?",
     options: [
       "Python เรียก __getitem__ ด้วย 0, 1, 2, ... จนกว่าจะ raise IndexError",
-      "Python เรียก __len__ ก่อนเพื่อรู้ว่าต้องดึงกี่ตัว",
-      "ไม่มีวันหยุด loop จะวนตลอดไป",
-      "หยุดทันทีที่ __getitem__ คืนค่า None"
+      "Python เรียก __len__ ก่อนเพื่อรู้จำนวน item ที่ต้องดึง",
+      "มันไม่หยุดเลย loop รันตลอดไป",
+      "มันหยุดทันทีที่ __getitem__ return None"
     ],
-    answer: 0
+    answer: 0,
+    explain: "เมื่อไม่มี __iter__ กำหนดไว้ legacy iteration fallback ของ Python จะเรียก __getitem__(0), __getitem__(1), ... และหยุดทันทีที่มีการเรียกใดเรียกหนึ่ง raise IndexError __len__ ไม่มีบทบาทใน fallback นี้เลย"
+  },
+  {
+    q: "```python\nclass Thing:\n    def __eq__(self, other):\n        return True\n\nt = Thing()\nd = {}\nd[t] = 1\n```\nเกิดอะไรขึ้น?",
+    options: [
+      "d กลายเป็น {t: 1} ตามปกติ",
+      "TypeError: unhashable type: 'Thing' ตอน d[t] = 1 รัน",
+      "พิมพ์ DeprecationWarning แต่ทำงานได้",
+      "การ assign ไม่ทำอะไรเลยแบบเงียบๆ"
+    ],
+    answer: 1,
+    explain: "การกำหนด __eq__ ทำให้ __hash__ เป็น None เว้นแต่จะกำหนด __hash__ ด้วย Thing ไม่มี __hash__ ดังนั้นการเอา instance ไปเป็น dict key จึง raise TypeError ที่บรรทัดนั้น"
+  },
+  {
+    q: "```python\nclass V:\n    def __eq__(self, other):\n        if not isinstance(other, V):\n            raise NotImplementedError\n        return True\n\nprint(V() == \"x\")\n```\nโค้ดนี้พิมพ์ (หรือ raise) อะไร?",
+    options: [
+      "False",
+      "True",
+      "มันจะ raise NotImplementedError -- การเปรียบเทียบไม่เสร็จสมบูรณ์",
+      "มันจะ raise TypeError ที่แปลงมาจาก NotImplementedError อัตโนมัติ"
+    ],
+    answer: 2,
+    explain: "raise NotImplementedError คือ exception จริง ไม่ใช่ NotImplemented singleton -- มัน propagate ออกจาก == ทันทีแทนที่จะให้ Python ลอง operand อีกฝั่งหรือ fallback"
+  },
+  {
+    q: "Class หนึ่งกำหนด `__len__` แต่ไม่มี `__bool__` `bool(obj)` ทำอะไรเมื่อ `len(obj) == 0`?",
+    options: [
+      "Raise TypeError เพราะ __bool__ จำเป็นต้องมี",
+      "Return True เสมอไม่มีเงื่อนไข",
+      "Fallback เป็น __len__ และ return False เมื่อความยาวเป็น 0",
+      "Return None"
+    ],
+    answer: 2,
+    explain: "เมื่อไม่มี __bool__ Python จะ fallback เป็น __len__: ความยาว 0 เป็น falsy ความยาวอื่นเป็น truthy"
+  },
+  {
+    q: "ความต่างหลักระหว่าง `__getattr__` กับ `__getattribute__` คืออะไร?",
+    options: [
+      "เป็น synonym กันเป๊ะๆ",
+      "__getattribute__ รันสำหรับทุกการเข้าถึง attribute; __getattr__ รันเฉพาะเมื่อ lookup ปกติล้มเหลวแล้ว",
+      "__getattr__ รันสำหรับทุกการเข้าถึง attribute; __getattribute__ รันเฉพาะตอนล้มเหลว",
+      "__getattribute__ ทำงานกับ class attribute เท่านั้น __getattr__ ทำงานกับ instance attribute เท่านั้น"
+    ],
+    answer: 1,
+    explain: "__getattribute__ ดักการเข้าถึง attribute ทั้งหมด ไม่ว่าจะเจอหรือไม่ -- override มันอย่างปลอดภัยต้อง delegate ไปที่ object.__getattribute__ __getattr__ ถูกเรียกเป็น fallback หลังจาก lookup ปกติล้มเหลวเท่านั้น จึงเป็น hook ที่ปลอดภัยกว่าสำหรับค่า default ที่คำนวณได้"
   }
 ];
 

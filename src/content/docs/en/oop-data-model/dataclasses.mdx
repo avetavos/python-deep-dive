@@ -1,6 +1,6 @@
 ---
 title: Dataclasses
-description: '@dataclass generates __init__, __repr__, and __eq__ automatically — plus defaults, field(), and frozen=True.'
+description: '@dataclass generates __init__, __repr__, and __eq__ -- plus field(), frozen=True, slots, order, kw_only, and the dataclass/NamedTuple/TypedDict/pydantic trade-off.'
 sidebar:
   order: 5
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## The boilerplate problem
 
@@ -42,10 +44,19 @@ class Config:
     debug: bool = False
 ```
 
-## `field()` for mutable defaults
+## `field(default_factory=list)` and the real mutable-default error
 
 You cannot use a mutable object (list, dict) directly as a default — Python would share one instance across all objects.
-Use `field(default_factory=...)` instead:
+`@dataclass` doesn't just warn about this, it **refuses to build the class at all**:
+
+```python
+@dataclass
+class BadInventory:
+    name: str
+    tags: list[str] = []  # mutable default -- dataclass refuses this at CLASS-DEFINITION time
+```
+
+Just defining `BadInventory` raises `ValueError: mutable default <class 'list'> for field tags is not allowed: use default_factory` — before you ever create an instance. This is stricter than a plain function's mutable-default argument (covered in the Functions module), which silently *works* until the shared state bites you; a dataclass field turns the same mistake into an immediate, loud error. The fix is `field(default_factory=...)`:
 
 ```python
 from dataclasses import dataclass, field
@@ -53,7 +64,7 @@ from dataclasses import dataclass, field
 @dataclass
 class Inventory:
     name: str
-    tags: list = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     quantity: int = 0
 ```
 
@@ -66,9 +77,9 @@ class Inventory:
 | `compare=False` | Excluded from `__eq__` (and from the ordering methods if you also set `order=True`) |
 | `init=False` | Exclude from `__init__`; set manually in `__post_init__` |
 
-## `frozen=True` — immutable records
+## `frozen=True` + `object.__setattr__` in `__post_init__`
 
-`frozen=True` makes the dataclass immutable: it generates `__setattr__` and `__delattr__` that raise `FrozenInstanceError`, and it also generates `__hash__` so frozen instances can be used as dict keys or in sets.
+`frozen=True` makes the dataclass immutable: it generates `__setattr__` and `__delattr__` that raise `FrozenInstanceError` on any attempt to assign, and it also generates `__hash__` so frozen instances can be used as dict keys or in sets.
 
 ```python
 @dataclass(frozen=True)
@@ -77,6 +88,97 @@ class Color:
     green: int
     blue: int
 ```
+
+`red.red = 128` raises `FrozenInstanceError: cannot assign to field 'red'`, verified on 3.14. That's a problem the moment you want to compute a *derived* field once, in `__post_init__` — a normal assignment there is blocked too, by design. The escape hatch is `object.__setattr__`, which bypasses the dataclass's own `__setattr__` override, used deliberately and exactly once during construction:
+
+```python
+@dataclass(frozen=True, slots=True)
+class Color:
+    red: int
+    green: int
+    blue: int
+    hex: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        # frozen blocks self.hex = ...; bypass it deliberately, once, during construction
+        object.__setattr__(self, "hex", f"#{self.red:02x}{self.green:02x}{self.blue:02x}")
+```
+
+## `slots=True`
+
+Adding `slots=True` (3.10+) generates `__slots__` for the class, removing the per-instance `__dict__`. Instances use less memory and attribute access is slightly faster, but you can no longer add attributes that weren't declared as fields, and multiple inheritance with other `__slots__` classes gets more constrained. `Color` above combines `frozen=True` and `slots=True` — a common pairing for small, high-volume value objects.
+
+## `order=True` and `kw_only`
+
+`order=True` generates `__lt__`, `__le__`, `__gt__`, `__ge__` from the field order — without it, `<` and friends raise `TypeError` on two dataclass instances. `kw_only=True` forces every field to be passed by keyword, which is useful once a dataclass has several fields of the same type where positional order is easy to get wrong:
+
+```python
+@dataclass(order=True, kw_only=True)
+class Version:
+    major: int
+    minor: int
+    patch: int = 0
+
+v1 = Version(major=1, minor=2)
+v2 = Version(major=1, minor=3)
+print(v1 < v2)   # True -- compares (major, minor, patch) tuples in field order
+```
+
+`Version(1, 2)` — calling it positionally — raises `TypeError: Version.__init__() takes 1 positional argument but 3 were given`; both `uvx mypy --strict` and `uvx pyright` also reject that call statically (`Too many positional arguments for "Version"` / `Expected 0 positional arguments`) — the type checker catches the `kw_only` violation before you'd ever run the code.
+
+## `asdict` deep-copies nested dataclasses
+
+`dataclasses.asdict` recursively converts a dataclass (including nested dataclasses) into plain dicts — and it **deep-copies** as it goes, so mutating the result never touches the original:
+
+```python
+snapshot = asdict(person)
+snapshot["address"]["city"] = "Paris"  # mutating the COPY
+print(person.address.city)             # original untouched -- asdict deep-copies nested dataclasses
+```
+
+This is the opposite of the aliasing behavior plain attribute access gives you — `person.address` returns the *same* `Address` object, but `asdict(person)["address"]` is an independent dict.
+
+## `eq=True` by default makes instances unhashable — `frozen`/`unsafe_hash` fix it
+
+`@dataclass` generates `__eq__` by default (`eq=True`), and — exactly like any hand-written class — generating `__eq__` sets `__hash__` to `None`. A plain, non-frozen dataclass is unhashable:
+
+```python
+@dataclass
+class Plain:
+    x: int
+    y: int
+
+hash(Plain(1, 2))  # TypeError: unhashable type: 'Plain'
+```
+
+Two ways to opt back in: `frozen=True` generates a correct `__hash__` from the fields (safe, because a frozen instance can't change after its hash is computed), or `unsafe_hash=True` generates one on a *mutable* dataclass — named "unsafe" because nothing stops you from mutating a field after using the instance as a dict key, which corrupts the dict's internal hash table.
+
+## The dataclass vs `NamedTuple` vs `TypedDict` vs pydantic table
+
+All four describe "a bag of named fields", but they solve different problems:
+
+| | `@dataclass` | `NamedTuple` | `TypedDict` | pydantic `BaseModel` |
+|---|---|---|---|---|
+| Runtime object | Regular class instance | `tuple` subclass (indexable, unpacks) | Plain `dict` — no runtime type at all | Regular class instance |
+| Mutable | Yes, unless `frozen=True` | No — tuples are immutable | Whatever a `dict` allows | Yes, unless configured frozen |
+| Runtime validation | None — annotations are not enforced | None | None | Yes — parses and coerces on construction |
+| Best for | General-purpose value/record classes with methods | Fixed-shape data that should also behave like a tuple | The *shape* of a plain dict you already have (e.g. parsed JSON) | Untrusted input (API requests, config files) that needs real validation |
+
+Reach for `@dataclass` as the default; `NamedTuple` when tuple-compatibility (unpacking, indexing) matters; `TypedDict` when you're describing a dict you don't control the construction of; pydantic when data arrives from *outside* your program and must be validated, not just annotated.
+
+## `__match_args__` and pattern matching
+
+`@dataclass` generates `__match_args__` from the field order, which makes instances work directly with `match`/`case` positional patterns:
+
+```python
+match p:
+    case Point2(x=0, y=0):
+        return "origin"
+    case Point2(x=x, y=y):
+        return f"({x}, {y})"
+```
+
+`Point2.__match_args__` is `('x', 'y')` — that's what lets `case Point2(x, y):` (positional) work at all, in addition to the keyword form shown above.
 
 ## Adding custom methods
 
@@ -95,7 +197,8 @@ class Point:
 ## Full runnable demo
 
 export const dataclassesCode = `
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict, FrozenInstanceError
+
 
 @dataclass
 class Point:
@@ -103,24 +206,17 @@ class Point:
     y: float
 
     def distance_from_origin(self) -> float:
-        return (self.x ** 2 + self.y ** 2) ** 0.5
+        return float((self.x**2 + self.y**2) ** 0.5)
 
 
 @dataclass
 class Inventory:
     name: str
-    tags: list = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     quantity: int = 0
 
     def add_tag(self, tag: str) -> None:
         self.tags.append(tag)
-
-
-@dataclass(frozen=True)
-class Color:
-    red: int
-    green: int
-    blue: int
 
 
 p = Point(3.0, 4.0)
@@ -132,11 +228,116 @@ item.add_tag("sale")
 item.add_tag("clearance")
 print(item)
 
+try:
+
+    @dataclass
+    class BadInventory:
+        name: str
+        tags: list[str] = []  # mutable default -- dataclass refuses this at CLASS-DEFINITION time
+
+except ValueError as e:
+    print(f"ValueError: {e}")
+
+
+@dataclass(frozen=True, slots=True)
+class Color:
+    red: int
+    green: int
+    blue: int
+    hex: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        # frozen blocks self.hex = ...; bypass it deliberately, once, during construction
+        object.__setattr__(self, "hex", f"#{self.red:02x}{self.green:02x}{self.blue:02x}")
+
+
 red = Color(255, 0, 0)
 print(red)
-print(red == Color(255, 0, 0))
+print(red.hex)
+try:
+    red.red = 128
+except FrozenInstanceError as e:
+    print(f"FrozenInstanceError: {e}")
 
-# hash(p)  # TypeError: unhashable type: 'Point'
+print(hash(red) == hash(Color(255, 0, 0)))
+
+
+@dataclass(order=True, kw_only=True)
+class Version:
+    major: int
+    minor: int
+    patch: int = 0
+
+
+v1 = Version(major=1, minor=2)
+v2 = Version(major=1, minor=3)
+print(v1 < v2)
+print(sorted([v2, v1], key=lambda v: (v.major, v.minor, v.patch)))
+
+try:
+    Version(1, 2)  # kw_only=True -- positional args are rejected
+except TypeError as e:
+    print(f"TypeError: {e}")
+
+
+@dataclass
+class Address:
+    city: str
+
+
+@dataclass
+class Person:
+    name: str
+    address: Address
+
+
+person = Person("Ada", Address("London"))
+snapshot = asdict(person)
+snapshot["address"]["city"] = "Paris"  # mutating the COPY
+print(person.address.city)  # original untouched -- asdict deep-copies nested dataclasses
+print(snapshot["address"]["city"])
+
+
+@dataclass
+class Plain:
+    x: int
+    y: int
+
+
+try:
+    hash(Plain(1, 2))
+except TypeError as e:
+    print(f"TypeError: {e}")
+
+
+@dataclass(unsafe_hash=True)
+class UnsafeHashable:
+    x: int
+    y: int
+
+
+print(hash(UnsafeHashable(1, 2)) == hash(UnsafeHashable(1, 2)))
+
+
+@dataclass
+class Point2:
+    x: float
+    y: float
+
+
+def describe(point: object) -> str:
+    match point:
+        case Point2(x=0, y=0):
+            return "origin"
+        case Point2(x=x, y=y):
+            return f"({x}, {y})"
+        case _:
+            return "not a point"
+
+
+print(describe(Point2(0, 0)))
+print(describe(Point2(1, 2)))
+print(Point2.__match_args__)
 `.trim();
 
 <Playground code={dataclassesCode} />
@@ -144,9 +345,62 @@ print(red == Color(255, 0, 0))
 <Callout title="Dataclasses remove boilerplate for record-like classes">
 Use `@dataclass` whenever your class is primarily a container for data fields — configuration objects, DTOs, value objects, named tuples with methods.
 For fully immutable value types, add `frozen=True`; for flexible defaults on mutable lists or dicts, always use `field(default_factory=...)`.
-If you need runtime validation on field values, consider Pydantic's `BaseModel` — it builds on the same idea but adds type coercion and validators.
-`@dataclass` generates `__eq__` by default, and generating `__eq__` sets `__hash__` to `None` — so a plain (non-frozen) dataclass like `Point` is unhashable, as the commented line above shows (full treatment in a later lesson).
+If you need runtime validation on field values, reach for pydantic's `BaseModel` instead — it builds on the same annotation-driven idea but actually parses and coerces at construction time.
+`@dataclass` generates `__eq__` by default, and generating `__eq__` sets `__hash__` to `None` — so a plain (non-frozen) dataclass like `Plain` is unhashable; use `frozen=True` or `unsafe_hash=True` to opt back in.
 </Callout>
+
+## Mental Model
+
+<Mermaid code={`flowchart LR
+  Ann["class body: name: type = default"] --> Gen["@dataclass reads __annotations__"]
+  Gen --> Init["generates __init__"]
+  Gen --> Repr["generates __repr__"]
+  Gen --> Eq["generates __eq__ (eq=True by default)"]
+  Eq -.->|"sets, unless frozen/unsafe_hash"| Hash["__hash__ = None"]
+  Gen -->|"frozen=True"| Setattr["generates __setattr__/__delattr__ that raise"]`} title="@dataclass is a class decorator that reads annotations once and writes methods onto the class" />
+
+`@dataclass` is not magic syntax — it's a regular class decorator that runs once, at class-definition time. It reads the class's `__annotations__` (the `name: type` lines) and its `field(...)` calls, and generates plain Python methods (`__init__`, `__repr__`, `__eq__`, and more depending on the flags) directly onto the class, exactly as if you'd written them by hand. That's why a mutable default raises immediately at definition time — the decorator inspects the defaults while building `__init__`, before any instance exists — and why `frozen=True` and `eq=True` interact: the same decorator call decides both, so it can generate a consistent `__hash__` instead of leaving you to reconcile them yourself.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| `@dataclass` (defaults) | `__init__`/`__repr__`/`__eq__` for free | Instances are unhashable unless you add `frozen` or `unsafe_hash` |
+| `field(default_factory=...)` | Every instance gets its own mutable default | Slightly more verbose than a bare literal default |
+| `frozen=True` | Immutable, hashable, safe as a dict key | Any field you want to compute after `__init__` needs `object.__setattr__` |
+| `slots=True` | Lower memory, faster attribute access | No dynamic extra attributes; more constrained multiple inheritance |
+| `order=True` | Free `<`/`<=`/`>`/`>=` from field order | Comparing dataclasses of different, unrelated shapes still just compares tuples of values — no semantic check |
+| pydantic `BaseModel` instead | Real runtime validation and coercion | An extra dependency, and a different (heavier) object than a plain dataclass |
+
+## Common Misconceptions
+
+- **A dataclass with a list field just needs a default like any other.** `tags: list = []` doesn't quietly share state like a function's mutable default would — `@dataclass` raises `ValueError` the moment the class body runs, before any instance exists.
+- **`frozen=True` means you can never set fields anywhere, including `__post_init__`.** `object.__setattr__(self, name, value)` is the documented escape hatch, used to set derived fields exactly once during construction.
+- **Every dataclass can be used as a dict key.** Only if it's hashable — and by default (`eq=True`, `frozen=False`) it isn't. `frozen=True` or `unsafe_hash=True` are required to opt in.
+- **`asdict` just returns `vars(instance)`.** It recursively converts nested dataclasses to dicts and deep-copies mutable fields, so mutating the result never affects the original instance.
+- **NamedTuple, TypedDict, and pydantic BaseModel are interchangeable with dataclass — pick whichever is shortest to type.** They differ in mutability, runtime identity, and whether anything validates the data — the right choice depends on where the data comes from and what you'll do with it.
+
+## Reading AI-generated code
+
+Before trusting a generated dataclass, check for:
+
+- A field with a literal mutable default (`tags: list = []`, `meta: dict = {}`) instead of `field(default_factory=...)` — this doesn't run at all; `@dataclass` raises `ValueError` immediately.
+- A `frozen=True` class with a plain `self.field = value` assignment anywhere outside `__post_init__`'s deliberate `object.__setattr__` — that's a `FrozenInstanceError` waiting to happen.
+- A dataclass used as a dict key or set member with no `frozen=True`/`unsafe_hash=True` — defaults to unhashable, `TypeError` at the point of use.
+- `unsafe_hash=True` on a dataclass whose fields are mutated after construction — the object's hash can change while it's sitting in a set or dict, silently corrupting lookups.
+- A nested-dataclass structure converted with `vars()` or manual dict-building instead of `asdict()`, missing the deep-copy semantics and leaking references to the original nested objects.
+
+<SpotTheBug code={`from dataclasses import dataclass, field
+
+@dataclass
+class Order:
+    items: list = field(default_factory=list)
+    tags: list = []  # meant as "no tags by default"
+
+    def add_tag(self, tag: str) -> None:
+        self.tags.append(tag)`} lang="python">
+`tags: list = []` is a literal mutable default on a dataclass field — `@dataclass` refuses to build the class at all. Verified: importing this module raises `ValueError: mutable default <class 'list'> for field tags is not allowed: use default_factory` at the `class Order:` line, before `Order` is ever instantiated. Fix it the same way `items` above already does it correctly: `tags: list = field(default_factory=list)`.
+</SpotTheBug>
 
 export const quizDataclasses = [
   {
@@ -157,27 +411,30 @@ export const quizDataclasses = [
       "__str__ and __hash__",
       "__iter__ and __next__"
     ],
-    answer: 1
+    answer: 1,
+    explain: "By default @dataclass generates __init__ (from the annotated fields), __repr__, and __eq__. __hash__ is NOT generated by default -- generating __eq__ actually sets it to None unless frozen or unsafe_hash is set."
   },
   {
     q: "Why can't you write `tags: list = []` as a dataclass field default?",
     options: [
       "Lists are not allowed as field types",
-      "The same list object would be shared by all instances",
+      "@dataclass raises ValueError at class-definition time -- it refuses to build the class",
       "You must use a tuple instead",
       "Dataclasses do not support mutable fields"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Unlike a plain function's mutable default (which silently works until shared state bites you), @dataclass detects a literal mutable default and raises ValueError('mutable default ... use default_factory') immediately -- before any instance is created."
   },
   {
     q: "What does `frozen=True` add to a dataclass?",
     options: [
       "Makes all fields optional",
-      "Prevents modification of fields and generates __hash__",
+      "Generates __setattr__/__delattr__ that raise FrozenInstanceError, and a working __hash__",
       "Automatically sorts the fields alphabetically",
       "Enables pickling"
     ],
-    answer: 1
+    answer: 1,
+    explain: "frozen=True blocks attribute assignment after __init__ (raising FrozenInstanceError) and, because the instance can no longer change, generates a correct __hash__ derived from the fields."
   },
   {
     q: "What is `field(repr=False)` used for?",
@@ -187,7 +444,52 @@ export const quizDataclasses = [
       "Making the field read-only",
       "Setting a factory default"
     ],
-    answer: 1
+    answer: 1,
+    explain: "repr=False removes just that one field from the generated __repr__ string -- it still participates in __init__ and __eq__ unless those are separately disabled."
+  },
+  {
+    q: "```python\n@dataclass(frozen=True)\nclass Point:\n    x: float\n    y: float\n\np = Point(1.0, 2.0)\np.x = 5.0\n```\nWhat happens on the last line?",
+    options: [
+      "p.x becomes 5.0 normally",
+      "FrozenInstanceError: cannot assign to field 'x'",
+      "AttributeError: can't set attribute",
+      "Nothing -- the assignment is silently ignored"
+    ],
+    answer: 1,
+    explain: "frozen=True generates a __setattr__ that raises dataclasses.FrozenInstanceError for any assignment after construction. Verified message on 3.14: \"cannot assign to field 'x'\"."
+  },
+  {
+    q: "```python\n@dataclass(order=True, kw_only=True)\nclass Version:\n    major: int\n    minor: int\n\nVersion(1, 2)\n```\nWhat happens?",
+    options: [
+      "Creates Version(major=1, minor=2) normally",
+      "TypeError -- kw_only=True rejects positional arguments",
+      "ValueError -- order=True requires at least 3 fields",
+      "It works but major and minor are swapped"
+    ],
+    answer: 1,
+    explain: "kw_only=True removes positional parameters from the generated __init__ entirely -- every field must be passed by keyword. Version(1, 2) raises TypeError: Version.__init__() takes 1 positional argument but 3 were given, and both mypy --strict and pyright reject the call statically too."
+  },
+  {
+    q: "```python\nperson = Person(\"Ada\", Address(\"London\"))\nsnapshot = asdict(person)\nsnapshot[\"address\"][\"city\"] = \"Paris\"\nprint(person.address.city)\n```\nWhat does this print?",
+    options: [
+      "Paris -- asdict returns references to the original nested objects",
+      "London -- asdict deep-copies nested dataclasses into plain dicts",
+      "AttributeError -- asdict does not support nested dataclasses",
+      "Ada"
+    ],
+    answer: 1,
+    explain: "asdict recursively converts nested dataclasses into new dicts, deep-copying as it goes. Mutating the returned snapshot never touches the original person.address object, which still says 'London'."
+  },
+  {
+    q: "You're modeling data that arrives as untrusted JSON from an external API and must be validated before use. Which is the best fit?",
+    options: [
+      "@dataclass -- annotations alone are enough validation",
+      "NamedTuple -- tuples are always safe",
+      "TypedDict -- it enforces types at runtime automatically",
+      "pydantic BaseModel -- it actually parses and validates values at construction time"
+    ],
+    answer: 3,
+    explain: "dataclass, NamedTuple, and TypedDict all describe shape only -- none of them check or coerce values at runtime. pydantic's BaseModel is the one built specifically to validate and coerce untrusted input when it's constructed."
   }
 ];
 

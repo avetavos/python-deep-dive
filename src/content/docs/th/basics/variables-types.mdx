@@ -1,6 +1,6 @@
 ---
 title: Variables & Types
-description: 'Dynamic typing, ชนิดข้อมูลพื้นฐาน, type(), การแปลงชนิด, และ truthiness ใน Python'
+description: 'Dynamic typing, name กับ object, is เทียบกับ ==, mutability, truthiness, และความแม่นยำของ floating-point ใน Python'
 sidebar:
   order: 2
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## ตัวแปรและ Dynamic Typing
 
@@ -24,6 +26,53 @@ x = [1, 2, 3]   # x now references a list
 นี่เรียกว่า **dynamic typing**
 ชนิดข้อมูลติดอยู่กับออบเจกต์ ไม่ใช่กับชื่อตัวแปร
 
+## Name ผูกกับ object เสมอ
+
+ชื่อตัวแปรใน Python ไม่ใช่กล่องที่เก็บค่า — แต่เป็น **ป้ายชื่อที่ผูกไว้กับ object**
+`=` ไม่เคยคัดลอกค่า มันแค่ทำให้ชื่อไปชี้ที่ object ที่มีอยู่แล้ว (หรือเพิ่งสร้างขึ้น)
+ถ้าชื่อสองชื่อชี้ไปที่ object ที่ **mutable** ตัวเดียวกัน การแก้ไขผ่านชื่อหนึ่งจะเห็นผลผ่านอีกชื่อหนึ่งด้วย:
+
+```python
+a = [1, 2]
+b = a          # b is bound to the SAME object as a, not a copy
+b.append(3)
+print(a)       # [1, 2, 3] -- mutating through b also changes what a sees
+print(a is b)  # True -- same object, two names
+
+c = a.copy()   # a new, independent object with equal contents
+c.append(99)
+print(a)       # [1, 2, 3] -- unaffected by mutating c
+print(a is c)  # False
+```
+
+`id(obj)` คืนตัวเลขที่ไม่ซ้ำกันสำหรับ object ตลอดอายุของมัน (ใน CPython คือตำแหน่งในหน่วยความจำ)
+ชื่อสองชื่ออ้างถึง object เดียวกันก็ต่อเมื่อ `id(a) == id(b)` — ซึ่งเป็นสิ่งเดียวกับที่ `a is b` ตรวจให้คุณอยู่แล้ว
+นี่คือรูปแบบ bug ที่พบบ่อยที่สุดในโค้ดที่ "ทดสอบแล้วผ่าน": function รับ list เข้ามาแล้วแก้ไขในที่ (in place) โดยคิดว่าตัวเองมี copy ส่วนตัว แต่ list ของผู้เรียกก็เปลี่ยนไปด้วย
+
+## Identity กับ Equality: `is` กับ `==`
+
+`==` ถามว่า "object สองตัวนี้มีค่าเท่ากันไหม" (เรียก `__eq__`)
+`is` ถามว่า "ชื่อสองชื่อนี้ผูกกับ object ตัวเดียวกันจริง ๆ ไหม" (เทียบ `id()`)
+สำหรับจำนวนเต็มขนาดเล็กและ literal บางแบบ รายละเอียดการ implement ของ CPython ทำให้ `is` "ดูเหมือน" ตรวจค่าได้ด้วย — จนกว่ามันจะไม่ทำงานแบบนั้นอีกต่อไป:
+
+```python
+small1 = 100
+small2 = 100
+print(small1 is small2)   # True -- CPython caches small ints -5..256
+
+big1 = 257
+big2 = 257
+print(big1 is big2)       # True -- literal 257 folded to one constant in this file
+
+big3 = int("257")
+big4 = int("257")
+print(big3 is big4)       # False -- built at runtime, two separate objects
+```
+
+`big1 is big2` พิมพ์ `True` ในตัวอย่างนี้เพราะ literal `257` ทั้งสองตัวอยู่ในโค้ดที่ compile รวมกัน แล้ว compiler เอา constant มารวมเป็นตัวเดียว (constant folding) — นี่เป็นรายละเอียดของไฟล์นี้ ไม่ใช่ข้อรับประกันของภาษา
+ทันทีที่ค่าเดียวกันเกิดจากการคำนวณ (`int("257")`, ผลบวก, ค่าที่อ่านจากไฟล์) มันจะเป็น object ใหม่ และ `is` จะคืน `False`
+อย่าใช้ `is` เทียบค่าเด็ดขาด — ใช้ `==` เสมอ เก็บ `is` ไว้สำหรับการตรวจ identity ที่ตั้งใจจริง ๆ เช่น `x is None`, `x is True`, `x is some_specific_object`
+
 ## ชนิดข้อมูล Scalar พื้นฐาน
 
 Python มีชนิดข้อมูล scalar สี่ชนิดที่คุณจะใช้ในทุกโปรแกรม:
@@ -38,6 +87,24 @@ Python มีชนิดข้อมูล scalar สี่ชนิดที�
 ยังมี `None` — singleton ที่แทนการขาดค่า
 `None` มีชนิดข้อมูลของตัวเอง คือ `NoneType` และมี `None` เพียงออบเจกต์เดียวในกระบวนการ Python ทั้งหมด
 ทดสอบด้วย `is None` เสมอ ไม่ใช่ `== None`
+
+## Mutability
+
+การที่ object เปลี่ยนแปลงตัวเอง "ในที่" (in place) ได้หลังสร้างขึ้นแล้ว โดยไม่กลายเป็น object อื่น เรียกว่า mutability
+เรื่องนี้ไม่เกี่ยวกับชื่อตัวแปรเลย — มันเป็นคุณสมบัติของ object เอง:
+
+| ชนิด | Mutable? | หมายเหตุ |
+|---|---|---|
+| `int`, `float`, `bool`, `complex` | ไม่ | "การเปลี่ยนแปลง" ใด ๆ สร้าง object ใหม่เสมอ |
+| `str` | ไม่ | ทุก method ของ string คืน string ใหม่ |
+| `tuple` | ไม่ | slot ของ tuple แก้ไม่ได้ — แต่ element ที่เป็น mutable เอง (list ที่อยู่ใน tuple) ยังเปลี่ยนได้ |
+| `frozenset` | ไม่ | คู่แฝดที่ immutable ของ `set` |
+| `list` | ใช่ | `.append`, `.sort`, slice assignment ล้วนแก้ไขในที่ |
+| `dict` | ใช่ | เพิ่ม แก้ไข ลบ key/value ได้ |
+| `set` | ใช่ | เพิ่มหรือลบ element ได้ |
+
+Aliasing (สองชื่อ object เดียว) จะสร้างปัญหาเฉพาะกับชนิดที่ **mutable** เท่านั้น
+Aliasing `int` หรือ `str` ไม่มีอันตราย เพราะไม่มี operation ไหนแก้ string หรือ int ในที่ได้ ทุกชื่อที่ผูกกับมันจะเห็นค่าเดิมที่มันถูกสร้างมาเสมอ
 
 ## การตรวจสอบชนิดข้อมูลขณะรันไทม์
 
@@ -86,6 +153,68 @@ else:
     print("name is empty")   # this branch runs
 ```
 
+รายการนี้คือกับดัก: `0`, `""`, และ `[]` เป็น **ค่าที่ถูกต้องและมีอยู่จริง** ที่บังเอิญเป็น falsy — มันไม่ใช่สิ่งเดียวกับ "ไม่ได้ให้ค่ามา"
+`if x:` แยกไม่ออกระหว่าง "ผู้เรียกส่ง 0 มา" กับ "ผู้เรียกไม่ได้ส่งอะไรมาเลย"
+เมื่อไหร่ที่ `0`, `""`, หรือ `[]` เป็น input ที่มีความหมายจริง ต้องตรวจ identity กับ `None` แทน truthiness:
+
+```python
+def set_volume(vol=None):
+    if vol:              # BUG: 0 (mute) is falsy
+        return vol
+    return 50
+
+print(set_volume(0))     # 50 -- wrong: mute (0) silently became the default
+
+def set_volume_fixed(vol=None):
+    if vol is not None:  # checks "was something given", not "is it truthy"
+        return vol
+    return 50
+
+print(set_volume_fixed(0))  # 0 -- correct
+```
+
+## ความแม่นยำของ Floating-point
+
+`float` คือ IEEE 754 double precision — บิตแบบไบนารีจำนวนคงที่ ซึ่งแทนเศษส่วนทศนิยมส่วนใหญ่ไม่ได้แม่นยำ
+นี่ไม่ใช่ bug ของ Python — ทุกภาษาที่ใช้ binary float มีปัญหานี้เหมือนกัน
+
+```python
+import math
+from decimal import Decimal
+
+print(0.1 + 0.2)                       # 0.30000000000000004
+print(0.1 + 0.2 == 0.3)                # False
+print(math.isclose(0.1 + 0.2, 0.3))    # True
+print(Decimal("0.1") + Decimal("0.2")) # 0.3
+```
+
+อย่าเทียบ float ด้วย `==` เว้นแต่คุณสร้างทั้งสองฝั่งจาก literal หรือการคำนวณเดียวกันเป๊ะ ใช้ `math.isclose(a, b)` สำหรับการเทียบทั่วไป หรือเปลี่ยนไปใช้ `decimal.Decimal` (สร้างจาก string ไม่ใช่ float) เมื่อต้องการเลขทศนิยมที่แม่นยำ — เงินคือตัวอย่างคลาสสิก
+
+## Shadowing builtin
+
+`list`, `str`, `dict`, `type`, `id`, `input`, `sum` และ builtin อื่น ๆ ล้วนเป็นแค่ชื่อใน built-in scope — ไม่มีอะไรห้ามคุณ rebind มัน:
+
+```python
+items = [1, 2, 3]
+list = items          # shadows the builtin `list` type in this scope
+print(list([4, 5]))   # TypeError: 'list' object is not callable
+```
+
+เมื่อ `list` ถูก rebind แล้ว ชื่อนี้จะไม่อ้างถึง builtin type อีกต่อไปในส่วนที่เหลือของ scope นั้น — การเรียก `list(...)` จะพยายามเรียก object ที่เก็บอยู่ใน `list` (list ธรรมดา ไม่ใช่ callable) แทนการสร้าง list ใหม่
+ทางแก้ที่แท้จริงคือไม่ตั้งชื่อ variable ซ้ำกับ builtin ตั้งแต่แรก `del list` ก็ลบ shadow ออกได้เหมือนกัน แต่การเปลี่ยนชื่อตัวแปรคือทางแก้ที่ถูกต้อง
+
+## `bool` เป็น subclass ของ `int`
+
+`True` และ `False` ไม่ใช่ primitive type แยกต่างหาก — `bool` เป็น subclass ของ `int` และ `True`/`False` ทำตัวเหมือน `1`/`0` ในบริบทตัวเลขทุกครั้ง:
+
+```python
+print(True + True)            # 2
+print(isinstance(True, int))  # True
+print(True == 1)              # True
+```
+
+นี่คือเหตุผลที่ `sum([True, True, False])` เป็นวิธีที่ใช้ได้จริง (แม้จะแปลกใจครั้งแรก) ในการนับว่ามีกี่ item ใน list ของ boolean ที่เป็น `True` — มันได้ผลลัพธ์ `2`
+
 ## Demo ที่รันได้จริง
 
 export const variablesTypesCode = `
@@ -113,6 +242,134 @@ for v in falsy_values:
 
 <Playground code={variablesTypesCode} />
 
+Playground ที่สองด้านล่างเป็นทัวร์ครบวงจรของทุกอย่างในหน้านี้ที่พังได้แบบเงียบ ๆ: aliasing, `is` เทียบกับ `==`, truthiness, ความแม่นยำของ float, shadowing และเลขคณิตของ `bool`
+
+export const variablesDepthCode = `
+import math
+from decimal import Decimal
+
+# 1. Names bind to objects; assignment never copies.
+a = [1, 2]
+b = a  # b is bound to the SAME list object, not a copy
+b.append(3)
+print("a:", a)
+print("a is b:", a is b)
+c = a.copy()  # an independent object with an equal value
+c.append(99)
+print("a after c mutated:", a)
+print("a == c:", a == c, "| a is c:", a is c)
+
+# 2. is vs ==: small-int cache and same-file constant folding make "is"
+# LOOK like a value comparison... until the value is built at runtime.
+small1 = 100
+small2 = 100
+print("100 is 100 (cached -5..256):", small1 is small2)
+
+big1 = 257
+big2 = 257
+print("257 is 257 (literals, same file):", big1 is big2)
+
+big3 = int("257")
+big4 = int("257")
+print("int('257') is int('257'):", big3 is big4)
+
+# 3. Truthiness: 0 / "" / [] are valid values, not "missing".
+def set_volume(vol=None):
+    if vol:  # BUG: a real 0 (mute) is falsy, so it falls through to the default
+        return vol
+    return 50  # default volume
+
+print("set_volume(0), buggy:", set_volume(0))
+
+def set_volume_fixed(vol=None):
+    if vol is not None:
+        return vol
+    return 50
+
+print("set_volume(0), fixed:", set_volume_fixed(0))
+
+# 4. Float precision.
+print("0.1 + 0.2 ==", 0.1 + 0.2)
+print("0.1 + 0.2 == 0.3:", 0.1 + 0.2 == 0.3)
+print("isclose:", math.isclose(0.1 + 0.2, 0.3))
+print("Decimal:", Decimal("0.1") + Decimal("0.2"))
+
+# 5. Shadowing a builtin.
+items = [1, 2, 3]
+list = items  # shadows the builtin list type in this scope
+print("list (shadowed name):", list)
+try:
+    list([4, 5])
+except TypeError as e:
+    print(f"list([4, 5]) -> TypeError: {e}")
+del list  # remove the shadow; the builtin is visible again
+print("list([4, 5]) after del:", list([4, 5]))
+
+# 6. bool is a subclass of int.
+one = 1
+print("True + True ==", True + True)
+print("isinstance(True, int):", isinstance(True, int))
+print("True == 1:", True == 1, "| True is one:", True is one)
+`.trim();
+
+<Playground code={variablesDepthCode} />
+
+## Mental Model
+
+ลองนึกว่าชื่อตัวแปรเป็นป้ายที่ผูกด้วยเชือกเข้ากับ object ไม่ใช่กล่องที่เก็บค่า
+`a = [1, 2]` ผูกป้าย `a` เข้ากับ list object หนึ่งตัว `b = a` ผูกป้ายที่สอง `b` เข้ากับ *object ตัวเดียวกัน* — ไม่มี object ใหม่เกิดขึ้น
+`b.append(3)` เขียนเข้าไปใน object นั้น ป้ายทั้งสองยังเห็นการเปลี่ยนแปลงเพราะชี้ไปที่สิ่งเดียวกัน
+`c = a.copy()` สร้าง object ใหม่ที่มีเนื้อหาเท่ากันแล้วผูก `c` เข้ากับมัน — จากจุดนั้นไป object ทั้งสองเปลี่ยนแปลงแยกจากกัน
+
+<Mermaid code={namesDiagram} title="a และ b ผูกกับ list object ตัวเดียวกัน ส่วน c ผูกกับ copy ที่แยกออกมา" />
+
+export const namesDiagram = `flowchart LR
+  subgraph Names
+    aL["a"]
+    bL["b"]
+    cL["c"]
+  end
+  obj1(["list object #1: [1, 2, 3]"])
+  obj2(["list object #2: [1, 2, 99]"])
+  aL --> obj1
+  bL --> obj1
+  cL --> obj2`;
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| Dynamic typing | ไม่ต้องประกาศชนิดข้อมูล เขียน prototype ได้เร็ว container ยืดหยุ่น | error เรื่องชนิดข้อมูลโผล่ตอนรันไทม์ ไม่ใช่ก่อนโปรแกรมรัน |
+| Assignment คือการผูก ไม่ใช่การคัดลอก | O(1) ไม่ว่า object จะใหญ่แค่ไหน — ส่งข้อมูลก้อนใหญ่ไปมาไม่มีต้นทุน | Aliasing bug: แก้ไขผ่านชื่อหนึ่งกระทบทุกชื่อที่ผูกกับ object เดียวกัน |
+| การตรวจ identity ด้วย `is` | O(1) ไม่ต้องเรียก `__eq__` | ดูเหมือนใช้ได้กับ small int และ literal ในไฟล์เดียวกัน แล้วพังเงียบ ๆ กับค่าที่ใหญ่กว่าหรือสร้างตอนรันไทม์ |
+| การแปลงเป็น truthy/falsy ใน `if` | เขียน condition สั้นกระชับ (`if items:`) | ค่าที่ถูกต้อง (`0`, `""`, `[]`) ตกไปอยู่ branch เดียวกับ "ไม่มีค่า" |
+| `int` แม่นยำไม่จำกัด | ไม่มี integer overflow แบบเงียบ ๆ เลย | `float` ยังมีความแม่นยำแค่ 53 บิต — `0.1 + 0.2 != 0.3` |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"`=` คัดลอกค่า เหมือนภาษาอื่น ๆ"** ไม่จริง — `=` ผูกชื่อเข้ากับ object เท่านั้น สำหรับ object ที่ mutable ชื่อสองชื่ออาจจบลงที่การอ้างถึง object เดียวกัน
+- **"`is` กับ `==` ใช้แทนกันได้กับตัวเลขและ string"** มันเห็นตรงกันโดยบังเอิญจาก implementation (small-int cache, constant folding) จนกว่าค่าจะหลุดช่วงนั้นหรือถูกสร้างตอนรันไทม์
+- **"`0` มีความหมายเหมือน `None`"** `0`, `""`, และ `[]` คือค่าที่ถูกต้องที่บังเอิญเป็น falsy ส่วน `None` คือ sentinel ที่แทน "ไม่มีค่า" จริง ๆ
+- **"`0.1 + 0.2 == 0.3` เพราะมันคือเลขคณิตพื้นฐาน"** binary floating point แทน `0.1` หรือ `0.2` ไม่ได้แม่นยำ ใช้ `math.isclose` หรือ `Decimal` เมื่อความแม่นยำสำคัญ
+- **"การตั้งชื่อตัวแปรซ้ำกับ builtin อย่าง `list` ไม่มีอันตรายถ้าไม่ใช้ builtin ตัวนั้นซ้ำใกล้ ๆ"** มัน shadow builtin ไปตลอด scope ที่เหลือ — การเรียก `list(...)` ครั้งใดก็ตามใน scope เดียวกันหลังจากนั้นจะพัง
+
+## อ่านโค้ดที่ AI เขียน
+
+- โค้ดเทียบกับ `None` ด้วย `==` แทน `is` หรือเปล่า? `if value == None:` ใช้ได้โดยบังเอิญ (`NoneType.__eq__` เห็นตรงกัน) แต่ `is None` คือวิธีที่ถูกต้องและ idiomatic
+- ตัวแปรใช้ชื่อซ้ำกับ builtin หรือเปล่า (`list`, `str`, `type`, `id`, `dict`, `input`, `sum`, ...)? ถ้าใช่ ตรวจดูว่า builtin ตัวนั้นถูกเรียกที่ไหนอีกใน scope เดียวกันหรือไม่
+- `if value:` ต้องรับ `0`, `""`, หรือ `[]` เป็น input ที่ถูกต้องจริงหรือเปล่า? ถ้าใช่ ควรเป็น `if value is not None:`
+- โค้ดเทียบค่า `int` หรือ `str` ด้วย `is` แทน `==` หรือเปล่า? มีแต่การตรวจ identity เท่านั้น (`is None`, `is True`, `is some_sentinel`) ที่ควรใช้ `is`
+- โค้ดเทียบ float ด้วย `==` ตรง ๆ แทนที่จะใช้ `math.isclose` หรือ `Decimal` หรือเปล่า?
+- function รับ argument ที่เป็น mutable (`list` หรือ `dict`) แล้วแก้ไขในที่โดยผู้เรียกไม่ได้คาดหวังแบบนั้นหรือเปล่า?
+
+<SpotTheBug code={`def process(data):
+    list = get_items(data)   # shadows the builtin list
+    if list == None:         # should be "is None"
+        return []
+    return list`} lang="python">
+มี bug ซ้อนกันสองจุดใน 4 บรรทัด อย่างแรก `list = get_items(data)` shadow builtin type `list` ภายใน function นี้ — ถ้า `process` ต้องเรียก `list(...)` ในภายหลัง จะพังด้วย `TypeError: 'list' object is not callable` (หรือทำงานผิดเงียบ ๆ ถ้า `get_items` คืนอะไรบางอย่างที่ callable) อย่างที่สอง `if list == None:` พึ่งพา `__eq__` ที่บังเอิญเห็นตรงกับ identity สำหรับ `None` แต่ไม่ใช่วิธีที่ถูกต้องหรือปลอดภัยเสมอไป รูปแบบที่ถูกคือ `if list is None:` วิธีแก้: เปลี่ยนชื่อตัวแปร (`items = get_items(data)`) และใช้ `is None`
+</SpotTheBug>
+
 <Callout title="ทุกอย่างคือออบเจกต์">
 ใน Python, `42` ไม่ใช่ primitive — แต่เป็น instance ของคลาส `int`
 ซึ่งหมายความว่ามันมี methods: `(42).bit_length()` คืนค่า `6`
@@ -122,34 +379,65 @@ for v in falsy_values:
 
 export const quizVariablesTypes = [
   {
-    q: "Dynamic typing ใน Python หมายความว่าอะไร?",
+    q: "```python\na = [1, 2]\nb = a\nb.append(3)\nprint(a)\n```\nโค้ดนี้พิมพ์อะไร?",
     options: [
-      "ตัวแปรต้องประกาศชนิดข้อมูลก่อนใช้",
-      "ชนิดข้อมูลถูกกำหนดโดยออบเจกต์ที่ตัวแปรอ้างถึง ไม่ใช่โดยการประกาศ",
-      "ตัวแปรทั้งหมดถูกแปลงเป็น string อัตโนมัติ",
-      "การตรวจสอบชนิดข้อมูลเกิดขึ้นตอน compile time"
+      "[1, 2]",
+      "[1, 2, 3]",
+      "TypeError เพราะ a ไม่สามารถแก้ไขได้",
+      "[3]"
     ],
-    answer: 1
+    answer: 1,
+    explain: "b = a ผูก b เข้ากับ list object ตัวเดียวกับ a ไม่มีการคัดลอกเกิดขึ้น การแก้ไขผ่าน b (append) แก้ object ที่ใช้ร่วมกันตัวเดียว ดังนั้น a จึงเห็นการเปลี่ยนแปลงด้วย"
   },
   {
-    q: "ค่าใดต่อไปนี้เป็น falsy ใน Python?",
-    options: ["1", "\"0\"", "[]", "True"],
-    answer: 2
-  },
-  {
-    q: "ควรทดสอบว่าตัวแปรเก็บ None อยู่อย่างไร?",
+    q: "```python\ndef set_volume(vol=None):\n    if vol:\n        return vol\n    return 50\n\nprint(set_volume(0))\n```\nโค้ดนี้พิมพ์อะไร?",
     options: [
-      "if x == None:",
-      "if x is None:",
-      "if type(x) == NoneType:",
-      "if x.is_none():"
+      "0",
+      "50",
+      "None",
+      "TypeError"
     ],
-    answer: 1
+    answer: 1,
+    explain: "0 เป็น falsy ดังนั้น if vol: แยกไม่ออกระหว่าง \"ผู้เรียกส่ง 0 มา\" กับ \"ผู้เรียกไม่ได้ส่งอะไรมาเลย\" มันจึงตกไปที่ default 50 ทางแก้คือ if vol is not None:"
   },
   {
-    q: "`bool` สืบทอดมาจากอะไรใน Python?",
-    options: ["object", "int", "str", "type"],
-    answer: 1
+    q: "ทำไม `x = 257; y = 257; print(x is y)` ถึงพิมพ์ True ในสคริปต์ ในขณะที่ค่าเดียวกันที่สร้างด้วย `int(\"257\")` ตอนรันไทม์กลับพิมพ์ False สำหรับ `is`?",
+    options: [
+      "257 อยู่ในช่วง small-int cache ของ CPython จึงเป็น object เดียวกันเสมอ",
+      "literal 257 ที่เขียนในไฟล์ compile เดียวกันอาจถูกรวมเป็น constant เดียวกัน (constant folding) แต่ภาษาไม่รับประกันเรื่องนี้ และไม่เกิดกับค่าที่สร้างตอนรันไทม์เลย",
+      "is เทียบค่าเหมือน == เสมอสำหรับจำนวนเต็ม",
+      "REPL กับสคริปต์ให้ผลลัพธ์ของ is เหมือนกันเสมอ"
+    ],
+    answer: 1,
+    explain: "257 อยู่นอกช่วง small-int cache (-5..256) True ที่บางครั้งเห็นสำหรับ literal ในไฟล์เดียวกันเป็นรายละเอียดของ implementation (constant folding) ไม่ใช่ข้อรับประกันของภาษา — อย่าพึ่งพา is ในการเทียบค่าเด็ดขาด"
+  },
+  {
+    q: "ชนิดข้อมูลใดต่อไปนี้เป็น mutable ใน Python?",
+    options: ["tuple", "frozenset", "list", "str"],
+    answer: 2,
+    explain: "list รองรับการแก้ไขในที่ (append, sort, slice assignment, ...) ส่วน tuple, frozenset, และ str ล้วน immutable — ทุก operation บนมันคืน object ใหม่เสมอ"
+  },
+  {
+    q: "```python\nlist = [1, 2, 3]\nprint(list([4, 5]))\n```\nจะเกิดอะไรขึ้น?",
+    options: [
+      "[4, 5]",
+      "[1, 2, 3, 4, 5]",
+      "TypeError: 'list' object is not callable",
+      "NameError: name 'list' is not defined"
+    ],
+    answer: 2,
+    explain: "การกำหนดค่าให้ชื่อ list shadow builtin type list ไปแล้ว list ตอนนี้เป็น list object ธรรมดา ไม่ใช่ constructor การเรียกมันเหมือน function จึง raise TypeError"
+  },
+  {
+    q: "`True + True` มีค่าเป็นอะไร และเพราะอะไร?",
+    options: [
+      "True เพราะ boolean ไม่รองรับเลขคณิต",
+      "2 เพราะ bool เป็น subclass ของ int และ True ทำตัวเหมือน 1",
+      "TypeError: unsupported operand type(s)",
+      "1.0 เพราะการบวกจะแปลงเป็น float เสมอ"
+    ],
+    answer: 1,
+    explain: "bool เป็น subclass ของ int; True และ False ทำตัวเหมือน 1 และ 0 ในบริบทตัวเลขทุกครั้ง ดังนั้น True + True คือการบวกแบบ int: 2"
   }
 ];
 
