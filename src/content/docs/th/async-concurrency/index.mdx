@@ -31,7 +31,7 @@ Python มีโมเดล concurrency ที่แตกต่างกัน
 import asyncio
 
 async def fetch(url: str) -> str:
-    await asyncio.sleep(0.1)   # จำลองความล่าช้าของเครือข่าย
+    await asyncio.sleep(0.1)   # simulates a network delay
     return f"Response from {url}"
 
 async def main():
@@ -60,7 +60,7 @@ def count_down(n: int) -> None:
     while n > 0:
         n -= 1
 
-# สอง threads — ยังคงรันบน core เดียวเพราะ GIL
+# Two threads — still runs on one core due to the GIL
 t1 = threading.Thread(target=count_down, args=(5_000_000,))
 t2 = threading.Thread(target=count_down, args=(5_000_000,))
 t1.start(); t2.start()
@@ -108,7 +108,7 @@ Python 3.11 นำเสนอ `asyncio.TaskGroup` เป็นวิธีแ�
 async with asyncio.TaskGroup() as tg:
     task_a = tg.create_task(fetch("https://a.example.com"))
     task_b = tg.create_task(fetch("https://b.example.com"))
-# ทั้งสอง task รับประกันว่าเสร็จสิ้นที่นี่
+# Both tasks are guaranteed to be done here
 ```
 </Callout>
 

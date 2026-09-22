@@ -17,9 +17,9 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ```python
 scores = {'alice': 95, 'bob': 87}
-scores['carol'] = 92         # เพิ่ม key ใหม่
+scores['carol'] = 92         # add a new key
 print(scores['alice'])       # 95
-del scores['bob']            # ลบ key
+del scores['bob']            # remove a key
 print(scores)                # {'alice': 95, 'carol': 92}
 ```
 
@@ -30,8 +30,8 @@ print(scores)                # {'alice': 95, 'carol': 92}
 
 ```python
 scores = {'alice': 95, 'bob': 87}
-unknown = scores.get('dave', 0)      # คืน 0 — ไม่เกิด KeyError
-scores.setdefault('eve', 88)         # แทรก eve=88 เฉพาะเมื่อยังไม่มี
+unknown = scores.get('dave', 0)      # returns 0 — no KeyError
+scores.setdefault('eve', 88)         # inserts eve=88 only if absent
 print(scores)
 # {'alice': 95, 'bob': 87, 'eve': 88}
 ```

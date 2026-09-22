@@ -73,11 +73,11 @@ import threading
 import time
 
 def simulate_io(label: str, delay: float) -> None:
-    time.sleep(delay)   # ปล่อย GIL — threads อื่นรันได้อย่างอิสระ
+    time.sleep(delay)   # releases the GIL — other threads run freely
     print(f"{label} complete after {delay}s")
 
-# Sequential: ~0.6 วินาทีรวม
-# Threaded:   ~0.2 วินาทีรวม (ทั้งสามรอพร้อมกัน)
+# Sequential: ~0.6 s total
+# Threaded:   ~0.2 s total (all three sleep concurrently)
 threads = [
     threading.Thread(target=simulate_io, args=(f"task-{i}", 0.2))
     for i in range(3)
@@ -98,7 +98,7 @@ def worker(name: str, count: int) -> None:
 t = threading.Thread(target=worker, args=("background", 3))
 t.start()
 print("main thread continues here")
-t.join()   # รอ thread เสร็จ
+t.join()   # wait for the thread to finish
 print("background thread done")
 ```
 
@@ -126,7 +126,7 @@ threads = [threading.Thread(target=increment, args=(100_000,)) for _ in range(5)
 for t in threads: t.start()
 for t in threads: t.join()
 
-print(counter)   # 500_000 ได้อย่างน่าเชื่อถือ
+print(counter)   # reliably 500_000
 ```
 
 หากไม่มี lock, `counter += 1` คือสาม bytecode operations (LOAD, ADD, STORE) และสอง threads อาจสลับกันระหว่างนั้น ทำให้ยอดรวมต่ำกว่าที่ควร (**race condition**)
@@ -141,7 +141,7 @@ from concurrent.futures import ThreadPoolExecutor
 import time
 
 def blocking_io(label: str) -> str:
-    time.sleep(0.1)    # จำลองการเรียกไลบรารีแบบ blocking
+    time.sleep(0.1)    # simulates a blocking library call
     return f"{label} done"
 
 with ThreadPoolExecutor(max_workers=4) as executor:
@@ -163,7 +163,7 @@ from concurrent.futures import ThreadPoolExecutor
 import time
 
 def blocking_call(x: int) -> int:
-    time.sleep(0.1)      # blocking library เช่น psycopg2, boto3 (sync)
+    time.sleep(0.1)      # a blocking library — e.g. psycopg2, boto3 (sync)
     return x * x
 
 async def main() -> None:

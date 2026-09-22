@@ -40,6 +40,7 @@ export default defineConfig({
         { label: 'Typing & Errors', translations: { th: 'Typing และ Error' }, items: [{ autogenerate: { directory: 'typing-errors' } }] },
         { label: 'Async & Concurrency', translations: { th: 'Async และ Concurrency' }, items: [{ autogenerate: { directory: 'async-concurrency' } }] },
         { label: 'Stdlib, Testing & Tooling', translations: { th: 'Stdlib, Testing และ Tooling' }, items: [{ autogenerate: { directory: 'stdlib-testing-tooling' } }] },
+        { label: 'Glossary', translations: { th: 'อภิธานศัพท์' }, link: 'glossary' },
       ],
       }), preact()],
 });

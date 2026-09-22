@@ -36,7 +36,7 @@ Python มีพารามิเตอร์สี่ประเภท:
 def demo(pos, /, normal, *, kw_only):
     print(pos, normal, kw_only)
 
-demo(1, 2, kw_only=3)        # OK
+demo(1, 2, kw_only=3)      # OK
 demo(1, normal=2, kw_only=3) # OK
 ```
 
@@ -96,7 +96,7 @@ def outer():
     y = 20  # enclosing
     def inner():
         z = 30  # local
-        return x + y + z   # ค้นหา x จาก global, y จาก enclosing, z จาก local
+        return x + y + z   # finds x globally, y in enclosing, z locally
     return inner()
 
 print(outer())  # 60

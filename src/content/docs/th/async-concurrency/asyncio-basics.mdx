@@ -74,7 +74,7 @@ import asyncio
 
 async def fetch_data(label: str) -> str:
     print(f"  {label}: starting fetch")
-    await asyncio.sleep(0.05)          # หยุดที่นี่
+    await asyncio.sleep(0.05)          # suspends here
     print(f"  {label}: fetch done")
     return f"data-{label}"
 
@@ -97,7 +97,7 @@ asyncio.run(main())
 import asyncio
 
 async def compute(x: int) -> int:
-    await asyncio.sleep(0)     # yield ให้ event loop ครั้งหนึ่ง
+    await asyncio.sleep(0)     # yield to event loop once
     return x ** 2
 
 result = asyncio.run(compute(7))
@@ -125,8 +125,8 @@ async def main() -> None:
         step("C", 0.2),
     )
     print(results)
-    # ['A done', 'B done', 'C done']   — ลำดับ input เสมอ
-    # เวลารวม ≈ 0.3 วินาที ไม่ใช่ 0.6 วินาที
+    # ['A done', 'B done', 'C done']   — always input order
+    # Total time ≈ 0.3 s, not 0.6 s
 
 asyncio.run(main())
 ```
@@ -182,7 +182,7 @@ async def main() -> None:
     async with asyncio.TaskGroup() as tg:
         task_a = tg.create_task(work("A", 0.2))
         task_b = tg.create_task(work("B", 0.1))
-    # ทั้งสอง task เสร็จสิ้นที่นี่ exceptions ถูก re-raise อัตโนมัติ
+    # Both tasks are done here; exceptions are re-raised automatically
     print(task_a.result())
     print(task_b.result())
 
