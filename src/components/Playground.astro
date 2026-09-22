@@ -39,7 +39,7 @@ const { code, lang = 'python' } = Astro.props;
         open: 'Open in an online REPL',
         hint: 'Loading Python runtime (first run only)…',
         noOutput: '(no output)',
-        failed: T.failed,
+        failed: 'Run failed — try the online REPL',
       };
 
   document.querySelectorAll<HTMLElement>('.pg').forEach((pg) => {
