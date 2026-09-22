@@ -13,7 +13,7 @@ let fail = 0;
 let n = 0;
 for (const f of files.sort()) {
   const src = readFileSync(f, 'utf8');
-  for (const m of src.matchAll(/export const (\w+Code) = `([\s\S]*?)`(?:\.trim\(\))?;?\n/g)) {
+  for (const m of src.matchAll(/export const (\w+Code) = `((?:[^`\\]|\\[\s\S])*)`(?:\.trim\(\))?;?\n/g)) {
     n++;
     const code = Function('return `' + m[2] + '`')().trim() + '\n';
     const dir = `.verify/${f.replace(/[\/.]/g, '_')}_${m[1]}`;
