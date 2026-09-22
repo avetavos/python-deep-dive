@@ -1,6 +1,6 @@
 ---
 title: Custom Errors
-description: 'การนิยาม exception class โดย subclass Exception, เพิ่ม custom attribute, และสร้าง exception hierarchy ใน Python 3.14'
+description: 'การนิยาม application exception class ด้วยการ subclass Exception, เพิ่ม attribute เอง และสร้าง exception hierarchy ใน Python 3.14'
 sidebar:
   order: 5
 ---
@@ -9,32 +9,34 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
-## ทำไม custom exception จึงสำคัญ
+## ทำไม custom exception ถึงสำคัญ
 
-Exception built-in ของ Python (`ValueError`, `TypeError`, `RuntimeError`, …) มีความหมายทั่วไปมาก
-เมื่อโค้ด raise `ValueError` caller ไม่รู้ว่ามาจาก input ของผู้ใช้, ไฟล์ config ที่เสีย, หรือ network response
+built-in exception ของ Python (`ValueError`, `TypeError`, `RuntimeError`, …) เป็นแบบทั่วไป
+เมื่อโค้ดของคุณ raise `ValueError` caller ไม่มีทางรู้ว่ามันมาจาก input ของตัวเอง, config file ที่พัง หรือ network response
 
-Custom exception class ให้ error ของคุณมีประเภทที่ชัดเจน ให้ caller จับได้ตามต้องการ, เพิ่ม attribute ที่มีโครงสร้าง (เช่น HTTP status code หรือชื่อ field), และบอกได้ว่าแต่ละส่วนของแอปพลิเคชันอาจเกิดอะไรขึ้น
+Custom exception class ให้ error ของคุณมี type ที่ชัดเจนที่ caller เลือกจับได้, เพิ่ม attribute ที่มีโครงสร้าง (เช่น HTTP status code หรือ field name) และ document ว่าแต่ละส่วนของ application ผิดพลาดได้อย่างไรบ้าง
 
-## การ subclass `Exception`
+## Subclass `Exception`
 
-Custom exception ขั้นต่ำคือ class ที่สืบทอดจาก `Exception`:
+custom exception ที่น้อยที่สุดคือ class ที่ inherit จาก `Exception`:
 
 ```python
 class AppError(Exception):
     """Base class for all application errors."""
 ```
 
-แค่นี้ก็พอสำหรับ raise และ catch ตามชื่อได้:
+แค่นี้ก็ raise และจับมันโดยระบุชื่อได้แล้ว:
 
 ```python
 raise AppError("something went wrong")
 ```
 
-## การเพิ่ม custom attribute
+## เพิ่ม attribute เอง
 
-Override `__init__` เพื่อแนบข้อมูลเพิ่มเติมกับ exception:
+override `__init__` เพื่อแนบ context เพิ่มเข้าไปใน exception:
 
 ```python
 class AppError(Exception):
@@ -43,11 +45,11 @@ class AppError(Exception):
         self.code = code
 ```
 
-Caller สามารถอ่าน `err.code` เพื่อรับข้อมูลที่มีโครงสร้างโดยไม่ต้อง parse string ข้อความ
+caller สามารถอ่าน `err.code` เพื่อได้ข้อมูลที่มีโครงสร้างโดยไม่ต้อง parse message string
 
-## การสร้าง hierarchy
+## สร้าง hierarchy
 
-สร้าง subclass สำหรับแต่ละหมวดหมู่ความผิดพลาด ทุก `NotFoundError` ก็เป็น `AppError` ด้วย ดังนั้น caller จับได้ที่ระดับความเฉพาะเจาะจงที่ต้องการ
+สร้าง subclass สำหรับแต่ละหมวดของความล้มเหลว `NotFoundError` ทุกตัวก็เป็น `AppError` ด้วย ทำให้ caller จับได้ในระดับความเจาะจงที่ต้องการ
 
 ```python
 class ValidationError(AppError):
@@ -62,7 +64,12 @@ class NotFoundError(AppError):
         self.resource_id = resource_id
 ```
 
-การจับที่ระดับต่างกัน:
+<Mermaid code={`flowchart TD
+  EXC["Exception"] --> APP["AppError (code: int)"]
+  APP --> VAL["ValidationError (field: str)"]
+  APP --> NF["NotFoundError (resource: str, resource_id: int)"]`} title="Application error hierarchy ขนาดเล็ก: leaf ทุกตัวก็เป็น AppError ด้วย" />
+
+จับที่ระดับต่างกัน:
 
 ```python
 try:
@@ -73,11 +80,110 @@ except AppError as e:
     print(f"App error [{e.code}]: {e}")          # broad
 ```
 
-## `str(exception)` และ `repr(exception)`
+package ที่มีหลาย module มักนิยาม root exception หนึ่งตัวต่อ package (หรือหนึ่งตัวต่อ subsystem) แล้วให้
+exception อื่นทุกตัวใน package นั้น inherit จากมัน — caller ที่สนใจแค่ "package นี้ล้มเหลวหรือเปล่า" จับที่ root
+ได้ ส่วน caller ที่ต้องการรายละเอียดต่อความล้มเหลวจับ subclass ที่เจาะจง
 
-`str(e)` คืน message ที่ส่งให้ `super().__init__()` นี่คือสิ่งที่แสดงเมื่อ `print(e)` หรือใช้ใน f-string
+## `except X as e:` ลบ `e` เมื่อ block จบ
 
-`repr(e)` คืน `ExceptionClass(message)` — ใช้สำหรับ logging
+CPython รัน `del e` แบบ implicit เมื่อ `except ... as e:` block จบ — ไม่ว่าจะจบแบบปกติหรือผ่าน exception อื่น
+นี่ไม่ใช่ทางเลือกเรื่อง style แต่เป็นพฤติกรรมของภาษา และมันหมายความว่าชื่อนั้นหายไปทันทีหลังจากนั้น:
+
+```python
+try:
+    raise ValueError("boom")
+except ValueError as e:
+    print(e)          # fine -- e is bound here
+print(e)               # NameError: name 'e' is not defined
+```
+
+สิ่งนี้มีไว้เพื่อตัด reference cycle: traceback ของ exception object ถือ reference ไปยัง frame และ local ของ
+frame นั้นก็จะถือ reference กลับไปที่ exception ทำให้ทั้งคู่มีชีวิตอยู่ตลอดไปถ้าไม่มีการลบอัตโนมัตินี้ ผลในทาง
+ปฏิบัติ: อย่าวางแผนใช้ชื่อที่ผูกไว้หลัง `except` block เลย — คัดลอกสิ่งที่ต้องใช้ (message, attribute) ไปเป็นชื่อ
+อื่นก่อน อย่างที่ demo ด้านล่างทำโดยใช้ `sample` แทนการใช้ `e` ซ้ำ
+
+error ที่เห็นจริงขึ้นอยู่กับ scope: ที่ระดับ module การอ่านชื่อที่ถูกลบไปแล้ว raise `NameError: name 'e' is not
+defined` อย่างที่เห็นข้างบน ส่วนภายใน function `e` เป็นตัวแปร local และ compiler ของ Python รู้ตั้งแต่ตอน
+compile time แล้วว่าชื่อนี้เป็น local ของ function นั้น การอ่านมันหลัง implicit `del` จะ raise
+`UnboundLocalError: cannot access local variable 'e' where it is not associated with a value` แทน ถึงแม้โค้ด
+จะ "ดูเหมือนกัน" กับกรณีระดับ module ก็ตาม ทั้งสองคือการลบแบบเดียวกัน ต่างกันแค่ class ของ error ตาม scope
+
+## `args`, `str()` และ `repr()`
+
+`BaseException` ทุกตัวเก็บ positional argument ที่ส่งเข้ามาไว้ใน `.args` — `super().__init__(message)` คือสิ่งที่
+เติม `self.args` ด้วย `(message,)`
+
+`str(e)` คืน message ที่ส่งเข้าไปใน `super().__init__()` นี่คือสิ่งที่พิมพ์ออกมาเมื่อ `print(e)` หรือใส่ exception ใน f-string
+
+`repr(e)` คืน `ExceptionClass(message)` — มีประโยชน์สำหรับ logging เพราะมันบอกด้วยว่า exception type ไหนสร้าง message นี้
+
+```python
+err = AppError("disk full", code=507)
+str(err)    # 'disk full'
+repr(err)   # "AppError('disk full')"
+err.args    # ('disk full',)
+err.code    # 507 -- custom attributes are NOT part of .args
+```
+
+attribute เองอย่าง `code` อยู่บน instance ไม่ใช่ใน `.args` — มันถูก set โดย `__init__` ของคุณเอง ไม่ใช่โดย `Exception.__init__`
+
+## Implicit chaining — `__context__` เทียบกับ `__cause__`
+
+การ raise exception ใหม่ใน `except` block **จะบันทึก** exception ที่กำลังถูก handle อยู่เสมอ แม้ไม่มี `from` —
+Python set `__context__` ให้อัตโนมัติ `raise ... from original` set `__cause__` เพิ่มเข้ามาด้วย และ traceback
+printer default ของ Python เปลี่ยนคำพูดระหว่างสองแบบนี้ ("during handling of the above exception" สำหรับ
+context แบบ implicit เทียบกับ "the direct cause of the following exception" สำหรับ cause แบบ explicit)
+
+```python
+try:
+    int("nope")
+except ValueError:
+    raise RuntimeError("second failure")          # no 'from' -- __context__ set implicitly, __cause__ is None
+
+try:
+    int("nope")
+except ValueError as original:
+    raise RuntimeError("second failure") from original   # __cause__ set explicitly
+```
+
+`raise ... from None` เป็นวิธีเดียวที่ suppress *ทั้งคู่* ได้ — มันบอก Python ว่า exception ใหม่นี้ไม่เกี่ยวข้อง
+กับสิ่งที่กำลังถูก handle อยู่จริง ๆ
+
+## `add_note()` — แนบ context หลังสร้าง exception แล้ว (Python 3.11+)
+
+`BaseException.add_note(note)` เพิ่ม string เข้าไปใน `__notes__` list ของ exception ซึ่ง traceback printer
+default จะรวมมันให้อัตโนมัติ มีประโยชน์สำหรับแนบ context ที่รู้ *หลังจาก* exception object ถูกสร้างไปแล้ว —
+เช่น ระหว่างที่มัน propagate ผ่าน retry loop:
+
+```python
+err = AppError("upstream timeout", code=504)
+err.add_note("retry attempt 1 of 3")
+err.add_note("upstream host: api.internal:8443")
+raise err
+```
+
+ต่างจากการสร้าง message string ที่ยาวขึ้นตั้งแต่แรก note ถูกเพิ่มแบบ incremental และปรากฏเป็นบรรทัดแยกใน
+traceback ทำให้ message เดิมยังคงอยู่ครบสำหรับอะไรก็ตามที่ parse หรือเทียบมัน
+
+## เมื่อไหร่ควร subclass builtin เทียบกับนิยาม base ของตัวเอง
+
+การ subclass builtin (`class NegativeAmountError(ValueError):`) หมายความว่า caller เดิมทุกตัวที่จับ
+`ValueError` อยู่แล้วยังทำงานต่อได้โดยไม่เปลี่ยนแปลง ในขณะที่ caller ที่ต้องการ attribute เพิ่มของคุณจับ subclass
+ที่เจาะจงได้ การนิยาม base ของตัวเอง (`class AppError(Exception):`) เหมาะเมื่อความล้มเหลวนั้นเฉพาะกับ domain ของ
+application คุณจริง ๆ และไม่มี builtin ตัวไหนที่สื่อความหมายที่ถูกต้องอยู่แล้ว — บังคับให้ caller ทุกตัว ทั้งเก่า
+และใหม่ ผ่าน hierarchy ของคุณโดยตั้งใจ
+
+```python
+class NegativeAmountError(ValueError):
+    """A ValueError with extra context -- callers who only know ValueError still catch it."""
+    def __init__(self, amount: float) -> None:
+        super().__init__(f"amount must be non-negative, got {amount}")
+        self.amount = amount
+```
+
+`except ValueError:` แบบทั่วไปยังจับ `NegativeAmountError` ได้เหมือนเดิม ส่วนโค้ดที่ต้องการ `.amount`
+โดยเฉพาะจับ `NegativeAmountError` ตรง ๆ เลือก subclass builtin ทุกครั้งที่ error ของคุณ *เป็น* กรณีเจาะจงกว่าของ
+error ที่มีอยู่แล้วจริง ๆ ใช้ base เฉพาะของ application ใหม่เฉพาะเมื่อไม่ใช่กรณีนั้น
 
 ## Demo แบบ runnable เต็มรูปแบบ
 
@@ -142,50 +248,229 @@ print(f"BaseException?   {isinstance(sample, BaseException)}")
 <Playground code={customErrorsCode} />
 
 <Callout title="Subclass Exception ไม่ใช่ BaseException สำหรับ application error">
-`BaseException` คือ root ของ hierarchy ทั้งหมดและรวมถึง `KeyboardInterrupt`, `SystemExit`, และ `GeneratorExit` — สัญญาณที่ควรหยุดโปรแกรม การจับ `BaseException` จะกลืนสัญญาณเหล่านั้นโดยไม่ตั้งใจ
-Subclass `Exception` สำหรับ error ระดับแอปพลิเคชันทุกอัน Subclass `BaseException` โดยตรงเฉพาะเมื่อเขียน framework-level code ที่ต้องการจับสัญญาณหยุดโปรแกรมจริงๆ เท่านั้น
+`BaseException` คือ root ของ hierarchy ทั้งหมด รวมถึง `KeyboardInterrupt`, `SystemExit` และ `GeneratorExit` — สัญญาณที่ควรทำให้ process จบ การจับ `BaseException` โดยไม่ตั้งใจจะกลืนสิ่งเหล่านั้นไปด้วย
+Subclass `Exception` สำหรับ application-level error ทุกตัว subclass `BaseException` ตรง ๆ เฉพาะเมื่อเขียนโค้ดระดับ framework ที่ต้อง intercept สัญญาณ process-exit จริง ๆ เท่านั้น
+</Callout>
+
+## Depth demo: ทุกอย่างข้างบน รันจริง
+
+export const customErrorsDepthCode = `
+# --- except X as e: deletes e when the block ends ---
+print("=== except ... as e deletes e ===")
+try:
+    raise ValueError("boom")
+except ValueError as e:
+    print(f"  inside the except block: {e}")
+print("  now outside the except block:")
+try:
+    print(e)  # NameError: 'e' was deleted by an implicit del e when the block ended
+except NameError as ne:
+    print(f"  NameError: {ne}")
+
+# --- args and repr ---
+print("=== args and repr ===")
+class AppError(Exception):
+    def __init__(self, message: str, code: int = 0) -> None:
+        super().__init__(message)
+        self.code = code
+
+err = AppError("disk full", code=507)
+print(f"  str(err)  = {str(err)!r}")
+print(f"  repr(err) = {repr(err)!r}")
+print(f"  err.args  = {err.args}")
+print(f"  err.code  = {err.code}")
+
+# --- implicit chaining: __context__ vs __cause__ ---
+print("=== implicit chaining (__context__) vs explicit (__cause__) ===")
+try:
+    try:
+        int("nope")
+    except ValueError:
+        raise RuntimeError("second failure")  # no 'from' -- __context__ set implicitly
+except RuntimeError as e:
+    print(f"  no 'from': __cause__={e.__cause__!r}  __context__={e.__context__!r}")
+
+try:
+    try:
+        int("nope")
+    except ValueError as original:
+        raise RuntimeError("second failure") from original  # __cause__ set explicitly
+except RuntimeError as e:
+    print(f"  with 'from': __cause__={e.__cause__!r}")
+
+# --- add_note() (3.11+) ---
+print("=== add_note() ===")
+try:
+    err2 = AppError("upstream timeout", code=504)
+    err2.add_note("retry attempt 1 of 3")
+    err2.add_note("upstream host: api.internal:8443")
+    raise err2
+except AppError as e:
+    print(f"  {e}")
+    print(f"  notes: {e.__notes__}")
+
+# --- when to subclass a builtin vs your own base ---
+print("=== builtin subclass vs custom base ===")
+class NegativeAmountError(ValueError):
+    """A ValueError with extra context -- callers who only know ValueError still catch it."""
+    def __init__(self, amount: float) -> None:
+        super().__init__(f"amount must be non-negative, got {amount}")
+        self.amount = amount
+
+def withdraw(amount: float) -> float:
+    if amount < 0:
+        raise NegativeAmountError(amount)
+    return amount
+
+try:
+    withdraw(-10.0)
+except ValueError as e:  # generic callers that only know about ValueError still catch this
+    print(f"  caught as plain ValueError: {e}")
+try:
+    withdraw(-10.0)
+except NegativeAmountError as e:  # callers who need the extra .amount attribute catch the specific type
+    print(f"  caught as NegativeAmountError, amount={e.amount}")
+`.trim();
+
+<Playground code={customErrorsDepthCode} />
+
+## Mental Model
+
+Exception class คือ class ธรรมดาของ Python ดังนั้นทุกอย่างที่รู้เกี่ยวกับ class ใช้ได้หมด: `__init__` ตั้งค่า
+attribute, `isinstance` เดินตาม MRO และการ inherit หมายถึง "จับได้ในนาม" สิ่งเดียวที่พิเศษเฉพาะของ
+`except ... as e:` คือ `del e` อัตโนมัติของ CPython ตอนจบ block — statement แบบ implicit ตัวเดียวนี้คือต้นเหตุ
+ทั้งพฤติกรรมตัด reference cycle และความประหลาดใจแบบ `NameError` ข้างบน
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| Custom exception hierarchy | caller จับได้ที่ระดับความเจาะจงที่ถูกต้องพอดี | ต้องนิยาม class เพิ่มและดูแลจัดระเบียบ |
+| Subclass builtin (`ValueError`) | catcher ทั่วไปที่มีอยู่แล้วยังทำงานต่อได้ | ไม่ explicit เท่า application base เฉพาะ |
+| Custom attribute (`.code`, `.field`) | ข้อมูลมีโครงสร้างโดยไม่ต้อง parse message | boilerplate `__init__` เพิ่มต่อ exception class |
+| `add_note()` | แนบ context ที่รู้หลังสร้างได้ โดยไม่ต้องสร้าง message ใหม่ | note เป็นแค่ text ต่อท้าย ไม่ใช่ structured data |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"ใช้ `e` ต่อหลัง `except` block ได้เหมือนตัวแปรอื่น"** — CPython ลบมันอัตโนมัติเมื่อ block จบ แม้จะจบแบบสำเร็จ
+  ก็ตาม — ใช้มันทีหลัง raise `NameError`
+- **"attribute เองอย่าง `.code` ถูกเก็บใน `.args`"** — ไม่ใช่ — `.args` เก็บแค่สิ่งที่ส่งให้ `Exception.__init__`
+  (หรือ `BaseException.__init__`) attribute เองเป็น instance attribute แยกที่คุณ set เอง
+- **"raise exception ใหม่โดยไม่มี `from` จะทิ้งตัวเดิมไป"** — ไม่จริง — Python ยังบันทึกมันไว้ใน `__context__`
+  อัตโนมัติ มีแค่ `raise ... from None` เท่านั้นที่ทิ้งมันจริง ๆ
+- **"custom error ทุกตัวต้องมี base class ใหม่ของตัวเอง"** — ถ้าความล้มเหลวเป็น `ValueError` (หรือ `KeyError`,
+  `TypeError`, …) ที่เจาะจงกว่าจริง ๆ ให้ subclass builtin — handler ทั่วไปที่มีอยู่แล้วยังทำงานต่อได้ฟรี ๆ
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อ custom-exception hierarchy ที่ AI generate ให้ตรวจสิ่งเหล่านี้:
+
+- มีโค้ดที่อ่าน binding ของ `except ... as e:` หลัง block จบไปแล้วหรือเปล่า? มันจะ raise `NameError` ทันทีที่
+  path นั้นถูกรันจริง
+- attribute เองอย่าง `.code` หรือ `.field` ถูก set เป็น instance attribute จริงหรือเปล่า หรือโค้ดพยายามดึงมันจาก
+  `.args`?
+- hierarchy subclass `BaseException` ตรง ๆ แทนที่จะเป็น `Exception` หรือเปล่า? นั่นเสี่ยงต่อการจับ
+  `KeyboardInterrupt` หรือ `SystemExit` โดยไม่ตั้งใจทุกที่ที่ base ใหม่นี้ถูกจับแบบกว้าง ๆ
+- มี exception class ใหม่ถูกนิยามสำหรับสิ่งที่จริง ๆ แล้วเป็นแค่ `ValueError` หรือ `KeyError` แฝงตัวอยู่หรือเปล่า?
+  เช็คว่าการ subclass builtin จะทำให้ caller เดิมยังทำงานต่อได้หรือไม่
+- การ re-raise ใน `except` block ต้องการ `from None` หรือเปล่า แต่โค้ดที่ generate ปล่อยให้ chain
+  `__context__` แบบ implicit อยู่ พิมพ์ traceback ซ้อนที่สับสนให้ end user เห็น?
+
+<SpotTheBug code={`def parse_amount(raw: str) -> float:
+    try:
+        return float(raw)
+    except ValueError as e:
+        log_message = f"failed to parse {raw!r}: {e}"
+    print(log_message)
+    print(e)  # meant to log the original exception object too
+    return 0.0
+
+parse_amount("not-a-number")
+`} lang="python">
+`e` ถูกผูกไว้แค่ระหว่างที่ `except ValueError as e:` block กำลังทำงานเท่านั้น CPython รัน `del e` แบบ implicit ทันทีที่ block นั้นจบ ไม่ว่าจะจบแบบปกติหรือไม่ก็ตาม เพราะ `e` เป็นตัวแปร local ภายใน `parse_amount` การ `print(e)` สองบรรทัดถัดมาจึง raise `UnboundLocalError: cannot access local variable 'e' where it is not associated with a value` — ไม่ใช่ `NameError` (ซึ่งจะเกิดเฉพาะกับ `e` ระดับ module เท่านั้น) — ถึงแม้ `log_message` (ที่สร้างไว้ข้างใน block) จะยังอ่านได้ปกติดี ทางแก้คือ capture สิ่งที่ต้องใช้ทีหลัง — `str(e)`, `e.args` หรือตัว exception object เอง — ไปเป็นชื่ออื่นก่อนที่ block จะจบ
+</SpotTheBug>
+
+<Callout title="ให้ error มี type ไม่ใช่แค่ message — และอย่าอ่าน `e` หลัง block ของมันจบ">
+Subclass `Exception` (ไม่ใช่ `BaseException` เลย) สำหรับ application error แนบ attribute ที่มีโครงสร้างใน `__init__` และสร้าง hierarchy ตื้น ๆ เพื่อให้ caller จับได้ที่ระดับความเจาะจงที่ต้องการ จำไว้ว่า `except ... as e:` ลบ `e` เมื่อ block จบ — คัดลอกสิ่งที่ต้องใช้ออกมาก่อน
 </Callout>
 
 export const quizCustomErrors = [
   {
-    q: "ทำไม custom application exception จึงควร subclass `Exception` แทน `BaseException`?",
+    q: "ทำไม custom application exception ควร subclass `Exception` แทน `BaseException`?",
     options: [
       "Exception สร้าง instance ได้เร็วกว่า BaseException",
-      "BaseException รวมถึง KeyboardInterrupt และ SystemExit — การ subclass จาก BaseException ทำให้จับสัญญาณหยุดโปรแกรมโดยไม่ตั้งใจ",
-      "Exception รองรับ custom attribute แต่ BaseException ไม่รองรับ",
-      "BaseException ไม่สามารถ raise ด้วย message string"
+      "BaseException รวม KeyboardInterrupt และ SystemExit ไว้ด้วย -- การ subclass มันเสี่ยงต่อการจับสัญญาณ process-exit เหล่านั้นโดยไม่ตั้งใจ",
+      "Exception รองรับ custom attribute; BaseException ไม่รองรับ",
+      "BaseException raise พร้อม message string ไม่ได้"
     ],
-    answer: 1
+    answer: 1,
+    explain: "BaseException คือ root ของ hierarchy ทั้งหมด รวมถึง KeyboardInterrupt, SystemExit และ GeneratorExit except clause แบบกว้างที่เทียบกับ hierarchy ที่ root เป็น BaseException เสี่ยงต่อการกลืนสัญญาณควบคุม process เหล่านั้นไปด้วย"
   },
   {
-    q: "กำหนด hierarchy `NotFoundError -> AppError -> Exception` clause `except` ใดที่จับ `NotFoundError` ได้?",
+    q: "จาก hierarchy `NotFoundError -> AppError -> Exception` `except` clause ไหนจะจับ `NotFoundError` ได้?",
     options: [
-      "เฉพาะ `except NotFoundError`",
-      "`except NotFoundError`, `except AppError`, และ `except Exception` ทั้งหมด match",
-      "เฉพาะ clause เฉพาะที่สุด (`except NotFoundError`) เท่านั้น",
-      "ไม่มีเลย — custom exception ต้องจับด้วย `except Exception`"
+      "แค่ `except NotFoundError` เท่านั้น",
+      "`except NotFoundError`, `except AppError` และ `except Exception` ตรงกันหมด",
+      "แค่ clause ที่เจาะจงที่สุด (`except NotFoundError`) เท่านั้นที่ตรง",
+      "ไม่มีเลย -- custom exception ต้องจับด้วย except Exception เท่านั้น"
     ],
-    answer: 1
+    answer: 1,
+    explain: "การ match แบบ isinstance หมายความว่า ancestor class ทุกตัวใน hierarchy ก็ตรงด้วย ส่วนตัวไหนทำงานจริงขึ้นอยู่กับลำดับ clause -- Python ใช้ except clause ตัวแรกที่ตรงกัน ไล่จากบนลงล่าง"
   },
   {
     q: "การเรียก `super().__init__(message)` ภายใน `__init__` ของ custom exception ทำอะไร?",
     options: [
-      "ไม่ทำอะไร — เป็น optional และไม่มีผล",
-      "ส่ง message ให้ Exception เพื่อให้ str(err) คืน message นั้น",
-      "ลงทะเบียน exception ใน traceback",
+      "ไม่ทำอะไรเลย -- เป็น optional และไม่มีผล",
+      "ส่ง message ให้ Exception ทำให้ str(err) คืน message นั้น",
+      "ลงทะเบียน exception ไว้ใน traceback",
       "แปลง message เป็น bytes object"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Exception.__init__ เก็บ positional argument ไว้ใน .args ซึ่งเป็นสิ่งที่ str() และ traceback printer default อ่านมา ถ้าข้าม super().__init__ ไป .args จะว่างเปล่าและ str(err) จะคืน string ว่าง"
   },
   {
-    q: "มี `except ValidationError` ก่อน `except AppError` ใน try block และเกิด ValidationError ขึ้น clause ใดทำงาน?",
+    q: "มี `except ValidationError` อยู่ก่อน `except AppError` ใน try block แล้วมี ValidationError ถูก raise clause ไหนทำงาน?",
     options: [
       "ทั้งสอง clause ทำงานตามลำดับ",
-      "except AppError ทำงานเพราะกว้างกว่า",
-      "except ValidationError ทำงาน — Python ใช้ clause แรกที่ match",
-      "TypeError ถูก raise เพราะมีสอง clause ที่ match"
+      "except AppError ทำงานเพราะมันกว้างกว่า",
+      "except ValidationError ทำงาน -- Python ใช้ clause แรกที่ตรงกัน",
+      "raise TypeError เพราะมี clause ตรงกันสองตัว"
     ],
-    answer: 2
+    answer: 2,
+    explain: "Python เช็ค except clause จากบนลงล่างและรัน clause แรกที่ type ตรงกัน (ผ่าน isinstance) ลำดับสำคัญ: วาง exception type ที่เจาะจงกว่าไว้ก่อน ancestor ที่กว้างกว่าเสมอ"
+  },
+  {
+    q: "```python\ntry:\n    raise ValueError(\"boom\")\nexcept ValueError as e:\n    msg = str(e)\nprint(e)\n```\nบรรทัดสุดท้ายจะเกิดอะไรขึ้น?",
+    options: [
+      "พิมพ์ 'boom' อีกครั้ง",
+      "พิมพ์ string ว่าง",
+      "raise NameError: name 'e' is not defined",
+      "พิมพ์ None"
+    ],
+    answer: 2,
+    explain: "CPython รัน `del e` แบบ implicit เมื่อ except block จบ โดยเฉพาะเพื่อตัด reference cycle ระหว่าง traceback ของ exception กับ frame `e` หายไปหลังจากนั้น -- การอ่านมัน raise NameError"
+  },
+  {
+    q: "```python\ntry:\n    int(\"x\")\nexcept ValueError:\n    raise RuntimeError(\"second\")\n```\n`__context__` ของ RuntimeError ที่ raise ออกมาคืออะไร เมื่อไม่มี clause `from`?",
+    options: [
+      "None -- ถ้าไม่มี 'from' จะไม่มีอะไรถูกบันทึก",
+      "ValueError เดิม -- Python บันทึกมันแบบ implicit แม้ไม่มี 'from'",
+      "TypeError เพราะ 'from' จำเป็นสำหรับ chaining",
+      "RuntimeError เอง"
+    ],
+    answer: 1,
+    explain: "การ raise ภายใน except block จะ set __context__ เป็น exception ที่กำลังถูก handle เสมอ ไม่ว่าจะใช้ 'from' หรือไม่ __cause__ (chain แบบ explicit) ยังเป็น None ตรงนี้ มีแค่ 'from None' เท่านั้นที่ suppress __context__ ด้วย"
+  },
+  {
+    q: "Application ของคุณ raise `NegativeAmountError` ที่นิยามเป็น `class NegativeAmountError(ValueError): ...` ประโยชน์หลักของตัวเลือกนี้เทียบกับ `class NegativeAmountError(AppError): ...` (base ใหม่ของ application) คืออะไร?",
+    options: [
+      "instance ของ NegativeAmountError สร้างได้เร็วกว่า",
+      "โค้ดเดิมที่จับ plain ValueError อยู่แล้วยังทำงานต่อได้โดยไม่เปลี่ยนแปลง ในขณะที่โค้ดที่ต้องการ attribute เพิ่มจับ subclass เฉพาะได้",
+      "ValueError เพิ่ม attribute .code ให้อัตโนมัติ",
+      "ไม่ต้องเรียก super().__init__() อีกต่อไป"
+    ],
+    answer: 1,
+    explain: "การ subclass builtin exception ที่มีอยู่แล้วหมายความว่า caller ทุกตัวที่จัดการ builtin นั้นอยู่แล้ว (ValueError ในที่นี้) ยังทำงานต่อได้โดยไม่ต้องเปลี่ยนอะไรเลย ในขณะที่โค้ดใหม่ที่ต้องการ type ที่ละเอียดกว่าจับ NegativeAmountError โดยเฉพาะได้"
   }
 ];
 

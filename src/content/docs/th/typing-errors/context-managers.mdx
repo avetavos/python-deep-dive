@@ -1,6 +1,6 @@
 ---
 title: Context Managers
-description: 'คำสั่ง with, __enter__ และ __exit__, และ contextlib.contextmanager — รับประกันการ cleanup ใน Python 3.14'
+description: 'statement with, __enter__ กับ __exit__ และ contextlib.contextmanager — cleanup ที่รับประกันได้ใน Python 3.14'
 sidebar:
   order: 4
 ---
@@ -9,13 +9,15 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
-## ปัญหาที่ context manager แก้ไข
+## ปัญหาที่ context manager แก้
 
-การดำเนินการหลายอย่างต้องมีขั้นตอน cleanup คู่กัน: เปิดไฟล์แล้วปิด, ล็อค resource แล้วปล่อย, เริ่ม timer แล้วหยุด
-ถ้าเกิด exception ระหว่างสองขั้นตอนนั้น cleanup จะไม่ทำงาน — นำไปสู่ resource leak
+หลาย operation ต้องมาคู่กับขั้นตอน cleanup: เปิดไฟล์แล้วปิดมัน, acquire lock แล้ว release มัน, เริ่มจับเวลาแล้วหยุดมัน
+ถ้ามี exception เกิดขึ้นระหว่างสองขั้นตอนนี้ cleanup จะไม่ทำงานเลย — นำไปสู่ resource leak
 
-คำสั่ง `with` แก้ปัญหานี้โดยรับประกันว่า cleanup จะทำงานไม่ว่าจะเกิดอะไรขึ้น
+statement `with` แก้ปัญหานี้โดยรับประกันว่า cleanup จะทำงานไม่ว่าจะเกิดอะไรขึ้นก็ตาม
 
 ```python
 with open("data.txt") as f:
@@ -23,9 +25,9 @@ with open("data.txt") as f:
 # f is always closed here, even if read() raised
 ```
 
-## วิธีที่ `with` ทำงาน: protocol
+## `with` ทำงานอย่างไร: protocol
 
-Object ที่มี method `__enter__` และ `__exit__` คือ **context manager**
+object ใดก็ตามที่มี method `__enter__` และ `__exit__` คือ **context manager**
 
 ```
 with expr as var:
@@ -48,11 +50,18 @@ else:
     cm.__exit__(None, None, None)
 ```
 
-`__enter__` ตั้งค่า resource และคืนค่าที่ bind ให้ `var`
-`__exit__` ทำงานเสมอเมื่อออกจาก block ถ้าคืนค่า truthy จะ **suppress** exception ถ้าคืน `False` (หรือ `None`) exception จะ propagate ต่อ
-bare `except:` ด้านบนเป็นหนึ่งในกรณีหายากที่ดัก exception ทุกชนิดถูกต้อง: `if not ...: raise` จะ re-raise เสมอ ยกเว้น `__exit__` เลือก suppress อย่างชัดเจน จึงไม่มี exception ใดหายไปเงียบ ๆ
+`__enter__` เตรียม resource แล้วคืนค่าที่ผูกกับ `var`
+`__exit__` ทำงานเสมอตอนออก ถ้ามันคืนค่า truthy จะ **suppress** exception; คืน `False` (หรือ `None`) จะปล่อยให้ exception propagate ต่อไป
+bare `except:` ด้านบนเป็นหนึ่งในไม่กี่กรณีที่การจับทุกอย่างถูกต้อง: `if not ...: raise` จะ re-raise เว้นแต่ `__exit__` จะ suppress อย่างชัดเจน ดังนั้นจึงไม่มี exception ไหนถูกกลืนแบบเงียบ ๆ เลย
 
-## เขียน context manager แบบ class
+<Mermaid code={`flowchart TD
+  A["cm.__enter__()"] --> B["run the with body"]
+  B -->|"no exception"| C["cm.__exit__(None, None, None)"]
+  B -->|"exception raised"| D["cm.__exit__(exc_type, exc, tb)"]
+  D -->|"returns truthy"| E["exception suppressed -- execution continues after with"]
+  D -->|"returns falsy"| F["exception re-raised -- propagates past the with"]`} title="Protocol ของ with statement: return value ของ __exit__ ตัดสินว่า exception จะรอดหรือไม่" />
+
+## เขียน class-based context manager
 
 ```python
 from types import TracebackType
@@ -74,12 +83,36 @@ class Timer:
         return suppress
 ```
 
-อาร์กิวเมนต์สามตัวของ `__exit__` คือ exception type, value, และ traceback — ทั้งหมดเป็น `None` เมื่อไม่มี exception
+argument ทั้งสามของ `__exit__` คือ exception type, value และ traceback — เป็น `None` ทั้งหมดเมื่อไม่มี exception เกิดขึ้น
 
-## `contextlib.contextmanager` — shortcut แบบ generator
+## `__exit__` คืน `True` กลืน exception
 
-การเขียน class ครบรูปแบบเพียงเพื่อครอบ setup/teardown นั้นยาวเกินไป
-`contextlib.contextmanager` ให้ใช้ generator function แทน:
+บรรทัดที่ส่งผลมากที่สุดใน `__exit__` implementation ใด ๆ คือ return value ของมัน การคืนค่า truthy ใด ๆ — รวมถึง
+`return True` ที่พิมพ์ผิดแทน `return False` — บอก `with` statement ว่า exception ถูก handle แล้ว และมันก็หายไป
+เฉย ๆ:
+
+```python
+class Swallower:
+    def __enter__(self) -> Self:
+        return self
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if exc is not None:
+            print(f"swallowing {type(exc).__name__}: {exc}")
+        return True   # BUG-PRONE if unintentional: any exception disappears here
+
+with Swallower():
+    raise ValueError("this never propagates")
+print("execution continues here -- the ValueError above is gone")
+```
+
+บางครั้งนี่คือสิ่งที่ต้องการพอดี (`contextlib.suppress` ด้านล่างสร้างจากพฤติกรรมนี้ทั้งหมด) — แต่ `__exit__` ที่คืน
+`True` แบบไม่มีเงื่อนไข ซึ่งเขียนขึ้นโดยบังเอิญ ไม่ใช่ตั้งใจ จะลบทุก exception ที่ raise ภายในทุก `with` block ที่ใช้
+มันแบบเงียบ ๆ คืน `False` (หรือ `None` หรือไม่คืนอะไรเลย) เสมอ เว้นแต่ตั้งใจจะ suppress จริง ๆ
+
+## `contextlib.contextmanager` — ทางลัดด้วย generator
+
+การเขียน class เต็มรูปแบบแค่เพื่อห่อ setup/teardown นั้นยืดยาว
+`contextlib.contextmanager` ให้ใช้ generator function แทนได้:
 
 ```python
 import contextlib
@@ -94,16 +127,78 @@ def managed_resource(name: str):
 ```
 
 ทุกอย่างก่อน `yield` คือ logic ของ `__enter__` ทุกอย่างหลัง `yield` (ใน `finally`) คือ logic ของ `__exit__`
-`try/finally` ภายใน generator รับประกันว่า teardown ทำงานแม้จะเกิด exception ใน `with` block
+`try/finally` ภายใน generator รับประกันว่า teardown จะทำงานแม้มี exception ถูก raise ภายใน `with` block
 
-## ซ้อน context manager
+## `contextlib.suppress` — `__exit__` ที่คืน `True` แบบมีระเบียบ
 
-รวม context manager หลายตัวในบรรทัด `with` เดียวได้ — เรียงซ้อนจากซ้ายไปขวา:
+`contextlib.suppress(*exception_types)` คือ context manager ที่ `__exit__` คืน `True` — แต่เฉพาะเมื่อ exception ที่
+raise ตรงกับ type ที่ระบุไว้เท่านั้น:
+
+```python
+import contextlib
+
+with contextlib.suppress(FileNotFoundError):
+    open("does-not-exist.txt")
+# execution continues here either way
+```
+
+มันคือเวอร์ชันมีระเบียบของตัวอย่าง `Swallower` ข้างบน: แทนที่จะเป็น `__exit__` ที่กลืน *ทุกอย่าง* มันกลืนเฉพาะ
+exception type ที่ระบุไว้เท่านั้น ส่วนที่เหลือ propagate เหมือนเดิมทุกประการ ดูบท Exceptions สำหรับการเทียบกับ
+`try`/`except`/`pass`
+
+## `ExitStack` — จำนวน context manager ที่ไม่แน่นอน
+
+การซ้อน `with` statement ใช้ได้เมื่อรู้จำนวน resource ล่วงหน้า `contextlib.ExitStack` จัดการ context manager
+จำนวนหนึ่งที่ตัดสินใจตอน runtime — เช่นเปิดไฟล์ตาม list ที่ยาวไม่แน่นอน — และรับประกันว่าทั้งหมด unwind ในลำดับ
+ย้อนกลับ แม้ตัวใดตัวหนึ่งจะล้มเหลวระหว่างทาง:
+
+```python
+import contextlib
+
+names = ["a", "b", "c"]
+with contextlib.ExitStack() as stack:
+    resources = [stack.enter_context(managed_resource(n)) for n in names]
+    stack.callback(print, "extra cleanup callback ran")
+    # use resources here
+# everything registered with enter_context/callback unwinds here, most-recently-registered first
+```
+
+`stack.enter_context(cm)` เรียก `cm.__enter__()` ทันทีและลงทะเบียน `cm.__exit__` ให้ทำงานเมื่อ `ExitStack`
+เองออก `stack.callback(fn, *args)` ลงทะเบียน function ธรรมดาให้ทำงานตอนเดียวกัน สำหรับ cleanup ที่ไม่ใช่
+context manager เอง ทุกอย่างที่ลงทะเบียนไว้ unwind ตามลำดับ **LIFO** — ลงทะเบียนหลังสุด ทำงานก่อน — เหมือนกับที่
+`with` statement ที่ซ้อนกัน unwind จากในสุดออกมา
+
+## การซ้อน context manager
+
+context manager หลายตัวรวมกันในบรรทัด `with` เดียวได้ — พวกมันซ้อนจากซ้ายไปขวา:
 
 ```python
 with open("in.txt") as src, open("out.txt", "w") as dst:
     dst.write(src.read())
 ```
+
+## `async with` — ตัวอย่างสั้น ๆ
+
+asynchronous context manager implement `__aenter__` และ `__aexit__` เป็น coroutine method แทน method ธรรมดา
+และใช้กับ `async with` ภายใน `async def` function:
+
+```python
+class AsyncTimer:
+    async def __aenter__(self) -> Self:
+        print("async timer started")
+        return self
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        print("async timer stopped")
+        return False
+
+async def main() -> None:
+    async with AsyncTimer():
+        print("doing async work...")
+```
+
+protocol ที่เหลือเหมือนเดิมทุกประการกับเวอร์ชัน synchronous — argument สามตัวเหมือนกัน ความหมายของ return value
+เหมือนกัน โมดูล Async & Concurrency ครอบคลุม `async`/`await`, task และ event loop แบบลึกกว่านี้ ส่วนนี้มีไว้แค่ให้
+จำรูปร่างได้เมื่อเจอเท่านั้น
 
 ## Demo แบบ runnable เต็มรูปแบบ
 
@@ -157,45 +252,226 @@ except RuntimeError as e:
 
 <Playground code={contextManagersCode} />
 
-<Callout title="Context manager รับประกัน cleanup แม้จะเกิด error">
-Block `finally` ภายใน generator ของ `@contextlib.contextmanager` ทำงานเสมอ แม้ body ของ `with` จะ raise exception นี่คือวิธีมาตรฐานในการเขียนโค้ดที่รับประกัน cleanup ใน Python ใช้ `with` เสมอแทนการเรียก `close()`, `release()`, หรือ `stop()` ด้วยตนเอง — exception ที่ไม่ถูก handle เพียงอันเดียวก็ทำให้ข้ามการเรียกเหล่านั้นได้
+<Callout title="Context manager รับประกัน cleanup แม้เกิด error">
+clause `finally` ภายใน `@contextlib.contextmanager` generator ทำงานเสมอ แม้ `with` body จะ raise exception นี่คือวิธีมาตรฐานในการเขียนโค้ดที่ cleanup รับประกันได้ใน Python ควรใช้ `with` แทนการเรียก `close()`, `release()` หรือ `stop()` ด้วยมือเสมอ — exception ที่ไม่ถูกจับตัวเดียวจะข้ามการเรียกด้วยมือเหล่านั้นไปเลย
+</Callout>
+
+## Depth demo: ทุกอย่างข้างบน รันจริง
+
+export const contextManagersDepthCode = `
+import asyncio
+import contextlib
+from collections.abc import Iterator
+from types import TracebackType
+from typing import Self
+
+# --- __exit__ returning True swallows the exception ---
+print("=== __exit__ returning True swallows ===")
+class Swallower:
+    def __enter__(self) -> Self:
+        return self
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool:
+        if exc is not None:
+            print(f"  swallowing {type(exc).__name__}: {exc}")
+        return True  # BUG-PRONE if unintentional: any exception disappears here
+
+with Swallower():
+    raise ValueError("this never propagates")
+print("  execution continues here -- the ValueError above is gone")
+
+# --- contextlib.suppress is built on exactly this pattern ---
+print("=== contextlib.suppress ===")
+with contextlib.suppress(FileNotFoundError):
+    open("does-not-exist.txt")
+print("  suppress(FileNotFoundError).__exit__ returns True only for FileNotFoundError")
+
+# --- ExitStack: a dynamic number of context managers ---
+print("=== ExitStack ===")
+@contextlib.contextmanager
+def resource(name: str) -> Iterator[str]:
+    print(f"  acquiring {name}")
+    try:
+        yield name
+    finally:
+        print(f"  releasing {name}")
+
+names = ["a", "b", "c"]
+with contextlib.ExitStack() as stack:
+    resources = [stack.enter_context(resource(n)) for n in names]
+    print(f"  using {resources}")
+    stack.callback(print, "  extra cleanup callback ran")
+# unwinds LIFO: the callback (registered last) runs first, then c, then b, then a
+
+# --- async with teaser ---
+print("=== async with (teaser) ===")
+class AsyncTimer:
+    async def __aenter__(self) -> Self:
+        print("  async timer started")
+        return self
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool:
+        print("  async timer stopped")
+        return False
+
+async def main() -> None:
+    async with AsyncTimer():
+        print("  doing async work...")
+
+asyncio.run(main())
+`.trim();
+
+<Playground code={contextManagersDepthCode} />
+
+## Mental Model
+
+context manager คือคำสัญญาสองส่วน: `__enter__` ทำงานก่อน body เสมอ และ — ไม่ว่า body จะออกอย่างไร ปกติ, ผ่าน
+`return`, หรือผ่าน exception ใดก็ตาม — `__exit__` ทำงานหลังจากนั้นเสมอ `with` statement คือรูปร่างเดียวกันกับ
+`try`/`except`/`finally` ที่แสดงไว้ตอนต้นบทเป๊ะ แค่สะกดต่างกัน จุดเดียวที่รูปร่างนี้ต่างจาก `finally` block ธรรมดา
+คือ return value ของ `__exit__` ซึ่งสามารถเลือก suppress สิ่งที่ปกติจะ propagate ได้อย่างจริงจัง
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| Class-based context manager | ควบคุมได้เต็มที่ เก็บ state ข้าม `__enter__`/`__exit__` ได้ | boilerplate มากกว่า generator |
+| `contextlib.contextmanager` | function เดียว `try`/`finally` อ่านเป็นธรรมชาติ | มี `yield` เดียว -- re-enter ซ้ำแบบที่ class-based บางแบบทำได้ไม่ได้ |
+| `contextlib.suppress` | บรรทัดเดียว ระบุชัดว่าเมินอะไร | ใช้ได้แค่กรณีแคบ ๆ ของ "เมิน exception type ที่ระบุนี้" |
+| `ExitStack` | จัดการ resource จำนวนไม่แน่นอนได้อย่างปลอดภัย | อ้อมกว่า `with a, b, c:` ตรง ๆ เล็กน้อย |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"`__exit__` คืน `False` แปลว่ามีอะไรผิดพลาด"** — `False` (หรือ `None` หรือไม่คืนอะไรเลย) คือ default ที่
+  *ปกติ* และถูกต้อง — มันแปลว่า "ปล่อยให้ exception propagate เหมือนที่มันจะเป็นถ้าไม่มี context manager นี้"
+  การคืน `True` ต่างหากคือทางเลือกที่ผิดปกติที่ต้องมีเหตุผล
+- **"`with` statement สำคัญแค่กับ exception เท่านั้น"** — มันยังรับประกันว่า cleanup ทำงานตอน `return` ปกติจาก
+  ข้างใน block หรือ `break`/`continue` ออกจาก loop ที่ครอบอยู่ด้วย — ไม่ว่า body จะออกทางไหนก็ตาม
+- **"function ที่ decorate ด้วย `contextlib.contextmanager` ใช้ซ้ำได้ในหลาย `with` statement"** — generator
+  จะหมดอายุหลังจากรันจบรอบเดียว ต้องเรียก function ที่ decorate ไว้ใหม่สำหรับ `with` block ใหม่ แทนการใช้
+  generator object เดิมซ้ำ
+- **"`ExitStack` มีประโยชน์แค่กับไฟล์"** — มันใช้ได้กับ context manager ใดก็ได้ (lock, network connection,
+  state ชั่วคราว) และกับ cleanup callback ธรรมดาที่ไม่ใช่ context manager เลยด้วย
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อ context manager ที่ AI generate ให้ตรวจสิ่งเหล่านี้:
+
+- `__exit__` คืน `True` (หรืออะไรที่ truthy ชัดเจน) โดยไม่มีเหตุผลที่ comment ไว้ชัดเจนหรือเปล่า? มันจะลบทุก
+  exception ที่ raise ภายในทุก `with` block ที่ใช้มันแบบเงียบ ๆ
+- resource ถูกเปิดและปิดด้วยมือ (`f = open(...)` / `f.close()`) แทนที่จะเป็น `with open(...) as f:` หรือเปล่า?
+  exception ใดก็ตามระหว่างสองการเรียกนี้จะข้าม `close()` ไป
+- `@contextlib.contextmanager` generator ทำ cleanup *นอก* `try/finally` หรือเปล่า? ถ้าโค้ดระหว่าง `yield` กับ
+  cleanup raise ได้ หรือถ้า `with` body เอง raise cleanup ที่เขียนโดยไม่มี `finally` จะไม่ทำงานเลย
+- ใช้ `with` statement จำนวนคงที่ที่ hardcode ไว้ ทั้งที่จำนวน resource จริง ๆ ไม่แน่นอน (list ของไฟล์, จำนวน
+  connection ที่แปรผัน) หรือเปล่า? นั่นมักแปลว่าต้องใช้ `ExitStack`
+- `contextlib.suppress` (หรือ bare `except: pass`) กำลังซ่อน exception ที่ควร log ไว้หรือเปล่า? การ suppress
+  คือการตัดสินใจ ไม่ใช่ default
+
+<SpotTheBug code={`class DatabaseTransaction:
+    def __enter__(self):
+        print("BEGIN")
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is not None:
+            print("ROLLBACK")
+        else:
+            print("COMMIT")
+        return True
+
+with DatabaseTransaction():
+    print("INSERT INTO users ...")
+    raise ValueError("insert failed")
+
+print("continuing after the transaction")
+`} lang="python">
+`__exit__` คืน `True` แบบไม่มีเงื่อนไข — แม้แต่บน path `ROLLBACK` ที่มี exception เกิดขึ้นจริง นั่นแปลว่า `ValueError("insert failed")` ถูกกลืนไปแบบเงียบ ๆ: โค้ดพิมพ์ `BEGIN`, `INSERT INTO users ...`, `ROLLBACK` แล้วก็ `continuing after the transaction` โดยไม่มีร่องรอยว่ามีอะไรล้มเหลวเลย caller ไม่มีทางรู้ว่า insert ไม่สำเร็จ ทางแก้คือ `return False` (หรือไม่ต้อง `return` เลย) เพื่อให้ exception ยัง propagate ต่อหลัง rollback — `__exit__` ควรตัดสินใจว่าจะรัน cleanup หรือไม่ ไม่ใช่ตัดสินใจว่าจะซ่อน failure หรือไม่
+</SpotTheBug>
+
+<Callout title="Return value ของ __exit__ ตัดสินว่า exception จะรอดหรือไม่ -- default เป็น False">
+คืนค่า truthy จาก `__exit__` เฉพาะเมื่อตั้งใจ suppress exception จริง ๆ (แบบที่ `contextlib.suppress` ทำโดยตั้งใจ สำหรับ type ที่ระบุไว้) ที่อื่นทั้งหมด คืน `False` หรือไม่คืนอะไรเลย แล้วให้ caller ของ `with` statement รู้ว่าเกิดอะไรขึ้นจริง ๆ
 </Callout>
 
 export const quizContextManagers = [
   {
-    q: "Object ต้อง implement method อะไรสองตัวเพื่อใช้เป็น context manager?",
+    q: "object ต้อง implement method อะไรสองตัวถึงจะใช้เป็น context manager ได้?",
     options: [
       "__open__ และ __close__",
       "__enter__ และ __exit__",
       "__start__ และ __stop__",
       "__setup__ และ __teardown__"
     ],
-    answer: 1
+    answer: 1,
+    explain: "protocol ของ with statement เรียก __enter__ ก่อน body และ __exit__ หลังจากนั้น ไม่ว่า body จะจบอย่างไรก็ตาม"
   },
   {
-    q: "ใน generator ของ `@contextlib.contextmanager` อะไรเป็นตัวแบ่งระหว่าง setup และ teardown?",
+    q: "ใน `@contextlib.contextmanager` generator อะไรเป็นเส้นแบ่งระหว่าง setup กับ teardown?",
     options: ["return", "yield", "raise StopIteration", "break"],
-    answer: 1
+    answer: 1,
+    explain: "โค้ดก่อน yield ทำงานเป็น __enter__ ค่าที่ส่งให้ yield กลายเป็น as-variable ของ with statement โค้ดหลัง yield (มักอยู่ใน finally) ทำงานเป็น __exit__"
   },
   {
-    q: "Method `__exit__` ทำงานเมื่อใด?",
+    q: "method `__exit__` ทำงานเมื่อไหร่?",
     options: [
-      "เฉพาะเมื่อ with block ออกตามปกติ",
-      "เฉพาะเมื่อเกิด exception ใน with block",
-      "เสมอ — ไม่ว่า block จะออกตามปกติหรือมี exception",
-      "เฉพาะเมื่อ context manager ถูก garbage-collected"
+      "เฉพาะเมื่อ with block ออกแบบปกติเท่านั้น",
+      "เฉพาะเมื่อมี exception ถูก raise ภายใน with block เท่านั้น",
+      "เสมอ -- ไม่ว่า block จะออกแบบปกติหรือด้วย exception",
+      "เฉพาะเมื่อ context manager ถูก garbage-collect เท่านั้น"
     ],
-    answer: 2
+    answer: 2,
+    explain: "__exit__ ทำงานเสมอหลัง with body โดยได้รับ (None, None, None) เมื่อออกแบบปกติ หรือได้รับข้อมูล exception เมื่อมีตัวหนึ่งถูก raise"
   },
   {
-    q: "เกิดอะไรขึ้นถ้า `__exit__` คืนค่า truthy เมื่อมี exception เกิดขึ้น?",
+    q: "```python\nclass CM:\n    def __enter__(self):\n        return self\n    def __exit__(self, exc_type, exc, tb):\n        return True\n\nwith CM():\n    raise ValueError(\"x\")\nprint(\"after\")\n```\nโค้ดนี้พิมพ์อะไร?",
     options: [
-      "Exception ถูก re-raise ทันที",
-      "Exception ถูก suppress และการทำงานดำเนินต่อหลัง with block",
-      "Exception ถูกแปลงเป็น warning",
-      "Python raise RuntimeError ตัวที่สอง"
+      "raise ValueError: x โดยไม่มีใครจับ",
+      "'after' -- ValueError ถูก suppress แบบเงียบ ๆ เพราะ __exit__ คืน True",
+      "ไม่มีอะไรเลย -- โปรแกรม exit ทันที",
+      "พิมพ์ 'after' แล้วค่อย re-raise ValueError"
     ],
-    answer: 1
+    answer: 1,
+    explain: "การคืนค่า truthy ใด ๆ จาก __exit__ บอก with statement ว่า exception ถูก handle แล้ว เพราะ __exit__ นี้คืน True เสมอ ValueError จึงไม่ propagate เลย และ execution ทำงานต่อตามปกติหลัง with block"
+  },
+  {
+    q: "`stack.enter_context(cm)` ภายใน `with contextlib.ExitStack() as stack:` block ทำอะไร?",
+    options: [
+      "แค่ลงทะเบียน cm ไว้สำหรับ cleanup ทีหลัง โดยไม่เรียก __enter__",
+      "เรียก cm.__enter__() ทันที และลงทะเบียน cm.__exit__ ให้ทำงานเมื่อ ExitStack ออก",
+      "สร้าง ExitStack ที่ซ้อนกัน",
+      "ต้องการให้ cm ถูก enter ไปแล้ว"
+    ],
+    answer: 1,
+    explain: "enter_context ทั้ง enter context manager ทันทีและกำหนดตารางการ exit ของมันไว้สำหรับตอนที่ ExitStack ที่ครอบอยู่ออก โดย unwind manager ทั้งหมดที่ลงทะเบียนไว้ตามลำดับ LIFO"
+  },
+  {
+    q: "```python\nwith contextlib.ExitStack() as stack:\n    stack.callback(print, \"first\")\n    stack.enter_context(managed_resource(\"r\"))\n```\nเมื่อ with block ออก callback กับ cleanup ของ resource ทำงานตามลำดับไหน?",
+    options: [
+      "callback ทำงานก่อน เพราะลงทะเบียนก่อน",
+      "cleanup ของ resource ทำงานก่อน เพราะลงทะเบียนทีหลัง -- ExitStack unwind แบบ LIFO",
+      "ทั้งคู่ทำงานพร้อมกัน",
+      "ลำดับไม่แน่นอน"
+    ],
+    answer: 1,
+    explain: "ExitStack unwind ทุกอย่างที่มันถืออยู่ตามลำดับลงทะเบียนหลังสุด-ทำงานก่อน (LIFO) เหมือนกับ with statement ที่ซ้อนกัน เพราะ resource ถูกลงทะเบียนหลัง callback cleanup ของมันจึงทำงานก่อน"
+  },
+  {
+    q: "ทำไมต้องใช้ `async def __aenter__` / `async def __aexit__` แทน `__enter__` / `__exit__`?",
+    options: [
+      "ไม่เกี่ยวข้องกับ protocol ของ with statement เลย",
+      "async with ต้องการให้ method setup/teardown เป็น coroutine ที่ถูก await เป็นส่วนหนึ่งของการเข้าและออกจาก block",
+      "__aenter__ และ __aexit__ แทนที่ __enter__ และ __exit__ ทั้งหมดใน Python 3.14",
+      "จำเป็นแค่ตอนที่ resource เองทำ network I/O เท่านั้น"
+    ],
+    answer: 1,
+    explain: "async with คือคู่แบบ asynchronous ของ with: __aenter__ และ __aexit__ เป็น coroutine method ที่ถูก await ตอนเข้าและออกจาก block ทำให้ setup/teardown เองสามารถทำ async operation ได้"
   }
 ];
 

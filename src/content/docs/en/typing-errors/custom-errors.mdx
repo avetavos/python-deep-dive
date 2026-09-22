@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Why custom exceptions matter
 
@@ -62,6 +64,11 @@ class NotFoundError(AppError):
         self.resource_id = resource_id
 ```
 
+<Mermaid code={`flowchart TD
+  EXC["Exception"] --> APP["AppError (code: int)"]
+  APP --> VAL["ValidationError (field: str)"]
+  APP --> NF["NotFoundError (resource: str, resource_id: int)"]`} title="A small application error hierarchy: every leaf is also an AppError" />
+
 Catching at different levels:
 
 ```python
@@ -73,11 +80,113 @@ except AppError as e:
     print(f"App error [{e.code}]: {e}")          # broad
 ```
 
-## `str(exception)` and `repr(exception)`
+A package with several modules typically defines one root exception per package (or one per subsystem) and
+lets every other exception in that package inherit from it — callers who only care about "did this package
+fail" can catch the root; callers who need per-failure detail catch the specific subclass.
+
+## `except X as e:` deletes `e` when the block ends
+
+CPython implicitly runs `del e` when an `except ... as e:` block exits — whether it exits normally or via
+another exception. This is not a style choice; it is language behavior, and it means the name is simply gone
+immediately afterward:
+
+```python
+try:
+    raise ValueError("boom")
+except ValueError as e:
+    print(e)          # fine -- e is bound here
+print(e)               # NameError: name 'e' is not defined
+```
+
+This exists to break a reference cycle: the exception object's traceback holds a reference to the frame,
+and the frame's locals would hold a reference back to the exception, keeping both alive indefinitely without
+the automatic deletion. The practical effect: never plan to use the bound name after the `except` block —
+copy anything you need (the message, an attribute) to a different name first, as the demo further down does
+with `sample` instead of reusing `e`.
+
+The exact error you see depends on scope: at module level, reading the deleted name raises `NameError: name
+'e' is not defined`, as above. Inside a function, `e` is a local variable, and Python's compiler already
+knows at compile time that the name is local to that function — reading it after the implicit `del`
+raises `UnboundLocalError: cannot access local variable 'e' where it is not associated with a value`
+instead, even though the code "looks the same" as the module-level case. Both are the same underlying
+deletion; only the error class differs by scope.
+
+## `args`, `str()`, and `repr()`
+
+Every `BaseException` stores whatever positional arguments were passed to it in `.args` — `super().__init__(message)` is what populates `self.args` with `(message,)`.
 
 `str(e)` returns the message you passed to `super().__init__()`. This is what gets printed when you `print(e)` or include the exception in an f-string.
 
-`repr(e)` returns `ExceptionClass(message)` — useful for logging.
+`repr(e)` returns `ExceptionClass(message)` — useful for logging, since it also identifies which exception type produced the message.
+
+```python
+err = AppError("disk full", code=507)
+str(err)    # 'disk full'
+repr(err)   # "AppError('disk full')"
+err.args    # ('disk full',)
+err.code    # 507 -- custom attributes are NOT part of .args
+```
+
+Custom attributes like `code` live on the instance, not in `.args` — they are set by your own `__init__`, not by `Exception.__init__`.
+
+## Implicit chaining — `__context__` vs `__cause__`
+
+Raising a new exception inside an `except` block **always** records the exception being handled, even
+without `from` — Python sets `__context__` automatically. `raise ... from original` additionally sets
+`__cause__`, and Python's default traceback printer changes its wording between the two ("during handling of
+the above exception" for implicit context vs. "the direct cause of the following exception" for an explicit
+cause).
+
+```python
+try:
+    int("nope")
+except ValueError:
+    raise RuntimeError("second failure")          # no 'from' -- __context__ set implicitly, __cause__ is None
+
+try:
+    int("nope")
+except ValueError as original:
+    raise RuntimeError("second failure") from original   # __cause__ set explicitly
+```
+
+`raise ... from None` is the only way to suppress *both* — it tells Python this new exception truly has
+nothing to do with what was being handled.
+
+## `add_note()` — attaching context after creation (Python 3.11+)
+
+`BaseException.add_note(note)` appends a string to the exception's `__notes__` list, which the default
+traceback printer includes automatically. It is useful for attaching context you only learn about *after*
+the exception object already exists — for example, while it is propagating through a retry loop:
+
+```python
+err = AppError("upstream timeout", code=504)
+err.add_note("retry attempt 1 of 3")
+err.add_note("upstream host: api.internal:8443")
+raise err
+```
+
+Unlike building a longer message string up front, notes are added incrementally and appear as separate
+lines in the traceback, keeping the original message intact for anything that parses or compares it.
+
+## When to subclass a builtin vs. define your own base
+
+Subclassing a builtin (`class NegativeAmountError(ValueError):`) means every existing caller that already
+catches `ValueError` keeps working unchanged, while callers who need your extra attributes can catch the
+specific subclass. Defining your own base (`class AppError(Exception):`) makes sense when the failure is
+specific to your application domain and there is no builtin that already means the right thing — forcing
+every caller, old and new, through your hierarchy on purpose.
+
+```python
+class NegativeAmountError(ValueError):
+    """A ValueError with extra context -- callers who only know ValueError still catch it."""
+    def __init__(self, amount: float) -> None:
+        super().__init__(f"amount must be non-negative, got {amount}")
+        self.amount = amount
+```
+
+A generic `except ValueError:` still catches `NegativeAmountError` unchanged; code that specifically needs
+`.amount` catches `NegativeAmountError` directly. Prefer subclassing a builtin whenever your error genuinely
+*is* a more specific case of an existing one; reach for a fresh application-specific base only when it is not.
 
 ## Full runnable demo
 
@@ -146,6 +255,150 @@ print(f"BaseException?   {isinstance(sample, BaseException)}")
 Subclass `Exception` for every application-level error. Only subclass `BaseException` directly if you are writing framework-level code that genuinely needs to intercept process-exit signals.
 </Callout>
 
+## Depth demo: everything above, running
+
+export const customErrorsDepthCode = `
+# --- except X as e: deletes e when the block ends ---
+print("=== except ... as e deletes e ===")
+try:
+    raise ValueError("boom")
+except ValueError as e:
+    print(f"  inside the except block: {e}")
+print("  now outside the except block:")
+try:
+    print(e)  # NameError: 'e' was deleted by an implicit del e when the block ended
+except NameError as ne:
+    print(f"  NameError: {ne}")
+
+# --- args and repr ---
+print("=== args and repr ===")
+class AppError(Exception):
+    def __init__(self, message: str, code: int = 0) -> None:
+        super().__init__(message)
+        self.code = code
+
+err = AppError("disk full", code=507)
+print(f"  str(err)  = {str(err)!r}")
+print(f"  repr(err) = {repr(err)!r}")
+print(f"  err.args  = {err.args}")
+print(f"  err.code  = {err.code}")
+
+# --- implicit chaining: __context__ vs __cause__ ---
+print("=== implicit chaining (__context__) vs explicit (__cause__) ===")
+try:
+    try:
+        int("nope")
+    except ValueError:
+        raise RuntimeError("second failure")  # no 'from' -- __context__ set implicitly
+except RuntimeError as e:
+    print(f"  no 'from': __cause__={e.__cause__!r}  __context__={e.__context__!r}")
+
+try:
+    try:
+        int("nope")
+    except ValueError as original:
+        raise RuntimeError("second failure") from original  # __cause__ set explicitly
+except RuntimeError as e:
+    print(f"  with 'from': __cause__={e.__cause__!r}")
+
+# --- add_note() (3.11+) ---
+print("=== add_note() ===")
+try:
+    err2 = AppError("upstream timeout", code=504)
+    err2.add_note("retry attempt 1 of 3")
+    err2.add_note("upstream host: api.internal:8443")
+    raise err2
+except AppError as e:
+    print(f"  {e}")
+    print(f"  notes: {e.__notes__}")
+
+# --- when to subclass a builtin vs your own base ---
+print("=== builtin subclass vs custom base ===")
+class NegativeAmountError(ValueError):
+    """A ValueError with extra context -- callers who only know ValueError still catch it."""
+    def __init__(self, amount: float) -> None:
+        super().__init__(f"amount must be non-negative, got {amount}")
+        self.amount = amount
+
+def withdraw(amount: float) -> float:
+    if amount < 0:
+        raise NegativeAmountError(amount)
+    return amount
+
+try:
+    withdraw(-10.0)
+except ValueError as e:  # generic callers that only know about ValueError still catch this
+    print(f"  caught as plain ValueError: {e}")
+try:
+    withdraw(-10.0)
+except NegativeAmountError as e:  # callers who need the extra .amount attribute catch the specific type
+    print(f"  caught as NegativeAmountError, amount={e.amount}")
+`.trim();
+
+<Playground code={customErrorsDepthCode} />
+
+## Mental Model
+
+An exception class is an ordinary Python class, so everything you know about classes applies: `__init__`
+sets up attributes, `isinstance` walks the MRO, and inheritance means "catchable as." The one piece of magic
+specific to `except ... as e:` is CPython's automatic `del e` at block exit — that single implicit statement
+is responsible for both the reference-cycle-breaking behavior and the `NameError` surprise above.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Custom exception hierarchy | Callers catch at exactly the right specificity | More classes to define and keep organized |
+| Subclassing a builtin (`ValueError`) | Existing generic catchers keep working | Less explicit than a dedicated application base |
+| Custom attributes (`.code`, `.field`) | Structured data without parsing the message | Extra `__init__` boilerplate per exception class |
+| `add_note()` | Attach context discovered after creation, without rebuilding the message | Notes are appended text, not structured data — still just a string |
+
+## Common Misconceptions
+
+- **"I can keep using `e` after the `except` block, like any other variable."** CPython deletes it
+  automatically when the block ends, even on success — using it afterward raises `NameError`.
+- **"Custom attributes like `.code` are stored in `.args`."** They are not — `.args` holds only what was
+  passed to `Exception.__init__` (or `BaseException.__init__`). Custom attributes are separate instance
+  attributes you set yourself.
+- **"Raising a new exception without `from` discards the original."** It does not — Python still records it
+  in `__context__` automatically; only `raise ... from None` truly discards it.
+- **"Every custom error needs its own brand-new base class."** If the failure genuinely is a more specific
+  `ValueError` (or `KeyError`, `TypeError`, …), subclass the builtin — existing generic handlers keep
+  working for free.
+
+## Reading AI-generated code
+
+Before trusting a generated custom-exception hierarchy, check for these:
+
+- Does any code read the `except ... as e:` binding after the block has ended? It will raise `NameError` the
+  moment that path actually runs.
+- Are custom attributes (like `.code` or `.field`) actually set as instance attributes, or is the code
+  trying to pull them out of `.args`?
+- Does the hierarchy subclass `BaseException` directly instead of `Exception`? That risks accidentally
+  catching `KeyboardInterrupt` or `SystemExit` wherever the new base is caught broadly.
+- Is a brand-new exception class defined for something that is really just a `ValueError` or `KeyError` in
+  disguise? Check whether subclassing the builtin would let existing callers keep working.
+- Does re-raising inside an `except` block ever need `from None`, but the generated code leaves the implicit
+  `__context__` chain in place, printing a confusing double traceback to end users?
+
+<SpotTheBug code={`def parse_amount(raw: str) -> float:
+    try:
+        return float(raw)
+    except ValueError as e:
+        log_message = f"failed to parse {raw!r}: {e}"
+    print(log_message)
+    print(e)  # meant to log the original exception object too
+    return 0.0
+
+parse_amount("not-a-number")
+`} lang="python">
+`e` is only bound while the `except ValueError as e:` block is executing. CPython runs an implicit `del e` the moment that block ends, whether it finished normally or not. Because `e` is a local variable inside `parse_amount`, the `print(e)` two lines later raises `UnboundLocalError: cannot access local variable 'e' where it is not associated with a value` — not `NameError` (that would only happen for a module-level `e`) — even though `log_message` (built inside the block) is still perfectly readable. The fix is to capture anything needed later — `str(e)`, `e.args`, or the exception object itself under a different name — before the block ends.
+</SpotTheBug>
+
+<Callout title="Give errors a type, not just a message — and never read `e` after its block">
+Subclass `Exception` (never `BaseException`) for application errors, attach structured attributes in `__init__`, and build a shallow hierarchy so callers can catch at the specificity they need. Remember that `except ... as e:` deletes `e` when the block ends — copy anything you need out first.
+</Callout>
+
 export const quizCustomErrors = [
   {
     q: "Why should custom application exceptions subclass `Exception` instead of `BaseException`?",
@@ -155,7 +408,8 @@ export const quizCustomErrors = [
       "Exception supports custom attributes; BaseException does not",
       "BaseException cannot be raised with a message string"
     ],
-    answer: 1
+    answer: 1,
+    explain: "BaseException is the root of the whole hierarchy, including KeyboardInterrupt, SystemExit, and GeneratorExit. A broad except clause against a BaseException-rooted hierarchy risks swallowing those process-control signals too."
   },
   {
     q: "Given a hierarchy `NotFoundError -> AppError -> Exception`, which `except` clause would catch a `NotFoundError`?",
@@ -165,7 +419,8 @@ export const quizCustomErrors = [
       "Only the most specific clause (`except NotFoundError`) matches",
       "None — custom exceptions must be caught with `except Exception`"
     ],
-    answer: 1
+    answer: 1,
+    explain: "isinstance-based matching means every ancestor class in the hierarchy also matches. Which one actually runs depends on clause order -- Python uses the first except clause that matches, top to bottom."
   },
   {
     q: "What does calling `super().__init__(message)` inside a custom exception's `__init__` do?",
@@ -175,7 +430,8 @@ export const quizCustomErrors = [
       "Registers the exception in the traceback",
       "Converts the message to a bytes object"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Exception.__init__ stores its positional arguments in .args, which is what str() and the default traceback printer read from. Skipping super().__init__ leaves .args empty and str(err) returns an empty string."
   },
   {
     q: "You have `except ValidationError` before `except AppError` in a try block. A ValidationError is raised. Which clause runs?",
@@ -185,7 +441,41 @@ export const quizCustomErrors = [
       "except ValidationError runs — Python uses the first matching clause",
       "A TypeError is raised because two clauses match"
     ],
-    answer: 2
+    answer: 2,
+    explain: "Python checks except clauses top to bottom and runs the first one whose type matches (via isinstance). Order matters: put more specific exception types before their broader ancestors."
+  },
+  {
+    q: "```python\ntry:\n    raise ValueError(\"boom\")\nexcept ValueError as e:\n    msg = str(e)\nprint(e)\n```\nWhat happens on the last line?",
+    options: [
+      "Prints 'boom' again",
+      "Prints an empty string",
+      "Raises NameError: name 'e' is not defined",
+      "Prints None"
+    ],
+    answer: 2,
+    explain: "CPython implicitly runs `del e` when the except block exits, specifically to break a reference cycle between the exception's traceback and the frame. `e` is simply gone afterward -- reading it raises NameError."
+  },
+  {
+    q: "```python\ntry:\n    int(\"x\")\nexcept ValueError:\n    raise RuntimeError(\"second\")\n```\nWhat is `__context__` on the raised RuntimeError, given there is no `from` clause?",
+    options: [
+      "None -- without 'from', nothing is recorded",
+      "The original ValueError -- Python records it implicitly even without 'from'",
+      "A TypeError, since 'from' is required for chaining",
+      "The RuntimeError itself"
+    ],
+    answer: 1,
+    explain: "Raising inside an except block always sets __context__ to the exception being handled, whether or not 'from' is used. __cause__ (the explicit chain) stays None here; only 'from None' suppresses __context__ as well."
+  },
+  {
+    q: "Your application raises `NegativeAmountError`, defined as `class NegativeAmountError(ValueError): ...`. What is the main benefit of this choice over `class NegativeAmountError(AppError): ...` (a fresh application base)?",
+    options: [
+      "NegativeAmountError instances are faster to construct",
+      "Existing code that already catches plain ValueError keeps working unchanged, while code that needs the extra attribute can catch the specific subclass",
+      "ValueError automatically adds a .code attribute",
+      "It removes the need to call super().__init__()"
+    ],
+    answer: 1,
+    explain: "Subclassing an existing builtin exception means every caller that already handles that builtin (ValueError here) continues to work without any changes, while new code that needs the richer type can catch NegativeAmountError specifically."
   }
 ];
 

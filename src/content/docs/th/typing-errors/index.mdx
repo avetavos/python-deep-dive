@@ -1,6 +1,6 @@
 ---
 title: 'Typing & Errors'
-description: 'ภาพรวมของ type hints และโมเดล exception ใน Python — ทำงานอย่างไร ใช้ร่วมกันอย่างไร และควรเรียนอะไรต่อ'
+description: 'ภาพรวมของ Python type hints และ exception model — คืออะไร ทำงานร่วมกันอย่างไร และควรเรียนอะไรต่อ'
 sidebar:
   order: 1
 ---
@@ -9,26 +9,27 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## สองระบบ เป้าหมายเดียว: โค้ดที่เชื่อถือได้
 
-Python มีเครื่องมือสองตัวที่ทำงานเสริมกันเพื่อเขียนโค้ดที่ "พังดัง" แทนที่จะ "พังเงียบ":
+Python ให้เครื่องมือเสริมกันสองตัวสำหรับเขียนโค้ดที่พังแบบดังแทนที่จะพังแบบเงียบ ๆ:
 
-1. **Type hints** — annotation ที่บอกว่าตัวแปร, พารามิเตอร์ หรือค่าที่คืนออกมาควรเป็นประเภทใด ตรวจสอบโดย tool อย่าง mypy หรือ pyright แบบ static ไม่ใช่ตอน runtime
-2. **Exceptions** — กลไกส่งสัญญาณที่หยุดการทำงานปกติเมื่อเกิดสิ่งที่ไม่คาดคิด ทำให้เราจับและจัดการข้อผิดพลาดได้ หรือส่งต่อขึ้นไปยัง call stack
+1. **Type hints** — annotation ที่อธิบายว่าตัวแปร, พารามิเตอร์ หรือค่าที่คืนควรเก็บ type อะไร ถูกตรวจแบบ static ด้วยเครื่องมืออย่าง mypy หรือ pyright ไม่ใช่ตอน runtime
+2. **Exceptions** — กลไกส่งสัญญาณที่ขัดจังหวะการทำงานปกติเมื่อมีอะไรที่ไม่คาดคิดเกิดขึ้น ให้จับและกู้คืน หรือส่ง error ขึ้นไปตาม call stack ได้
 
-เมื่อใช้ร่วมกัน type hints และ exceptions ช่วยให้สื่อสาร intent ได้ชัดเจนและรับมือกับความผิดพลาดได้อย่างสง่างาม
+รวมกันแล้ว type hints และ exceptions ช่วยให้สื่อสาร intent ได้แม่นยำและจัดการความล้มเหลวได้อย่างสง่างาม
 
-## Type hints ในหนึ่งบรรทัด
+## Type hints แบบคร่าว ๆ
 
 ```python
 def greet(name: str, count: int = 1) -> str:
     return (name + "! ") * count
 ```
 
-`name: str`, `count: int`, และ `-> str` คือ type hints Python ไม่สนใจสิ่งเหล่านี้ตอน runtime — มีไว้เพื่อ static checker และผู้อ่านโค้ดเท่านั้น ไม่ทำให้ `greet("Alice")` ช้าหรือเร็วขึ้นแต่อย่างใด
+`name: str`, `count: int` และ `-> str` คือ type hints Python เพิกเฉยต่อมันตอน runtime — มีไว้แค่สำหรับ static checker และผู้อ่านโค้ดเท่านั้น มันไม่ทำให้ `greet("Alice")` ช้าลงหรือเร็วขึ้นแต่อย่างใด
 
-## โมเดล exception ในหนึ่งบรรทัด
+## Exception model แบบคร่าว ๆ
 
 ```python
 try:
@@ -39,29 +40,47 @@ finally:
     print("Always runs")
 ```
 
-`try` ครอบโค้ดที่อาจล้มเหลว `except` จับ exception ตามประเภทที่ระบุ `finally` ทำงานเสมอไม่ว่าจะเกิด exception หรือไม่
+`try` ครอบโค้ดที่อาจล้มเหลว `except` จับ exception type ที่ระบุ `finally` ทำงานเสมอไม่ว่าจะมี exception เกิดขึ้นหรือไม่
 
-## ความสัมพันธ์ระหว่างสองระบบ
+## สองระบบนี้เชื่อมกันอย่างไร
 
-Type hints และ exceptions ไม่ได้ขัดแย้งกัน — ต่างทำงานต่างช่วง:
+Type hints กับ exceptions ไม่ได้แยกกันแบบสุดขั้ว — พวกมันทำงานคนละ phase:
 
-| ช่วง | เครื่องมือ |
-|------|-----------|
+| Phase | เครื่องมือ |
+|-------|------|
 | Static analysis (ก่อนรัน) | Type hints + mypy/pyright |
-| ความผิดพลาดตอน runtime (ระหว่างรัน) | Exceptions |
+| Runtime failure (ระหว่างรัน) | Exceptions |
 
-Signature ของฟังก์ชันบอก caller ว่าต้องการประเภทใด ส่วน exception บอกว่ารันไปแล้วอาจเจออะไรได้บ้าง
+function signature บอก caller ว่าคาดหวัง type อะไร exceptions บอก caller ว่าอะไรผิดพลาดได้ตอน runtime
+ไม่มีอันไหนแทนที่อีกอันได้: `mypy --strict` ที่ผ่านสะอาดไม่ได้แปลว่าโปรแกรม crash ไม่ได้ และโปรแกรมที่มี
+`try`/`except` ระมัดระวังทุกที่ก็ยังอาจ ship ออกไปพร้อม `Any` กระจายอยู่ทุก signature โดยไม่มี static guarantee
+ใด ๆ เลยก็ได้
 
-## แผนที่โมดูล
+## ตารางตัดสินใจ: raise อะไร, จับอะไร, ปล่อยอะไรผ่านไป
 
-| บทเรียน | สิ่งที่จะได้เรียนรู้ |
-|---------|---------------------|
-| [Type Hints](./type-hints) | Annotate ตัวแปร, พารามิเตอร์, ค่าที่คืน; `Optional`, `Union`, type alias |
-| [Exceptions](./exceptions) | `try/except/else/finally`, `raise`, exception chaining |
-| [Context Managers](./context-managers) | `with`, `__enter__/__exit__`, `contextlib` |
-| [Custom Errors](./custom-errors) | Subclass `Exception`, custom attributes, exception hierarchy |
+ทุกบทในโมดูลนี้ตอบส่วนหนึ่งของตารางนี้ ใช้มันเป็นแผนที่ระหว่างอ่าน หรือเป็น reference เร็ว ๆ ทีหลัง
 
-## Demo ภาพรวมแบบ runnable
+| สถานการณ์ | ควรทำอะไร | เพราะอะไร |
+|---|---|---|
+| Input จากภายนอกโปรแกรมไม่ถูกต้อง | `raise ValueError`/`TypeError` (หรือ custom subclass) ไม่ใช่ `assert` | `assert` ถูกตัดออกทั้งหมดภายใต้ `python -O` |
+| กู้คืนจาก failure เฉพาะเจาะจงได้จริง | `except SpecificError:` แล้วดำเนินการต่อ | `except` แบบกว้างซ่อน bug ที่ไม่ใช่ failure ที่ตั้งใจจะจัดการ |
+| กู้คืนไม่ได้ แต่ต้อง cleanup | `try`/`finally` หรือ context manager | cleanup ต้องทำงานไม่ว่า exception จะถูก handle ในที่สุดหรือไม่ |
+| library call ล้มเหลวแล้วต้องการเพิ่ม context | `raise NewError(...) from original` | เก็บ chain (`__cause__`) ไว้ แทนที่จะทิ้ง error เดิม |
+| ต้อง log แล้วไปต่อที่ boundary ระดับบนสุด | `except Exception:` (ไม่ใช่ bare `except:`), `logging.exception(...)` | `Exception` ไม่รวม `KeyboardInterrupt`/`SystemExit`; `logging.exception` เก็บ traceback ไว้ |
+| พารามิเตอร์ควรรับแค่รูปร่างเดียวที่ชัดเจน | type hint ที่แม่นยำ (`Literal`, `Protocol`, `Sequence`, …) ไม่ใช่ `Any` | `Any` ยกเลิกการตรวจแบบ static ทั้งหมด — ดูบท Type Hints |
+| operation หลายตัวที่ไม่เกี่ยวข้องกันล้มเหลวพร้อมกันได้ | `except*` บน `ExceptionGroup` | `except` ธรรมดามองเข้าไปใน group ไม่ได้ |
+| ตั้งใจเมิน failure เฉพาะเจาะจงหนึ่งตัว | `contextlib.suppress(SpecificError)` | ระบุชัดว่าเมินอะไร ต่างจาก `except: pass` |
+
+## Module roadmap
+
+| Lesson | สิ่งที่จะได้เรียน |
+|--------|---------------------|
+| [Type Hints](./type-hints) | Annotate ตัวแปร, พารามิเตอร์, ค่าที่คืน; `Optional`, `Union`, invariance, `Any`, `Protocol`, `TypedDict`, `TypeGuard`/`TypeIs` และจุดที่ mypy กับ pyright เห็นต่างกัน |
+| [Exceptions](./exceptions) | Exception hierarchy, `try/except/else/finally`, `raise` เทียบกับ `raise e`, EAFP เทียบกับ LBYL, `except*`, การอ่าน traceback |
+| [Context Managers](./context-managers) | `with`, `__enter__/__exit__`, ตอนที่ `__exit__` กลืน exception, `ExitStack`, `contextlib.suppress` |
+| [Custom Errors](./custom-errors) | Subclass `Exception`, ทำไม `except X as e:` ลบ `e`, chaining แบบ implicit เทียบกับ explicit, `add_note()` |
+
+## Demo แบบ runnable ภาพรวม
 
 export const indexCode = `
 from typing import Optional
@@ -99,40 +118,133 @@ else:
 
 <Playground code={indexCode} />
 
-<Callout title="Type hints มีไว้สำหรับมนุษย์และ tool ไม่ใช่สำหรับ Python">
-ตอน runtime Python ไม่ตรวจสอบหรือบังคับใช้ type hints เลย คุณสามารถส่ง string ไปยังพารามิเตอร์ที่ annotate ว่า `int` และ Python จะไม่ร้องเรียน — จะรันโค้ดตามปกติกับค่านั้น ใช้ mypy หรือ pyright เป็น step แยกต่างหากเพื่อดัก type error ก่อนที่จะกลายเป็น bug ในโปรดักชัน
+<Callout title="Type hints มีไว้สำหรับมนุษย์และเครื่องมือ ไม่ใช่สำหรับ Python">
+ตอน runtime Python ไม่ตรวจหรือบังคับใช้ type hints เลย ส่ง string ไปในที่ที่ annotate เป็น `int` ได้ Python จะไม่บ่นอะไร — มันจะแค่ทำตามที่โค้ดสั่งกับค่านั้น รัน mypy หรือ pyright เป็นขั้นตอนแยกต่างหากเพื่อจับ type error ก่อนที่มันจะกลายเป็นความประหลาดใจตอน runtime
 </Callout>
+
+## Mental Model
+
+แยก failure mode สองแบบไว้ให้ชัด เพราะที่เหลือของโมดูลนี้จัดการทั้งสองต่างกันมาก **Type error** คือสิ่งที่
+checker จับได้ *ก่อน* โปรแกรมรันเลยด้วยซ้ำ โดยการอ่าน annotation — ไม่มีต้นทุนตอน runtime และจับอะไรไม่ได้เลยถ้า
+ไม่มีการรัน checker จริง **Runtime exception** คือสิ่งที่ Python เองตรวจจับ *ระหว่าง* โปรแกรมรัน โดย unwind
+call stack จนกว่า handler จะจับได้หรือโปรแกรม exit type hints ที่เป็นแค่ของประดับโดยไม่มีการรัน checker ใน CI
+และ `try`/`except` block ที่ป้องกันไว้โดยไม่คิดว่า *exception ไหน* ที่คาดไว้ คือสองวิธีที่พบบ่อยที่สุดที่ทำให้ทั้ง
+สองระบบไม่ได้ทำอะไรที่มีประโยชน์เลย
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| Type hints + mypy/pyright ใน CI | จับ bug หลายประเภทได้ก่อนโค้ดรัน | ต้องมีคนรัน checker จริงและแก้สิ่งที่มันเจอ |
+| `except` clause ที่แม่นยำ | bug นอกเหนือจาก failure ที่คาดไว้ยัง crash ให้เห็นชัด | ต้องเขียนหลาย clause กว่า except กว้าง ๆ ตัวเดียว |
+| Custom exception hierarchy | caller จับได้ที่ระดับความเจาะจงที่ต้องการ | ต้องนิยาม class เพิ่มและดูแล |
+| Context manager สำหรับ cleanup | cleanup รับประกันไม่ว่า block จะออกอย่างไร | มี ceremony มากกว่าการเปิด/ปิดด้วยมือเล็กน้อย |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"type hints กับ exceptions แก้ปัญหาเดียวกัน"** — type hints ป้องกัน bug บางประเภทไม่ให้รันได้เลยตั้งแต่แรก
+  ส่วน exceptions จัดการความล้มเหลวที่มีอยู่จริงเพราะโปรแกรมกำลังรันอยู่ (ไฟล์หาย, user input ผิด, network
+  timeout) — ไม่มี static typing ปริมาณเท่าไหร่ที่จะกำจัดสิ่งเหล่านั้นได้
+- **"ถ้าโค้ดมี type hints แปลว่า mypy ต้องผ่านอยู่แล้ว"** — type hints เป็นแค่ annotation ไม่มีอะไรบังคับให้ใคร
+  รัน checker กับมันจริง ๆ และ `Any` หรือ `# type: ignore` ทำให้ไฟล์ที่ "typed ครบ" ไม่บังคับใช้อะไรเลยได้
+- **"การจับ `Exception` ก็แทบจะเหมือนจับทุกอย่าง"** — มันตั้งใจไม่รวม `KeyboardInterrupt`, `SystemExit` และ
+  `GeneratorExit` — ดูบท Exceptions ว่าทำไมเส้นแบ่งนี้ถึงมีอยู่
+- **"function ที่ไม่มี `raise` ชัดเจนจะไม่มีวันล้มเหลว"** — แทบทุก operation (indexing, attribute access,
+  arithmetic, library call) raise ได้เองทั้งนั้น การไม่มี statement `raise` ไม่ได้บอกอะไรเกี่ยวกับการไม่มี
+  failure mode เลย
+
+## อ่านโค้ดที่ AI เขียน
+
+โมดูลนี้ทั้งหมดฝึกทักษะเดียว: อ่าน signature และ body ของ function แล้วถามว่า "สิ่งนี้ *รับประกัน* อะไรจริง ๆ
+เทียบกับแค่ *บอกใบ้*?" ก่อนเชื่อโค้ดที่ AI generate ในเรื่องนี้:
+
+- พารามิเตอร์หรือ return type ใช้ `Any` ซึ่งทำให้ function ทั้งตัวหลุดจากการตรวจแบบ static ไปเลยหรือเปล่า?
+- มี bare `except:` หรือ `except Exception: pass` ที่ไม่ log อะไรเลย ซ่อน failure แบบเงียบ ๆ หรือเปล่า?
+- โค้ดใช้ `assert` กับอะไรก็ตามที่ต้อง validate จริงใน production ที่ `-O` จะเอาออกไปหรือเปล่า?
+- binding ของ `except ... as e:` ใน custom exception ถูกอ่านที่ไหนหลัง block ของมันจบไปแล้วหรือเปล่า?
+- โค้ดถูกรันผ่าน `mypy --strict` และ `pyright` จริง ๆ หรือ type hints แค่ดูสมเหตุสมผลเฉย ๆ?
+
+<SpotTheBug code={`from typing import Any
+
+def get_config(data: dict[str, object], key: str) -> Any:
+    try:
+        return data[key]
+    except:
+        return None
+
+value = get_config({"timeout": "30"}, "timeout")
+print(value + 5)
+`} lang="python">
+มีปัญหาสองอย่างที่ผสมกันตรงนี้ อย่างแรก `-> Any` ทำให้ checker ไม่เคยตรวจสอบเลยว่า `get_config` คืนอะไรจริง ๆ — caller ไม่ได้รับการป้องกันเลย อย่างที่สอง bare `except:` ทำให้ key ที่หายไปกลายเป็น `None` แบบเงียบ ๆ แยกไม่ออกจาก error จริง ค่า config `"timeout": "30"` เป็น `str` ไม่ใช่ `int` — `get_config` คืนมันกลับมาโดยไม่เปลี่ยนแปลง และ `value + 5` raise `TypeError: can only concatenate str (not "int") to str` ห่างไกลจากจุดที่ความผิดพลาดจริงเกิดขึ้น (การเก็บ string แทนตัวเลข หรือไม่เคย validate config เลย) ทางแก้แตะทั้งสองบท: type `get_config` ให้แม่นยำแทนที่จะใช้ `Any` และจับ `KeyError` เฉพาะเจาะจงแทนที่จะจับทุกอย่าง
+</SpotTheBug>
 
 export const quizIndex = [
   {
     q: "Python ทำอะไรกับ type hints ตอน runtime?",
     options: [
-      "Raise TypeError ทันทีถ้าส่งประเภทผิด",
-      "ไม่สนใจเลย — มีไว้สำหรับ static checker และผู้อ่านโค้ด",
-      "แปลงค่าให้เป็นประเภทที่ annotate ไว้อัตโนมัติ",
-      "Log warning ไปยัง stderr"
+      "raise TypeError ถ้าส่ง type ผิดเข้ามา",
+      "เพิกเฉยต่อมันโดยสิ้นเชิง -- มีไว้สำหรับ static checker และผู้อ่านเท่านั้น",
+      "แปลงค่าให้เป็น type ที่ annotate ไว้อัตโนมัติ",
+      "log warning ไปที่ stderr"
     ],
-    answer: 1
+    answer: 1,
+    explain: "annotation ถูกเก็บเป็น metadata (แบบ lazy ตาม PEP 649) และ interpreter ไม่เคยเอามาใช้ validate ค่าเลย มีแค่เครื่องมือแยกต่างหากอย่าง mypy หรือ pyright เท่านั้นที่อ่านมันเพื่อรายงาน error"
   },
   {
-    q: "Block ใดใน try statement ที่ทำงานเสมอไม่ว่าจะเกิด exception หรือไม่?",
+    q: "block ไหนใน try statement ทำงานเสมอ ไม่ว่าจะมี exception เกิดขึ้นหรือไม่?",
     options: ["except", "else", "finally", "raise"],
-    answer: 2
+    answer: 2,
+    explain: "finally ทำงานเสมอ ไม่ว่า try block จะสำเร็จ, raise exception ที่ถูกจับ หรือ raise exception ที่ไม่ถูกจับ"
   },
   {
-    q: "Block `else` ใน try statement ทำงานเมื่อใด?",
+    q: "block `else` ของ try statement ทำงานเมื่อไหร่?",
     options: [
-      "ทุกครั้ง หลัง try block จบ",
-      "เฉพาะเมื่อเกิด exception และถูก catch",
-      "เฉพาะเมื่อไม่มี exception เกิดขึ้นใน try block",
-      "เฉพาะเมื่อไม่มี finally block"
+      "เสมอ หลังจาก try block",
+      "เฉพาะเมื่อมี exception ถูก raise และถูกจับ",
+      "เฉพาะเมื่อไม่มี exception เกิดขึ้นใน try block เท่านั้น",
+      "เฉพาะเมื่อไม่มี finally block เท่านั้น"
     ],
-    answer: 2
+    answer: 2,
+    explain: "else ทำงานเฉพาะ happy path เท่านั้น ทำให้แยกโค้ดที่ 'operation สำเร็จ' ออกจากทั้ง try block เองและ cleanup ใน except/finally"
   },
   {
-    q: "Tool ใดตรวจสอบ Python type hints แบบ static?",
-    options: ["Python เอง ตอน runtime", "mypy หรือ pyright", "pytest", "โมดูล `typing`"],
-    answer: 1
+    q: "เครื่องมือไหนตรวจ Python type hints แบบ static?",
+    options: ["Python เองตอน runtime", "mypy หรือ pyright", "pytest", "module `typing`"],
+    answer: 1,
+    explain: "mypy และ pyright เป็น static analysis tool แยกต่างหากที่อ่าน annotation แล้วรายงานความไม่สอดคล้องโดยไม่ต้องรันโปรแกรม module typing มีหน้าที่แค่ให้ชื่อที่ใช้ใน annotation เท่านั้น"
+  },
+  {
+    q: "```python\ndef get_config(data: dict, key: str):\n    try:\n        return data[key]\n    except:\n        return None\n\nprint(get_config({}, \"port\") + 1)\n```\nโค้ดนี้เกิดอะไรขึ้นจริง ๆ ตอนรัน และทำไม signature สไตล์ -> Any ถึงเป็นส่วนหนึ่งของปัญหา?",
+    options: [
+      "พิมพ์ 1 -- None + 1 default เป็น 1",
+      "raise TypeError: unsupported operand type(s) for +: 'NoneType' and 'int' ห่างไกลจาก key ที่หายไปซึ่งเป็นต้นเหตุจริง",
+      "raise KeyError ทันที ตามที่คาดไว้",
+      "return แบบเงียบ ๆ โดยไม่พิมพ์อะไรเลย"
+    ],
+    answer: 1,
+    explain: "bare except: เปลี่ยน key ที่หายไปให้กลายเป็น None แบบเงียบ ๆ และ return type ที่ไม่มี type หรือเป็น Any ทำให้ checker ไม่มีอะไรให้เตือนตรงจุดที่เรียก crash เกิดขึ้นทีหลัง ตรง 'None + 1' เมื่อกรณี key หายที่ถูกปลอมตัวมาถึง arithmetic ที่คาดว่าจะได้ตัวเลข"
+  },
+  {
+    q: "function หนึ่ง annotate ด้วย type ที่แม่นยำครบทุกที่ แต่ทีมไม่เคยรัน mypy หรือ pyright ใน CI เลย type hints เพียงอย่างเดียวรับประกันอะไรได้จริง?",
+    options: [
+      "ไม่รับประกันอะไรเลย -- hints เป็นแค่ documentation จนกว่าจะมีการรัน checker กับมันจริง ๆ",
+      "Python raise TypeError ที่ boundary ของ function ถ้าส่ง type ผิด",
+      "function รันเร็วขึ้นเพราะ interpreter ข้ามการเช็ค type ได้",
+      "pytest validate hints ให้อัตโนมัติตอน collect test"
+    ],
+    answer: 0,
+    explain: "Type hints ไม่มีผลอะไรเลยถ้าไม่มี checker มาอ่านมันจริง ๆ ทั้ง Python, pytest หรือ module typing ไม่บังคับใช้มันตอน runtime -- มีแค่การรัน mypy/pyright จริง (ควรอยู่ใน CI ทุกครั้งที่มีการเปลี่ยนแปลง) เท่านั้นที่ทำให้ hints กลายเป็นการรับประกันจริง"
+  },
+  {
+    q: "```python\ndef cleanup():\n    try:\n        raise ValueError(\"boom\")\n    finally:\n        return \"done\"\n\nprint(cleanup())\n```\nโค้ดนี้พิมพ์อะไร?",
+    options: [
+      "raise ValueError: boom โดยไม่มีใครจับ",
+      "'done' -- return ภายใน finally ทิ้ง ValueError ไปทั้งหมด",
+      "None -- finally override return value เป็น None เสมอ",
+      "พิมพ์ 'done' และ raise ValueError ตามมาทีหลังด้วย"
+    ],
+    answer: 1,
+    explain: "return (หรือ break/continue) ภายใน finally ทิ้ง exception ที่กำลัง propagate อยู่แบบเงียบ ๆ -- function จะ return ตามปกติแทน Python 3.14 (PEP 765) จะพ่น SyntaxWarning สำหรับรูปแบบนี้พอดี แต่ ValueError ก็ยังหายไปอยู่ดี ดูบท Exceptions สำหรับคำอธิบายแบบเต็ม"
   }
 ];
 

@@ -9,6 +9,7 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Two systems, one goal: reliable code
 
@@ -50,16 +51,32 @@ Type hints and exceptions are not mutually exclusive — they serve different ph
 | Static analysis (before running) | Type hints + mypy/pyright |
 | Runtime failures (while running) | Exceptions |
 
-A function signature tells callers what types are expected; exceptions tell callers what can go wrong at runtime.
+A function signature tells callers what types are expected; exceptions tell callers what can go wrong at runtime. Neither one substitutes for the other: a clean `mypy --strict` run does not mean the program cannot crash, and a program with careful `try`/`except` everywhere can still ship with `Any` scattered through every signature, providing no static guarantees at all.
+
+## Decision table: what to raise, what to catch, what to let through
+
+Every lesson in this module answers one piece of this table. Use it as a map while reading, or as a quick
+reference afterward.
+
+| Situation | What to do | Why |
+|---|---|---|
+| Input from outside your program is invalid | `raise ValueError`/`TypeError` (or a custom subclass), never `assert` | `assert` is stripped entirely under `python -O` |
+| You can meaningfully recover from a specific failure | `except SpecificError:`, act, continue | Broad `except` hides bugs that were never the failure you meant to handle |
+| You cannot recover, but must clean up | `try`/`finally`, or a context manager | Cleanup must run whether or not the exception is ultimately handled |
+| A library call fails and you add context | `raise NewError(...) from original` | Preserves the chain (`__cause__`) instead of losing the original error |
+| You must log and continue at a top-level boundary | `except Exception:` (never bare `except:`), `logging.exception(...)` | `Exception` excludes `KeyboardInterrupt`/`SystemExit`; `logging.exception` keeps the traceback |
+| A parameter should reject one clear shape | A precise type hint (`Literal`, `Protocol`, `Sequence`, …), not `Any` | `Any` gives up static checking entirely — see Type Hints |
+| Several unrelated operations can fail independently | `except*` over an `ExceptionGroup` | Plain `except` cannot see inside a group |
+| You deliberately want to ignore one specific failure | `contextlib.suppress(SpecificError)` | States exactly what is ignored, unlike `except: pass` |
 
 ## Module roadmap
 
 | Lesson | What you will learn |
 |--------|---------------------|
-| [Type Hints](./type-hints) | Annotating variables, params, returns; `Optional`, `Union`, aliases |
-| [Exceptions](./exceptions) | `try/except/else/finally`, `raise`, chaining |
-| [Context Managers](./context-managers) | `with`, `__enter__/__exit__`, `contextlib` |
-| [Custom Errors](./custom-errors) | Subclassing `Exception`, attributes, hierarchies |
+| [Type Hints](./type-hints) | Annotating variables, params, returns; `Optional`, `Union`, invariance, `Any`, `Protocol`, `TypedDict`, `TypeGuard`/`TypeIs`, and where mypy and pyright disagree |
+| [Exceptions](./exceptions) | The exception hierarchy, `try/except/else/finally`, `raise` vs `raise e`, EAFP vs LBYL, `except*`, reading a traceback |
+| [Context Managers](./context-managers) | `with`, `__enter__/__exit__`, when `__exit__` swallows an exception, `ExitStack`, `contextlib.suppress` |
+| [Custom Errors](./custom-errors) | Subclassing `Exception`, why `except X as e:` deletes `e`, implicit vs explicit chaining, `add_note()` |
 
 ## Runnable overview demo
 
@@ -103,6 +120,65 @@ else:
 At runtime, Python does not check or enforce type hints. You can pass a string where an `int` was annotated and Python will not complain — it will simply do whatever the code does with that value. Run mypy or pyright as a separate step to catch type errors before they become runtime surprises.
 </Callout>
 
+## Mental Model
+
+Keep two failure modes apart, since the rest of this module treats them very differently. A **type error**
+is something a checker can catch *before* the program ever runs, by reading annotations — it costs nothing
+at runtime and catches nothing a checker was not run against. A **runtime exception** is something Python
+itself detects *while* the program runs, unwinding the call stack until a handler catches it or the program
+exits. Decorative type hints with no checker run in CI, and defensive `try`/`except` blocks with no thought
+given to *which* exception is expected, are the two most common ways both systems end up doing nothing
+useful at all.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Type hints + mypy/pyright in CI | Whole classes of bugs caught before code runs | Someone has to actually run the checker and fix what it finds |
+| Precise `except` clauses | Bugs outside the expected failure still crash loudly | More clauses to write than one broad `except` |
+| Custom exception hierarchy | Callers catch at the specificity they need | More classes to define and maintain |
+| Context managers for cleanup | Cleanup guaranteed regardless of how the block exits | Slightly more ceremony than manual open/close |
+
+## Common Misconceptions
+
+- **"Type hints and exceptions solve the same problem."** Type hints prevent a class of bugs from ever
+  running; exceptions handle failures that only exist because the program is actually running (a missing
+  file, bad user input, a network timeout) — no amount of static typing eliminates those.
+- **"If the code has type hints, mypy must already be passing."** Type hints are just annotations; nothing
+  forces anyone to actually run a checker against them, and `Any` or `# type: ignore` can make a "fully
+  typed" file enforce nothing at all.
+- **"Catching `Exception` is basically the same as catching everything."** It deliberately excludes
+  `KeyboardInterrupt`, `SystemExit`, and `GeneratorExit` — see the Exceptions lesson for why that boundary
+  exists.
+- **"A function with no explicit `raise` cannot fail."** Nearly every operation (indexing, attribute access,
+  arithmetic, a library call) can raise on its own; the absence of a `raise` statement says nothing about
+  the absence of failure modes.
+
+## Reading AI-generated code
+
+This whole module trains one skill: reading a function's signature and body and asking "what does this
+*actually* guarantee, versus what does it merely suggest?" Before trusting generated code in this area:
+
+- Does a parameter or return type use `Any`, effectively opting the whole function out of static checking?
+- Is there a bare `except:` or an `except Exception: pass` with no logging, silently hiding failures?
+- Does the code use `assert` for anything that must be validated in production, where `-O` would remove it?
+- Is a custom exception's `except ... as e:` binding read anywhere after its block has ended?
+- Was the code actually run through `mypy --strict` and `pyright`, or do the type hints just look plausible?
+
+<SpotTheBug code={`from typing import Any
+
+def get_config(data: dict[str, object], key: str) -> Any:
+    try:
+        return data[key]
+    except:
+        return None
+
+value = get_config({"timeout": "30"}, "timeout")
+print(value + 5)
+`} lang="python">
+Two problems compound here. First, `-> Any` means the checker never verifies what `get_config` actually returns — callers get zero protection. Second, the bare `except:` means a missing key silently becomes `None`, indistinguishable from a real error. The config value `"timeout": "30"` is a `str`, not an `int` — `get_config` returns it unchanged, and `value + 5` raises `TypeError: can only concatenate str (not "int") to str` far away from where the real mistake (storing a string instead of a number, or never validating the config) actually happened. The fix touches both lessons: type `get_config` precisely instead of `Any`, and catch `KeyError` specifically instead of everything.
+</SpotTheBug>
+
 export const quizIndex = [
   {
     q: "What does Python do with type hints at runtime?",
@@ -112,12 +188,14 @@ export const quizIndex = [
       "Converts the value to the annotated type automatically",
       "Logs a warning to stderr"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Annotations are stored as metadata (lazily, under PEP 649) and never consulted by the interpreter to validate values. Only a separate tool like mypy or pyright reads them to report errors."
   },
   {
     q: "Which block in a try statement runs regardless of whether an exception was raised?",
     options: ["except", "else", "finally", "raise"],
-    answer: 2
+    answer: 2,
+    explain: "finally always runs, whether the try block succeeded, raised an exception that was caught, or raised one that was not."
   },
   {
     q: "When does the `else` block of a try statement execute?",
@@ -127,12 +205,47 @@ export const quizIndex = [
       "Only when NO exception was raised in the try block",
       "Only when the finally block is absent"
     ],
-    answer: 2
+    answer: 2,
+    explain: "else runs only on the happy path, letting you separate 'the operation succeeded' code from both the try block itself and any except/finally cleanup."
   },
   {
     q: "Which tool checks Python type hints statically?",
     options: ["Python itself at runtime", "mypy or pyright", "pytest", "The `typing` module"],
-    answer: 1
+    answer: 1,
+    explain: "mypy and pyright are separate static analysis tools that read annotations and report inconsistencies without running the program. The typing module only supplies the names used in annotations."
+  },
+  {
+    q: "```python\ndef get_config(data: dict, key: str):\n    try:\n        return data[key]\n    except:\n        return None\n\nprint(get_config({}, \"port\") + 1)\n```\nWhat actually happens when this runs, and why is the -> Any-style signature part of the problem?",
+    options: [
+      "Prints 1 -- None + 1 defaults to 1",
+      "Raises TypeError: unsupported operand type(s) for +: 'NoneType' and 'int', far from the missing key that actually caused it",
+      "Raises KeyError immediately, as expected",
+      "Silently returns without printing anything"
+    ],
+    answer: 1,
+    explain: "The bare except: turns a missing key into a silent None, and an untyped/Any-typed return gives the checker nothing to warn about at the call site. The crash happens later, at 'None + 1', once the disguised missing-key case reaches arithmetic that assumed a number."
+  },
+  {
+    q: "A function is fully annotated with precise types, but the team never runs mypy or pyright in CI. What is actually guaranteed by the type hints alone?",
+    options: [
+      "Nothing enforced -- the hints are documentation until a checker is actually run against them",
+      "Python raises TypeError at the function boundary if the wrong type is passed",
+      "The function runs faster because the interpreter can skip type checks",
+      "pytest automatically validates the hints during test collection"
+    ],
+    answer: 0,
+    explain: "Type hints are inert without a checker actually reading them. Neither Python nor pytest nor the typing module enforces them at runtime -- only running mypy/pyright (ideally in CI, on every change) turns hints into an actual guarantee."
+  },
+  {
+    q: "```python\ndef cleanup():\n    try:\n        raise ValueError(\"boom\")\n    finally:\n        return \"done\"\n\nprint(cleanup())\n```\nWhat does this print?",
+    options: [
+      "Raises ValueError: boom, uncaught",
+      "'done' -- the return inside finally discards the ValueError entirely",
+      "None -- finally always overrides the return value with None",
+      "Both 'done' is printed and ValueError is raised afterward"
+    ],
+    answer: 1,
+    explain: "A return (or break/continue) inside finally silently discards whatever exception was propagating -- the function returns normally instead. Python 3.14 (PEP 765) emits a SyntaxWarning for this exact shape, but the ValueError is still gone either way. See the Exceptions lesson for the full explanation."
   }
 ];
 

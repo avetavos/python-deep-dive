@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Exception คืออะไร
 
@@ -16,6 +18,53 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 เมื่อ Python raise exception จะ unwind call stack จนกว่าจะเจอ `except` clause ที่ตรงกัน หรือหยุดโปรแกรม
 
 Exception คือ object — instance ของ class ที่สืบทอดจาก `BaseException` Exception ที่ใช้งานในโค้ดทั่วไปมักสืบทอดจาก `Exception`
+
+## Hierarchy ของ exception
+
+Exception ทุกตัวคือ class และ exception class ทุกตัวสืบทอด — ทางตรงหรือทางอ้อม — จาก `BaseException`
+`Exception` คือแขนงหนึ่งของ tree นั้น ส่วนสัญญาณควบคุม process อีกไม่กี่ตัวอยู่คนละแขนงที่ `Exception` ไม่ครอบคลุม:
+
+<Mermaid code={`flowchart TD
+  BE["BaseException"] --> KI["KeyboardInterrupt"]
+  BE --> SE["SystemExit"]
+  BE --> GE["GeneratorExit"]
+  BE --> EXC["Exception"]
+  EXC --> VE["ValueError"]
+  EXC --> TE["TypeError"]
+  EXC --> LE["LookupError"]
+  LE --> KE["KeyError"]
+  LE --> IE["IndexError"]
+  EXC --> OSE["OSError"]
+  EXC --> RTE["RuntimeError"]
+  EXC --> EG["ExceptionGroup"]`} title="ส่วนหนึ่งของ built-in exception hierarchy" />
+
+นี่คือเหตุผลที่ `except Exception`, bare `except:` และ `except BaseException` เป็นสามสิ่งที่ต่างกัน:
+
+- **`except SpecificError:`** — จับเฉพาะ class นั้นและ subclass ของมัน ควรใช้แบบนี้เสมอ
+- **`except Exception:`** — จับทุกอย่างที่เป็น application-level error แต่ *ไม่* จับ `KeyboardInterrupt`,
+  `SystemExit` หรือ `GeneratorExit` — สิ่งเหล่านั้นเป็นสัญญาณควบคุม process ไม่ใช่ bug
+- **bare `except:`** — เหมือนกับ `except BaseException:` เป๊ะ มันจับทุกอย่างจริง ๆ รวมถึง Ctrl+C และ `sys.exit()`
+  ที่สะอาด นี่แทบไม่ใช่สิ่งที่ต้องการเลย: มันทำให้โปรแกรมขัดจังหวะไม่ได้ และกลืนสัญญาณ shutdown ที่ตั้งใจให้ propagate
+  ไปแบบเงียบ ๆ
+
+## `except: pass` — กลืน bug แบบเงียบ ๆ
+
+การรวม `except` แบบกว้าง ๆ กับ body ที่ว่างเปล่าคือวิธีที่พบบ่อยที่สุดที่โค้ดที่ AI สร้างซ่อน bug จริงไว้หลังค่า
+fallback ที่ดูสมเหตุสมผล:
+
+```python
+def risky_lookup(data: dict, key: str) -> int:
+    try:
+        return data[key]
+    except:          # catches EVERYTHING, not just KeyError
+        pass
+    return -1
+```
+
+key ที่ไม่มีอยู่จะคืน `-1` — ซึ่งน่าจะเป็นสิ่งที่ตั้งใจไว้ แต่การเรียก `risky_lookup(None, "x")` ก็เช่นกัน
+ซึ่งจะ raise `TypeError: 'NoneType' object is not subscriptable` — เป็น programming error จริง ไม่ใช่ key ที่หาย —
+และถูกกลืนไปแบบเดียวกันเป๊ะ คืนค่า `-1` ราวกับไม่มีอะไรเกิดขึ้น ทางแก้คือระบุ exception ที่คาดไว้ให้เจาะจงเสมอ
+(`except KeyError:`) เพื่อให้ exception *อื่น* ยังคงโผล่ออกมา
 
 ## โครงสร้าง try statement ครบรูปแบบ
 
@@ -64,25 +113,49 @@ except TypeError:
     print("Expected a string, not None")
 ```
 
-จับหลายประเภทในบรรทัดเดียวด้วย tuple:
+จับหลายประเภทใน clause เดียวด้วย tuple:
 
 ```python
 except (ValueError, TypeError) as e:
     print(f"Input error: {e}")
 ```
 
-ตั้งแต่ Python 3.14 (PEP 758) วงเล็บกลายเป็นตัวเลือก ถ้า clause นั้นไม่มี `as`:
+ตั้งแต่ Python 3.14 (PEP 758) วงเล็บเป็นตัวเลือกได้เมื่อ clause ไม่มี `as`:
 
 ```python
 except ValueError, TypeError:
     print("Input error")
 ```
 
-ถ้ามี `as` ยังต้องใส่วงเล็บอยู่ — `except (ValueError, TypeError) as e:` — เพราะไม่อย่างนั้น parser จะแยกไม่ออกระหว่าง tuple กับตัวแปรที่ผูกค่า
+ถ้ามี `as` ยังต้องใส่วงเล็บอยู่ — `except (ValueError, TypeError) as e:` — เพราะไม่งั้น parser จะแยกไม่ออกว่าเป็น tuple หรือ binding
 
-## การ raise exception
+## EAFP กับ LBYL และ race แบบ TOCTOU
 
-ใช้ `raise` เพื่อส่งสัญญาณ error อย่างชัดเจน:
+วัฒนธรรม Python ชอบ **EAFP** ("easier to ask forgiveness than permission" — ลองทำแล้วจับ failure) มากกว่า
+**LBYL** ("look before you leap" — เช็ค precondition ก่อนแล้วค่อยทำ):
+
+```python
+def lbyl(d: dict[str, int], key: str) -> int:
+    if key in d:            # check
+        return d[key]        # use -- something could remove `key` between these two lines
+    return 0
+
+def eafp(d: dict[str, int], key: str) -> int:
+    try:
+        return d[key]        # single operation -- no gap for anything else to run in between
+    except KeyError:
+        return 0
+```
+
+ทั้งสองแบบให้คำตอบเหมือนกันสำหรับ dict ธรรมดาแบบ single-threaded ความต่างจะสำคัญขึ้นทันทีที่ thread อื่น, signal
+handler หรือจุด `await` สามารถทำงานคั่นระหว่างการ check กับการ use ได้ — LBYL มีช่องโหว่แบบ **TOCTOU**
+("time-of-check to time-of-use") ที่เงื่อนไขที่เช็คไว้อาจกลายเป็นเท็จก่อนที่จะลงมือทำ ตัวอย่างจริงแบบคลาสสิก:
+`if os.path.exists(path): os.remove(path)` ยังสามารถ raise `FileNotFoundError` ได้ถ้า process อื่นลบไฟล์นั้นไปก่อน
+EAFP ที่เป็น operation เดียวไม่มีช่องโหว่แบบนี้
+
+## Raising exceptions
+
+Use `raise` to signal an error explicitly:
 
 ```python
 def divide(a: float, b: float) -> float:
@@ -91,17 +164,37 @@ def divide(a: float, b: float) -> float:
     return a / b
 ```
 
-Re-raise exception ปัจจุบันภายใน `except` block ด้วย `raise` เปล่า:
+### `raise` กับ `raise e` — เฟรมที่เพิ่มมา
+
+การ re-raise exception *เดียวกัน* ใน `except` block ดูเหมือนใช้แทนกันได้ระหว่าง bare `raise` กับ `raise e`
+แต่ไม่ใช่:
 
 ```python
-except ValueError:
-    log_error()
-    raise   # re-raises the same exception unchanged
+def a():
+    b()
+
+def b():
+    raise ValueError("deep failure")
+
+def reraise_bare():
+    try:
+        a()
+    except ValueError:
+        raise          # preserves the original traceback -- adds no frame
+
+def reraise_e(err: ValueError):
+    raise err          # adds a frame pointing at THIS line
 ```
+
+การเรียก `reraise_bare()` ให้ traceback ที่จบที่ `b()` เหมือนเดิม การเรียก `a()`, จับ, แล้วเรียก
+`reraise_e(caught)` เพิ่ม frame เข้าไปอีกหนึ่งใน traceback — บรรทัดข้างใน `reraise_e` — ถึงแม้จะเป็น exception
+object "ตัวเดียวกัน" ก็ตาม ยืนยันได้โดยนับจำนวน frame ของ `traceback.extract_tb` ใน demo ที่รันได้ด้านล่าง:
+bare `raise` คงจำนวน frame เดิม; `raise e` เพิ่มมาหนึ่ง ควรใช้ bare `raise` เมื่อ re-raise แบบไม่เปลี่ยนแปลง —
+มันคง traceback ให้ชี้ไปที่จุดกำเนิดจริง
 
 ## Exception chaining ด้วย `raise ... from`
 
-เมื่อจับ exception หนึ่งแล้ว raise อีกอัน ให้ใช้ `raise NewError(...) from original` เพื่อเก็บ exception เดิมไว้เป็นสาเหตุ ทำให้ traceback ครบถ้วน
+เมื่อจับ exception หนึ่งแล้ว raise อีกตัว ใช้ `raise NewError(...) from original` เพื่อเก็บตัวเดิมไว้เป็น cause การทำแบบนี้เก็บ traceback เต็มไว้ใน error chain
 
 ```python
 try:
@@ -110,9 +203,155 @@ except ValueError as original:
     raise RuntimeError("Failed to parse config") from original
 ```
 
-Attribute `__cause__` บน exception ใหม่เก็บ exception เดิมไว้ Python แสดง traceback ทั้งสองอันอัตโนมัติ
+attribute `__cause__` บน exception ใหม่เก็บตัวเดิมไว้ Python แสดง traceback ทั้งสองให้อัตโนมัติ
 
-หากต้องการตัด chain (ซ่อน traceback เดิม) ใช้ `raise ... from None`
+ถ้าต้องการทิ้ง cause อย่างชัดเจน (suppress chained traceback) ใช้ `raise ... from None` ถ้าไม่มีทั้ง
+`from original` และ `from None` การ raise exception ใหม่ใน `except` block ยังคงบันทึกตัวเดิมไว้ใน `__context__`
+(implicit chaining ซึ่งอยู่ในบท Custom Errors) — `from None` เป็นวิธีเดียวที่ suppress สิ่งนั้นได้ทั้งหมด
+
+## `assert` ไม่ใช่ validation — ถูกตัดทิ้งด้วย `-O`
+
+`assert` มีไว้สำหรับเช็คตัวเองภายในและ test ไม่ใช่สำหรับ validate ข้อมูลที่โปรแกรมของคุณไม่ได้ควบคุม การรัน Python
+ด้วย `-O` (optimized mode) จะเอา statement `assert` ทุกตัวออกจาก bytecode ที่ compile แล้วทั้งหมด — เงื่อนไขไม่ถูก
+evaluate เลยแม้แต่ครั้งเดียว:
+
+```python
+def validate(value: int) -> int:
+    assert value > 0, "value must be positive"
+    return value
+
+print(validate(-1))
+```
+
+```
+$ python3.14 validate.py
+Traceback (most recent call last):
+  ...
+AssertionError: value must be positive
+
+$ python3.14 -O validate.py
+-1
+```
+
+source เดียวกันเป๊ะให้ crash หรือรับเลขติดลบไปแบบเงียบ ๆ ขึ้นอยู่กับ flag ที่เลือกจากภายนอกไฟล์ทั้งหมด ใช้
+`if`/`raise` (มักเป็น `ValueError`) สำหรับอะไรก็ตามที่ต้องถูกเช็คเสมอ และเก็บ `assert` ไว้สำหรับเงื่อนไขที่บ่งบอกว่า
+มี bug ใน *โค้ดของคุณเอง* ไม่ใช่ external input ที่ไม่ดี
+
+## `except*` และ exception groups (Python 3.11+)
+
+บาง operation — concurrent task, batch validation — สามารถล้มเหลวด้วย exception ที่ไม่เกี่ยวข้องกันมากกว่าหนึ่งตัว
+พร้อมกัน `ExceptionGroup` รวม exception หลายตัวเป็น object เดียว `except*` แกะ group ออกโดยจับ exception แต่ละตัว
+ในนั้นเทียบกับ type ที่ระบุ อาจรัน handler มากกว่าหนึ่งตัวสำหรับการ raise ครั้งเดียว:
+
+```python
+def run_tasks() -> None:
+    errors: list[Exception] = [ValueError("bad input"), TypeError("bad type")]
+    raise ExceptionGroup("task failures", errors)
+
+try:
+    run_tasks()
+except* ValueError as eg:
+    print(f"ValueError group: {[str(e) for e in eg.exceptions]}")
+except* TypeError as eg:
+    print(f"TypeError group: {[str(e) for e in eg.exceptions]}")
+```
+
+ทั้ง `except* ValueError` และ `except* TypeError` ทำงานที่นี่ แต่ละตัวได้รับ sub-group ของตัวเอง `except
+ValueError` ธรรมดาจับ `ExceptionGroup` ไม่ได้เลย — มันไม่ match เว้นแต่จะระบุ `ExceptionGroup` เอง (หรือ
+superclass ของมัน) PEP 758 (3.14) คือการเปลี่ยน syntax ที่ทำให้ `except` และ `except*` clause ตัดวงเล็บรอบ type
+หลายตัวออกได้อย่างที่แสดงไว้ก่อนหน้าในบทนี้ มันไม่ได้เปลี่ยนวิธีที่ exception group เองทำงาน
+
+## `contextlib.suppress` — ทางเลือกที่เจาะจงกว่า `try`/`except`/`pass`
+
+สำหรับกรณีเฉพาะเจาะจงและถูกต้องของ "จงใจเมิน exception type นี้" `contextlib.suppress` ชัดเจนกว่า
+`try`/`except`/`pass` block เพราะมันระบุชัดว่ากำลัง suppress อะไรอยู่ ในบรรทัดเดียว:
+
+```python
+import contextlib
+
+with contextlib.suppress(FileNotFoundError):
+    open("does-not-exist.txt")
+# execution continues here either way
+```
+
+ต่างจาก bare `except: pass`, `suppress` รับรายการ exception type ที่ชัดเจน — มันไม่มีทางกลืน
+`KeyboardInterrupt` หรือ `TypeError` ที่เกิดจาก typo แบบที่ `except:` ที่ไม่ระบุ type ทำได้โดยไม่ตั้งใจ
+
+## `logging.exception` กับ `print(e)`
+
+`print(e)` (หรือ `print(f"{e}")`) แสดงแค่ message ของ exception — traceback, chain ของ cause และบรรทัดที่แน่นอน
+หายไปหมด `logging.exception(...)` ที่เรียกจากภายใน `except` block บันทึก traceback เต็มให้อัตโนมัติ:
+
+```python
+import logging
+
+try:
+    1 / 0
+except ZeroDivisionError as e:
+    print(f"print(e) shows only: {e}")            # "division by zero" -- no location, no traceback
+    logging.exception("division failed")           # full traceback, at ERROR level, plus your message
+```
+
+`logging.exception` เป็นตัวย่อของ `logging.error(..., exc_info=True)` — ต้องถูกเรียกระหว่างที่กำลัง handle
+exception นั้นอยู่ (ภายใน `except` block) เพื่อให้ `exc_info=True` มีอะไรให้แนบ
+
+## `sys.exit` และ `SystemExit`
+
+`sys.exit(code)` ไม่ได้บังคับหยุด process ทันที — มันจะ raise `SystemExit` ซึ่ง propagate เหมือน exception
+ทั่วไป (รัน `finally` block ระหว่างทางด้วย) เว้นแต่มีอะไรจับมันไว้:
+
+```python
+import sys
+
+def cli_entry(code: int) -> None:
+    sys.exit(code)
+
+try:
+    cli_entry(2)
+except SystemExit as e:
+    print(f"SystemExit caught, code={e.code}")
+```
+
+เพราะ `SystemExit` สืบทอดจาก `BaseException` ไม่ใช่ `Exception` ทำให้ `except Exception:` ไม่เคย intercept
+การเรียก `sys.exit()` ที่สะอาดได้เลย — มีแค่ bare `except:` หรือ `except SystemExit:`/`except BaseException:`
+ที่ชัดเจนเท่านั้นที่ทำได้ นี่เป็นความตั้งใจ: handler ระดับ `except Exception` ของ application ไม่ควรสามารถ
+ขวางไม่ให้โปรแกรม exit ได้
+
+## อ่าน traceback จากล่างขึ้นบน
+
+Traceback ของ Python แสดง frame จากบนลงล่างตามลำดับที่ *เข้า* มา แต่ลำดับที่อ่านแล้วมีประโยชน์คือจากล่างขึ้นบน:
+บรรทัดสุดท้ายบอกชื่อและ message ของ exception, frame เหนือขึ้นไปคือจุดที่ exception นั้น raise จริง ๆ, และแต่ละ
+frame ที่สูงขึ้นไปคือหนึ่งระดับที่ไกลออกไปใน call chain ที่นำไปสู่จุดนั้น
+
+```python
+def outer():
+    middle()
+
+def middle():
+    inner()
+
+def inner():
+    raise ValueError("innermost failure")
+
+outer()
+```
+
+```
+Traceback (most recent call last):
+  File "demo.py", line 9, in <module>
+    outer()
+  File "demo.py", line 2, in outer
+    middle()
+  File "demo.py", line 5, in middle
+    inner()
+  File "demo.py", line 8, in inner
+    raise ValueError("innermost failure")
+ValueError: innermost failure
+```
+
+เริ่มที่ `ValueError: innermost failure` (สิ่งที่พัง) แล้วดู frame ที่อยู่เหนือขึ้นไปทันที (`inner` จุดที่มันพัง)
+แล้วค่อยไล่ขึ้นผ่าน `middle` กับ `outer` เฉพาะเมื่อต้องรู้ว่า *execution มาถึงจุดนั้นได้อย่างไร* การอ่านจากบนลงล่าง
+จะล่อให้เริ่ม debug ที่ `outer` ทั้งที่มันไม่ได้พังจริง ๆ
 
 ## Demo แบบ runnable เต็มรูปแบบ
 
@@ -162,56 +401,331 @@ except RuntimeError as e:
 
 <Playground code={exceptionsCode} />
 
-<Callout title="จับ exception เฉพาะประเภทเสมอ">
-`except:` เปล่า (ไม่ระบุประเภท) จับทุกอย่าง — รวมถึง `KeyboardInterrupt` (Ctrl+C) และ `SystemExit` ทำให้โปรแกรมหยุดไม่ได้และซ่อน bug ไว้
-จับ `Exception` เฉพาะที่ด้านบนสุดของ call stack (เช่น global error handler) เท่านั้น และต้อง log exception ก่อนเสมอถ้าจะกลืน exception นั้น
+<Callout title="จับ exception เฉพาะเจาะจงเสมอ">
+`except:` เปล่า (ไม่ระบุ type) จับทุกอย่าง — รวมถึง `KeyboardInterrupt` (Ctrl+C) และ `SystemExit` ทำให้โปรแกรมขัดจังหวะไม่ได้และซ่อน bug ไว้
+จับ `Exception` เฉพาะที่ระดับบนสุดของ call stack เท่านั้น (เช่น global error handler) และ log exception เสมอก่อนกลืนมัน
+</Callout>
+
+## Depth demo: ทุกอย่างข้างบน รันจริง
+
+export const exceptionsDepthCode = `
+import contextlib
+import logging
+import sys
+import traceback
+
+# --- hierarchy: except Exception vs bare except vs BaseException ---
+print("=== hierarchy ===")
+for kind in (ValueError("bad value"), KeyboardInterrupt(), SystemExit(1)):
+    try:
+        raise kind
+    except Exception as e:
+        print(f"  except Exception caught: {type(e).__name__}")
+    except BaseException as e:
+        print(f"  except Exception missed it; only BaseException caught: {type(e).__name__}")
+
+# --- except: pass swallows real bugs silently ---
+print("=== except: pass ===")
+def risky_lookup(data: dict, key: str) -> int:
+    try:
+        return data[key]
+    except:  # deliberately bad: swallows EVERYTHING, including a bad argument type below
+        pass
+    return -1
+
+print(f"  risky_lookup({{}}, 'x') = {risky_lookup({}, 'x')}")  # KeyError silently becomes -1
+result = risky_lookup(None, "x")  # TypeError: 'NoneType' is not subscriptable -- ALSO silently swallowed
+print(f"  risky_lookup(None, 'x') = {result}  <- a real bug (wrong argument type) hidden as -1")
+
+# --- raise vs raise e vs raise ... from ---
+print("=== raise vs raise e ===")
+def a():
+    b()
+
+def b():
+    raise ValueError("deep failure")
+
+def reraise_bare():
+    try:
+        a()
+    except ValueError:
+        raise  # preserves the original traceback -- no new frame for this line
+
+def reraise_e(err: ValueError):
+    raise err  # adds THIS line as a new traceback frame
+
+try:
+    reraise_bare()
+except ValueError:
+    frames_bare = len(traceback.extract_tb(sys.exc_info()[2]))
+    print(f"  bare raise traceback frames: {frames_bare}")
+
+try:
+    try:
+        a()
+    except ValueError as caught:
+        reraise_e(caught)
+except ValueError:
+    frames_e = len(traceback.extract_tb(sys.exc_info()[2]))
+    print(f"  raise e traceback frames: {frames_e}")
+
+# --- from / from None ---
+try:
+    try:
+        int("not-a-number")
+    except ValueError as original:
+        raise RuntimeError("config parse failed") from original
+except RuntimeError as e:
+    print(f"  __cause__ set by 'from': {e.__cause__!r}")
+
+try:
+    try:
+        int("not-a-number")
+    except ValueError:
+        raise RuntimeError("config parse failed") from None
+except RuntimeError as e:
+    print(f"  __cause__ suppressed by 'from None': {e.__cause__!r}")
+
+# --- finally overriding return ---
+print("=== finally overriding return ===")
+def leaky() -> str:
+    try:
+        raise ValueError("lost forever")
+    finally:
+        return "swallowed"  # SyntaxWarning in 3.14 (PEP 765) -- the ValueError never escapes
+
+print(f"  leaky() = {leaky()!r}  <- no exception visible at all")
+
+# --- EAFP vs LBYL ---
+print("=== EAFP vs LBYL ===")
+config: dict[str, int] = {"retries": 3}
+
+def lbyl(d: dict[str, int], key: str) -> int:
+    if key in d:
+        return d[key]
+    return 0
+
+def eafp(d: dict[str, int], key: str) -> int:
+    try:
+        return d[key]
+    except KeyError:
+        return 0
+
+print(f"  lbyl(config, 'retries') = {lbyl(config, 'retries')}")
+print(f"  eafp(config, 'retries') = {eafp(config, 'retries')}")
+
+# --- except* and exception groups (3.11+) ---
+print("=== except* / exception groups ===")
+def run_tasks() -> None:
+    errors: list[Exception] = [ValueError("bad input"), TypeError("bad type")]
+    raise ExceptionGroup("task failures", errors)
+
+try:
+    run_tasks()
+except* ValueError as eg:
+    print(f"  except* ValueError caught {len(eg.exceptions)}: {[str(e) for e in eg.exceptions]}")
+except* TypeError as eg:
+    print(f"  except* TypeError caught {len(eg.exceptions)}: {[str(e) for e in eg.exceptions]}")
+
+# --- contextlib.suppress ---
+print("=== contextlib.suppress ===")
+with contextlib.suppress(FileNotFoundError):
+    open("does-not-exist.txt")
+print("  suppress(FileNotFoundError) let execution continue past the failed open()")
+
+# --- logging.exception vs print(e) ---
+print("=== logging.exception vs print(e) ===")
+logging.basicConfig(stream=sys.stdout, level=logging.INFO, format="  LOG: %(message)s")
+try:
+    1 / 0
+except ZeroDivisionError as e:
+    print(f"  print(e) shows only: {e}")
+    logging.exception("division failed")  # includes the full traceback, not just the message
+
+# --- sys.exit / SystemExit ---
+print("=== sys.exit / SystemExit ===")
+def cli_entry(code: int) -> None:
+    sys.exit(code)
+
+try:
+    cli_entry(2)
+except SystemExit as e:
+    print(f"  SystemExit caught, code={e.code} -- inherits BaseException, not Exception")
+
+# --- assert is stripped by -O ---
+print("=== assert and -O ===")
+def validate(value: int) -> int:
+    assert value > 0, "value must be positive"   # removed entirely when Python runs with -O
+    return value
+
+print(f"  validate(5) = {validate(5)}")
+try:
+    validate(-1)
+except AssertionError as e:
+    print(f"  validate(-1) raised AssertionError: {e}  <- gone under -O, never validated")
+
+# --- reading a traceback bottom-up ---
+print("=== reading a traceback bottom-up ===")
+def outer():
+    middle()
+
+def middle():
+    inner()
+
+def inner():
+    raise ValueError("innermost failure")
+
+try:
+    outer()
+except ValueError:
+    tb_text = traceback.format_exc()
+    print("  " + tb_text.strip().splitlines()[-1])
+    print("  ^ read bottom-up: this line names the error; frames above show the call chain that led here")
+`.trim();
+
+<Playground code={exceptionsDepthCode} />
+
+<Callout title="assert ถูกตัดด้วย -O -- ต้องรันในเครื่องเพื่อดู">
+Playground ในหน้านี้รันโดยไม่มี flag เสมอ ดังนั้นพฤติกรรม `-O` ด้านบนจึงแสดงในเบราว์เซอร์ไม่ได้ บันทึกตัวอย่าง `validate` ลงไฟล์แล้วรัน `python3.14 validate.py` (raise) เทียบกับ `python3.14 -O validate.py` (คืน `-1` แบบเงียบ ๆ) ในเครื่องด้วยตัวเองเพื่อดูความต่าง
+</Callout>
+
+## Mental Model
+
+การเดินทางของ exception คือเส้นตรงเส้นเดียวขึ้นไปตาม call stack: `raise` สร้างมันขึ้นที่ frame ในสุด จากนั้น
+Python จะ unwind ทีละ frame เช็คแต่ละ `try` ที่ครอบอยู่หา `except` ที่ตรงกัน จนกว่าจะเจอหรือ stack หมด (ไม่มีใครจับ
+→ interpreter พิมพ์ traceback แล้ว exit) `finally` block ตลอดทางจะรันเสมอระหว่าง unwind นี้ ไม่ว่าจะเป็นตัวที่จับ
+อะไรได้หรือไม่ก็ตาม การอ่าน traceback ก็คือการอ่าน log ของการ unwind นี้เอง — ซึ่งเป็นเหตุผลว่าทำไมบรรทัดล่างสุด
+(จุดที่มันเริ่ม) ถึงมีประโยชน์กว่าบรรทัดบนสุด (โปรแกรมมาถึงจุดนั้นได้อย่างไร) ในฐานะสิ่งแรกที่ควรอ่าน
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| `except` clause แบบเจาะจง | จัดการเฉพาะ failure ที่ตั้งใจไว้ bug อื่นยัง crash ให้เห็นชัด | ต้องเขียนหลาย clause กว่า except กว้าง ๆ ตัวเดียว |
+| `except Exception` | handler เดียวสำหรับ "application error ใดก็ตาม" | ยังพลาดสัญญาณควบคุม process โดยตั้งใจ อาจซ่อน bug ที่ควรแก้ |
+| EAFP (`try`/`except`) | ไม่มีช่องโหว่ TOCTOU มักเร็วกว่าบน path ปกติ | exception handling มี overhead บน path ที่ล้มเหลว |
+| `except*` / exception groups | การ raise ครั้งเดียวพก failure ที่ไม่เกี่ยวข้องกันหลายตัวได้ | syntax และ mental model ใหม่ except ธรรมดาจับ group ไม่ได้ |
+| `assert` สำหรับ validation | ไม่ต้องเขียนโค้ดเพิ่มเลย | หายไปหมดภายใต้ `-O` — ไม่ validate อะไรเลยใน production ถ้าใช้ flag นั้น |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"`except Exception` จับทุกอย่าง"** — มันตั้งใจไม่จับ `KeyboardInterrupt`, `SystemExit` หรือ `GeneratorExit` —
+  สิ่งเหล่านั้นสืบทอดจาก `BaseException` โดยตรง มีแค่ bare `except:` หรือ `except BaseException:` เท่านั้นที่จับ
+  พวกนั้นด้วย
+- **"`raise` กับ `raise e` ใน `except` block คือสิ่งเดียวกัน"** — `raise e` เพิ่ม traceback frame ใหม่ที่บรรทัด
+  `raise e` เอง ส่วน bare `raise` re-raise exception เดิมโดยคง traceback เดิมไว้ไม่แตะต้อง
+- **"`assert` คือวิธีเบา ๆ ในการ validate user input"** — มันหายไปทั้งหมดภายใต้ `python -O` — อย่าใช้กับอะไรก็ตาม
+  ที่ต้องถูกเช็คเสมอ
+- **"`sys.exit()` ฆ่า process ทันที"** — มัน raise `SystemExit` ซึ่งเป็น exception ธรรมดา (แม้จะแปลกไปสักหน่อย)
+  ที่รัน `finally` block และถูกจับได้ เหมือน exception อื่น ๆ
+- **"ควรอ่าน traceback จากบนลงล่าง เหมือนอ่านโค้ด"** — บรรทัดล่างสุดคือ error จริง อ่านขึ้นไปจากตรงนั้นเพื่อไล่ว่า
+  execution มาถึงจุดนั้นได้อย่างไร
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อ exception handling ที่ AI generate ให้ตรวจสิ่งเหล่านี้:
+
+- มี bare `except:` (หรือ `except BaseException:`) ที่ไม่ re-raise เลยหรือเปล่า? มันจะกลืน `KeyboardInterrupt`
+  กับ `SystemExit` ไปด้วย รวมถึง typo ใด ๆ ที่ raise exception ที่ไม่เกี่ยวข้อง
+- มี `except: pass` (หรือ `except Exception: pass`) ใช้ "จัดการ" error โดยไม่ log อะไรเลยหรือเปล่า? นั่นคือ bug
+  ที่หายไปแบบเงียบ ๆ ไม่ใช่การจัดการ error
+- โค้ดใช้ `assert` validate external input (user input, API response, file content) แทนที่จะเป็น internal
+  invariant หรือเปล่า? มันหายไปภายใต้ `-O`
+- มี `raise e` ปรากฏใน `except ... as e:` block ที่ตั้งใจใช้ bare `raise` หรือเปล่า? เช็คว่า frame ที่เพิ่มมามีผล
+  จริง ๆ ที่นี่หรือไม่ — ปกติแล้วไม่มีผล และ bare `raise` สะอาดกว่า
+- โค้ด `print(e)` แทนที่จะเป็น `logging.exception(...)` ภายใน `except` block ในอะไรก็ตามที่มากกว่า script
+  เร็ว ๆ หรือเปล่า? traceback หายไปทันทีที่ต้องใช้มัน debug
+
+<SpotTheBug code={`def process_order(quantity: int) -> int:
+    assert quantity > 0, "quantity must be positive"
+    return quantity * 10
+
+print(process_order(-5))
+`} lang="python">
+โค้ดนี้ดูเหมือน input validation และเมื่อรันปกติมันก็ raise `AssertionError: quantity must be positive` จริง — จึงเชื่อถือได้ง่าย แต่ `assert` ไม่ใช่ validation: รันไฟล์เดียวกันเป๊ะด้วย `python3.14 -O process_order.py` แล้ว assertion จะถูกตัดออกจาก bytecode ทั้งหมด `process_order(-5)` จะคืน `-50` แบบเงียบ ๆ และปริมาณ order ที่ติดลบจะไหลเข้าสู่ส่วนที่เหลือของโปรแกรมตรง ๆ ทางแก้คือ `if quantity <= 0: raise ValueError("quantity must be positive")` ซึ่งไม่มี interpreter flag ไหนเอาออกได้
+</SpotTheBug>
+
+<Callout title="จับสิ่งที่คาดไว้ ปล่อยที่เหลือให้ propagate">
+ระบุ exception เฉพาะเจาะจงที่จัดการได้จริง `except Exception` เป็นทางเลือกสุดท้ายสำหรับ handler ระดับบนสุดที่ต้อง log แล้วไปต่อ bare `except:` แทบไม่เคยถูกต้อง ใช้ `raise` (ไม่ใช่ `raise e`) เพื่อ re-raise แบบไม่เปลี่ยนแปลง ใช้ `from`/`from None` เพื่อควบคุม chain และใช้ `logging.exception` — ไม่ใช่ `print(e)` — ทุกที่ที่ต้องใช้ traceback ทีหลัง
 </Callout>
 
 export const quizExceptions = [
   {
-    q: "clause `except` แบบไหนที่ใช้ได้ใน Python 3.14 โดยไม่ต้องมีวงเล็บ?",
+    q: "`except` clause แบบไหนใน Python 3.14 ที่ถูกต้องโดยไม่ต้องมีวงเล็บ?",
     options: [
       "`except ValueError, TypeError as e:`",
       "`except ValueError, TypeError:`",
       "`except ValueError | TypeError as e:`",
-      "ต้องใส่วงเล็บเสมอ"
+      "ต้องมีวงเล็บเสมอ"
     ],
-    answer: 1
+    answer: 1,
+    explain: "PEP 758 (3.14) ให้ตัดวงเล็บรอบ exception type หลายตัวได้เฉพาะเมื่อไม่มี clause `as` เท่านั้น ถ้ามี `as` ยังต้องใส่วงเล็บอยู่เพื่อให้ parser แยก tuple กับ binding ออกจากกันได้"
   },
   {
-    q: "Block `else` ใน try statement ทำงานเมื่อใด?",
+    q: "Block `else` ใน try statement ทำงานเมื่อไหร่?",
     options: [
-      "ทุกครั้ง หลัง try block จบ",
-      "เฉพาะเมื่อมี exception ถูก catch",
+      "เสมอ หลังจาก try block จบ",
+      "เฉพาะเมื่อมี exception ถูกจับ",
       "เฉพาะเมื่อไม่มี exception เกิดขึ้นใน try block",
-      "เฉพาะเมื่อมี finally block อยู่"
+      "เฉพาะเมื่อมี finally block อยู่ด้วย"
     ],
-    answer: 2
+    answer: 2,
+    explain: "else ทำงานเฉพาะ happy path เท่านั้น — เมื่อ try block จบโดยไม่มี exception มันต่างจากโค้ดที่วางไว้หลัง try statement ทั้งหมด ซึ่งทำงานหลังจาก exception ถูกจับและจัดการแล้วด้วยเช่นกัน"
   },
   {
     q: "`raise RuntimeError('msg') from original` ทำอะไร?",
     options: [
-      "Raise RuntimeError และลบ exception เดิม",
-      "Raise RuntimeError และเก็บ exception เดิมไว้ใน __cause__",
-      "Re-raise exception เดิมพร้อมข้อความใหม่",
-      "Raise exception ทั้งสองอันพร้อมกัน"
+      "raise RuntimeError แล้วทิ้ง exception เดิม",
+      "raise RuntimeError แล้วเก็บ exception เดิมไว้เป็น __cause__ ของมัน",
+      "re-raise exception เดิมด้วย message ใหม่",
+      "raise exception ทั้งสองตัวพร้อมกัน"
     ],
-    answer: 1
+    answer: 1,
+    explain: "attribute __cause__ ของ exception ใหม่ถูกตั้งเป็น original และ Python พิมพ์ traceback ทั้งสองแบบ chain ต่อกัน ใช้ from None แทนถ้าต้องการทิ้ง cause ไปทั้งหมด"
   },
   {
-    q: "Clause ใดใน try statement ทำงานเสมอ แม้จะเกิด exception?",
-    options: ["except", "else", "finally", "raise"],
-    answer: 2
-  },
-  {
-    q: "ปัญหาของ `except:` เปล่า (ไม่ระบุประเภท exception) คืออะไร?",
+    q: "```python\ndef a():\n    b()\ndef b():\n    raise ValueError(\"x\")\n\ndef reraise_bare():\n    try:\n        a()\n    except ValueError:\n        raise\n\ndef reraise_e(err):\n    raise err\n```\nเทียบกับการเรียก `reraise_bare()` จำนวน traceback frame จะเปลี่ยนไปอย่างไรถ้าจับจาก `a()` แล้วเรียก `reraise_e(caught)` แทน?",
     options: [
-      "เป็น syntax error ใน Python 3",
-      "จับได้เฉพาะ Exception ไม่ใช่ subclass",
-      "จับ KeyboardInterrupt และ SystemExit ด้วย ทำให้โปรแกรมออกไม่ได้ตามปกติ",
-      "ไม่สามารถเข้าถึง exception object ด้วย `as e`"
+      "จำนวน frame เท่ากัน -- raise กับ raise e เหมือนกัน",
+      "น้อยลงหนึ่ง frame เพราะ raise e ข้าม call site เดิม",
+      "เพิ่มขึ้นหนึ่ง frame ชี้ไปที่บรรทัด raise err เอง",
+      "traceback ถูกทิ้งไปทั้งหมด"
     ],
-    answer: 2
+    answer: 2,
+    explain: "bare raise re-raise exception ตัวเดียวกันเป๊ะพร้อม traceback เดิม ไม่เพิ่มอะไรเลย raise err (หรือ raise e) เพิ่ม frame ใหม่สำหรับบรรทัดที่มันถูกเรียก ถึงแม้ exception object จะเป็นตัวเดียวกันก็ตาม"
+  },
+  {
+    q: "```python\ndef risky_lookup(data, key):\n    try:\n        return data[key]\n    except:\n        pass\n    return -1\n\nprint(risky_lookup(None, \"x\"))\n```\nโค้ดนี้พิมพ์อะไร และทำไมถึงอันตราย?",
+    options: [
+      "raise TypeError เพราะ None ไม่ subscriptable ได้",
+      "-1 -- bare except: กลืน TypeError จากการ index None ด้วย ไม่ใช่แค่ key ที่หาย",
+      "None -- function return ก่อนกำหนด",
+      "raise KeyError เพราะ 'x' ไม่ใช่ key ที่ถูกต้อง"
+    ],
+    answer: 1,
+    explain: "bare except: จับทุก exception รวมถึง TypeError ที่เกิดจากการส่ง argument type ผิด -- ซึ่งเป็น bug จริง -- และซ่อนมันไว้หลัง -1 ตัวเดียวกับที่ใช้สำหรับ key ที่หายไปแบบถูกต้อง การระบุ except KeyError: จะปล่อยให้ TypeError โผล่ออกมา"
+  },
+  {
+    q: "function หนึ่ง validate argument ด้วย `assert value > 0, \"...\"` จะเกิดอะไรขึ้นเมื่อรันโปรแกรมด้วย `python -O`?",
+    options: [
+      "assertion ยัง raise AssertionError ตามปกติ",
+      "assert statement ถูกเอาออกจาก bytecode ทั้งหมด ค่าที่ผิดจะไหลผ่านไปโดยไม่ถูกเช็ค",
+      "-O ปิด assertion เฉพาะที่อยู่ใน try block เท่านั้น",
+      "Python ปฏิเสธที่จะเริ่มรันด้วย -O ถ้ามี assert อยู่"
+    ],
+    answer: 1,
+    explain: "-O (optimized mode) ตัด assert statement ทุกตัวออกจาก bytecode ที่ compile แล้ว เงื่อนไขจึงไม่ถูก evaluate เลย โค้ดใดก็ตามที่พึ่ง assert สำหรับ validate input จริงจะหยุด validate อะไรเลยแบบเงียบ ๆ ภายใต้ -O"
+  },
+  {
+    q: "ทำไม `except Exception:` ถึงจับการเรียก `sys.exit(1)` ไม่ได้?",
+    options: [
+      "sys.exit ไม่ raise exception เลย",
+      "SystemExit สืบทอดจาก BaseException ไม่ใช่ Exception ทำให้ except Exception ไม่ match กับมัน",
+      "sys.exit จับได้เฉพาะภายใน finally block เท่านั้น",
+      "except Exception จับได้เฉพาะ exception ที่ไม่มี argument"
+    ],
+    answer: 1,
+    explain: "sys.exit(code) raise SystemExit ซึ่งอยู่คนละแขนงของ hierarchy ตรงใต้ BaseException นี่เป็นความตั้งใจ: handler ระดับ except Exception ของ application ไม่ควรสามารถขวางการ exit ที่สะอาดของโปรแกรมได้"
   }
 ];
 
