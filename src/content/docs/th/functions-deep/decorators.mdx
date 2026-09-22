@@ -1,6 +1,6 @@
 ---
 title: Decorators
-description: 'function ที่ห่อ function อื่น — logging decorator, functools.wraps และ decorator แบบรับ argument ใน Python'
+description: 'function ที่ห่อ function อื่น — functools.wraps, กับดักของ lru_cache/cache, partial, class decorator และ decorator แบบรับ argument ใน Python'
 sidebar:
   order: 4
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Function ที่แปลงร่าง function อื่น
 
@@ -76,6 +78,39 @@ print(add.__doc__)    # Return the sum of a and b.
 
 ให้ใช้ `@functools.wraps(func)` กับ function `wrapper` ตัวในเสมอ ในทุก decorator ที่เราเขียน
 
+### Broken กับ fixed เทียบกัน — รวมถึง `inspect.signature`
+
+`functools.wraps` ไม่ได้ก็อปแค่ `__name__`/`__doc__` แต่ยังทำให้ `inspect.signature` รายงาน signature ที่แท้จริงของ function ที่ถูกห่อ แทนที่จะเป็น `(*args, **kwargs)` แบบทั่ว ๆ ไปของ `wrapper` เครื่องมือที่ generate API doc หรือ CLI help text จาก `inspect.signature` จะแสดง signature ผิดแบบเงียบ ๆ เมื่อขาด `wraps`:
+
+```python
+import functools
+import inspect
+
+def broken_decorator(func):
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+def fixed_decorator(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+@broken_decorator
+def add(a: int, b: int) -> int:
+    """Return the sum of a and b."""
+    return a + b
+
+@fixed_decorator
+def sub(a: int, b: int) -> int:
+    """Return a minus b."""
+    return a - b
+
+print(add.__name__, inspect.signature(add))   # wrapper (*args, **kwargs)
+print(sub.__name__, inspect.signature(sub))   # sub (a: int, b: int) -> int
+```
+
 ## logging decorator ที่ใช้งานจริง
 
 ```python
@@ -96,6 +131,114 @@ def timed(func):
 def compute(n: int) -> int:
     return sum(range(n))
 ```
+
+## `functools.lru_cache` และ `functools.cache`
+
+`functools.cache` (และรุ่นพี่ที่ปรับแต่งได้มากกว่าอย่าง `functools.lru_cache`) คือ decorator ที่ memoize ค่า return ของ function โดยใช้ argument เป็น key เมื่อเรียกซ้ำด้วย argument เดิม function จะข้าม body ไปเลย:
+
+```python
+import functools
+
+@functools.lru_cache(maxsize=32)
+def fib(n: int) -> int:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+fib(20)
+print(fib.cache_info())   # CacheInfo(hits=18, misses=21, maxsize=32, currsize=21)
+```
+
+สามจุดคมที่ควรรู้ก่อนใช้:
+
+- **argument ต้อง hashable** cache key ถูกสร้างจาก argument ดังนั้น argument ที่เป็น `list` (หรือ object ใดก็ตามที่ unhashable) จะ raise `TypeError: unhashable type: 'list'` — ไม่ใช่แค่ข้าม cache ไปเฉย ๆ
+- **`maxsize=None` (หรือ `@functools.cache` ซึ่งก็คือ `lru_cache(maxsize=None)` เป๊ะ ๆ) จะไม่มีการ evict เลย** ทุกชุด argument ที่เคยเรียก function นี้จะถูก cache ไว้ตลอดอายุของ process — cache ที่โตไม่จำกัดคือ memory leak ถ้า input space ใหญ่หรือไม่มีขอบเขต
+- **`@lru_cache` บน method จะ cache `self` ไปด้วย** `self` เป็นส่วนหนึ่งของ cache key ดังนั้นทุก instance ที่เคยเรียก method นี้จะถูก cache เก็บ reference ไว้ให้มีชีวิตอยู่ — แม้ไม่มี code ส่วนอื่นอ้างถึงมันแล้วก็ตาม สิ่งนี้ขัดขวางไม่ให้ garbage collector เก็บ instance เหล่านั้นได้จนกว่า cache จะถูก clear หรือ class เองจะถูกลบ ทางแก้คือใช้ `functools.cached_property` สำหรับ cache แบบต่อ instance หรือ cache function ระดับ module ที่รับข้อมูล hashable ธรรมดาแทนที่จะรับ `self`
+
+```python
+class Doubler:
+    def __init__(self, factor: int) -> None:
+        self.factor = factor
+
+    @functools.lru_cache(maxsize=None)
+    def compute(self, x: int) -> int:
+        return x * self.factor
+
+d1 = Doubler(2)
+d1.compute(5)
+d2 = Doubler(3)
+d2.compute(5)
+print(d2.compute.cache_info())
+# CacheInfo(hits=0, misses=2, maxsize=None, currsize=2)
+# both d1 and d2 are now referenced by the cache, forever, until cache_clear()
+```
+
+## `functools.partial`
+
+`functools.partial` ตรึงค่า argument บางตัวของ function ไว้ล่วงหน้า แล้ว return callable ตัวใหม่ที่ต้องการแค่ argument ที่เหลือ:
+
+```python
+import functools
+
+def power(base: float, exponent: float) -> float:
+    return base ** exponent
+
+square = functools.partial(power, exponent=2)
+cube = functools.partial(power, exponent=3)
+print(square(5))   # 25
+print(cube(2))     # 8
+```
+
+`partial` เป็น object ธรรมดา (ไม่ใช่ function ที่ถูก decorate) มันเปิด `.func` และ `.keywords` ให้เราตรวจสอบได้ว่าอะไรถูกตรึงไว้บ้าง มันยังเป็นทางแก้มาตรฐานของ [late-binding closure ในลูป](/th/functions-deep/closures/) ด้วย นั่นคือ `partial(f, i=i)` จะตรึงค่า `i` ปัจจุบันไว้ด้วยกลไกเดียวกับการใช้ default argument
+
+## Class decorator
+
+decorator ไม่จำเป็นต้องห่อแค่ function เท่านั้น — มันห่อ **class** ก็ได้ โดยรับ class object เข้ามาแล้ว return class ออกไป (ปกติคือ class ตัวเดิมที่ถูกแก้ไขหรือขยายเพิ่ม):
+
+```python
+def add_repr(cls):
+    """Class decorator: attach a generic __repr__ built from __dict__."""
+    def __repr__(self):
+        fields = ", ".join(f"{k}={v!r}" for k, v in self.__dict__.items())
+        return f"{cls.__name__}({fields})"
+    cls.__repr__ = __repr__
+    return cls
+
+@add_repr
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+print(Point(1, 2))   # Point(x=1, y=2)
+```
+
+`@dataclass` คือ class decorator ที่พบบ่อยที่สุดใน standard library มันทำงานด้วยกลไกแบบนี้เป๊ะ ๆ คือแนบ `__init__`, `__repr__` และ `__eq__` เข้ากับ class ที่มันตกแต่ง
+
+## `@property` ก็แค่ decorator ตัวหนึ่ง
+
+`property` ไม่ใช่ syntax พิเศษ — มันเป็น built-in class ตัวหนึ่ง และ `@property` ก็ตกแต่ง method ด้วยกลไกเดียวกับที่ decorator อื่น ๆ ตกแต่ง function นั่นคือแทนที่ชื่อด้วย object ตัวใหม่:
+
+```python
+class Temperature:
+    def __init__(self, celsius: float) -> None:
+        self._celsius = celsius
+
+    @property
+    def celsius(self) -> float:
+        return self._celsius
+
+    @celsius.setter
+    def celsius(self, value: float) -> None:
+        self._celsius = value
+
+t = Temperature(20.0)
+print(t.celsius)          # 20.0 — looks like attribute access, runs a method
+t.celsius = 25.0          # runs the setter
+print(type(Temperature.celsius).__name__)   # property
+```
+
+`celsius = property(_get_celsius, _set_celsius)` คือสิ่งที่ `@property` / `@celsius.setter` ขยายออกมาเป๊ะ ๆ — กลไกเดียวกับ "decorator แทนที่ชื่อด้วย object ตัวใหม่" เหมือน decorator ทุกตัวในบทนี้ แค่ return `property` แทนที่จะ return function ที่ถูกห่อ
 
 ## Decorator ที่รับ argument
 
@@ -126,6 +269,7 @@ def fetch(url: str) -> str:
 
 `@retry(max_attempts=3)` จะเรียก `retry(max_attempts=3)` ก่อน ซึ่งจะ return `decorator` ออกมา
 จากนั้น Python จึงนำ `decorator` ไปใช้กับ `fetch` ดังนั้น call chain ทั้งหมดคือ `fetch = retry(3)(fetch)`
+นั่นคือการซ้อน function สามชั้น หนึ่งชั้นต่อวงเล็บเปิดหนึ่งคู่: `retry` (factory ถูกเรียกด้วย argument ของ decorator เอง), `decorator` (ถูกเรียกครั้งเดียว ด้วย function ที่ถูกตกแต่ง) และ `wrapper` (ถูกเรียกทุกครั้งที่ function ที่ถูกตกแต่งถูกเรียกใช้)
 
 ## เดโมที่รันได้แบบเต็ม
 
@@ -174,10 +318,206 @@ print(add.__doc__)
 
 <Playground code={decoratorsCode} />
 
+## เดโมเจาะลึก: `wraps`, `lru_cache`, `partial`, class decorator, `property`
+
+playground ด้านล่างรันหัวข้อเจาะลึกทั้งหมดข้างบน รวมถึงสองจุดที่ล้มเหลวจริง ได้แก่ decorator ที่ขาด `wraps` จนสูญเสีย signature และ `lru_cache` ที่ raise `TypeError` เมื่อรับ argument ที่ unhashable:
+
+export const decoratorsDepthCode = `
+import functools
+import inspect
+
+# --- functools.wraps: broken vs fixed ---
+def broken_decorator(func):
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+def fixed_decorator(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+@broken_decorator
+def add(a: int, b: int) -> int:
+    """Return the sum of a and b."""
+    return a + b
+
+@fixed_decorator
+def sub(a: int, b: int) -> int:
+    """Return a minus b."""
+    return a - b
+
+print("--- functools.wraps ---")
+print("broken __name__:", add.__name__)
+print("broken __doc__:", add.__doc__)
+print("broken signature:", inspect.signature(add))
+print("fixed __name__:", sub.__name__)
+print("fixed __doc__:", sub.__doc__)
+print("fixed signature:", inspect.signature(sub))
+
+# --- lru_cache / cache ---
+print("\\n--- functools.lru_cache ---")
+
+@functools.lru_cache(maxsize=32)
+def fib(n: int) -> int:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+print("fib(20):", fib(20))
+print("cache_info:", fib.cache_info())
+
+fib.cache_clear()
+print("after cache_clear:", fib.cache_info())
+
+@functools.cache
+def total(items):
+    return sum(items)
+
+try:
+    total([1, 2, 3])
+except TypeError as e:
+    print(type(e).__name__ + ":", e)
+
+class Doubler:
+    def __init__(self, factor: int) -> None:
+        self.factor = factor
+
+    @functools.lru_cache(maxsize=None)
+    def compute(self, x: int) -> int:
+        return x * self.factor
+
+d1 = Doubler(2)
+d1.compute(5)
+print("cache after d1.compute(5):", d1.compute.cache_info())
+d2 = Doubler(3)
+d2.compute(5)
+print("cache after d2.compute(5) — self is part of the key, entry #2 kept alive:", d2.compute.cache_info())
+
+# --- functools.partial ---
+print("\\n--- functools.partial ---")
+
+def power(base: float, exponent: float) -> float:
+    return base ** exponent
+
+square = functools.partial(power, exponent=2)
+cube = functools.partial(power, exponent=3)
+print("square(5):", square(5))
+print("cube(2):", cube(2))
+print("square.func.__name__:", square.func.__name__)
+print("square.keywords:", square.keywords)
+
+# --- class decorator ---
+print("\\n--- class decorator ---")
+
+def add_repr(cls):
+    """Class decorator: attach a generic __repr__ built from __dict__."""
+    def __repr__(self):
+        fields = ", ".join(f"{k}={v!r}" for k, v in self.__dict__.items())
+        return f"{cls.__name__}({fields})"
+    cls.__repr__ = __repr__
+    return cls
+
+@add_repr
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+print(Point(1, 2))
+
+# --- @property is just a decorator ---
+print("\\n--- @property is a decorator ---")
+
+class Temperature:
+    def __init__(self, celsius: float) -> None:
+        self._celsius = celsius
+
+    @property
+    def celsius(self) -> float:
+        return self._celsius
+
+    @celsius.setter
+    def celsius(self, value: float) -> None:
+        self._celsius = value
+
+t = Temperature(20.0)
+print("read:", t.celsius)
+t.celsius = 25.0
+print("after write:", t.celsius)
+print("Temperature.celsius is a:", type(Temperature.celsius).__name__)
+`.trim();
+
+<Playground code={decoratorsDepthCode} />
+
+## Mental Model
+
+การอ่าน `@log_calls(level="DEBUG")` ที่อยู่เหนือ `def add(...)` จากล่างขึ้นบน แสดงสามชั้นการเรียกที่ decorator แบบรับ argument จะมีเสมอ — หนึ่ง function call ต่อวงเล็บหนึ่งคู่ใน source:
+
+export const decoratorsMentalModel = `flowchart TD
+  A["retry(max_attempts=3)\\n(the factory — called once, with the decorator's own args)"] --> B["decorator\\n(called once, with the function being decorated)"]
+  B --> C["wrapper\\n(called every time fetch(...) is called)"]
+  C --> D["func(*args, **kwargs)\\n(the original fetch)"]`;
+
+<Mermaid code={decoratorsMentalModel} title="สามชั้นการเรียกของ decorator แบบรับ argument: factory -> decorator -> wrapper -> function ต้นฉบับ" />
+
+decorator ที่ซ้อนกัน (`@a` `@b` `@c` เหนือ `def f()`) จะถูก apply จากล่างขึ้นบน แต่จะ **รัน** จากนอกเข้าใน: `c` ห่อ `f`, `b` ห่อผลลัพธ์ของ `c`, `a` ห่อผลลัพธ์ของ `b` — ดังนั้นตอนเรียกใช้จริง code ของ wrapper ของ `a` จะรันก่อน ตามด้วย `b` แล้วจึง `c` แล้วสุดท้ายคือ `f` เอง
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| `@functools.wraps(func)` | `__name__`/`__doc__`/`inspect.signature` รายงาน function จริงทั้งหมด | ต้อง import และเขียนเพิ่มอีกหนึ่งบรรทัดต่อ decorator — ลืมง่าย |
+| `@functools.lru_cache`/`@cache` | ข้ามการคำนวณซ้ำได้เลยเมื่อเรียกด้วย argument เดิม | argument ต้อง hashable; การโตแบบไม่จำกัด (`maxsize=None`) คือ memory leak; การ cache method จะทำให้ทุก `self` มีชีวิตอยู่ตลอด |
+| `functools.partial` | ไม่ต้องเขียน function ใหม่เพื่อตรึง argument บางตัว | ผลลัพธ์เป็น object `partial` ไม่ใช่ function — `__name__`/`__doc__` ไม่ถูกก็อปให้อัตโนมัติ |
+| Class decorator | ใช้กลไก "ห่อแล้วแทนที่" แบบเดียวกับ function decorator นำไปใช้ซ้ำกับหลาย class ได้ | การแก้ `cls` in place (แทนที่จะ return class ใหม่) อาจทำให้ code ที่เก็บ reference ของ class เดิมไว้แปลกใจ |
+| `@property` | syntax หน้าตาเหมือน attribute แต่ validate, คำนวณ หรือ log ตอนอ่าน/เขียนได้ | ทุกการอ่าน/เขียนคือการเรียก method — อย่าใส่งานที่หนักหรือมี side effect ไว้หลังสิ่งที่หน้าตาเหมือน attribute ธรรมดา |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"decorator ที่ไม่มี `functools.wraps` ก็ยังทำงานเหมือนเดิม แค่ `__name__` ต่างไป"** — ข้อเท็จจริง: `inspect.signature` ก็พังไปด้วย ดังนั้นอะไรก็ตามที่ introspect function (เครื่องมือสร้างเอกสาร, บาง framework ของ CLI/DI) จะเห็น `(*args, **kwargs)` แทนที่จะเห็น parameter จริง
+- **"`lru_cache`/`cache` ใส่กับ function ไหนก็ปลอดภัยเสมอ"** — ข้อเท็จจริง: มันจะ raise `TypeError` เมื่อ argument เป็น unhashable และเมื่อ `maxsize=None` มันจะไม่ลืมอะไรเลย ซึ่งเป็น memory leak สำหรับ function ที่ถูกเรียกด้วย input ที่หลากหลายหรือไม่มีขอบเขต — และถ้าใช้กับ method มันจะทำให้ทุก instance ที่เรียกมันมีชีวิตอยู่ตลอด
+- **"`@property` ต้องอาศัย interpreter support พิเศษ"** — ข้อเท็จจริง: มันเป็นแค่ decorator ธรรมดารอบ class ธรรมดาตัวหนึ่งคือ `property` — กลไกเดียวกัน (แทนที่ชื่อด้วยค่า return ของ decorator) เหมือน decorator อื่น ๆ ทุกตัวในบทนี้
+- **"decorator มีไว้แค่สำหรับตัวอย่าง logging/timing"** — ข้อเท็จจริง: `@dataclass`, `@functools.cache`, `@app.route(...)` ใน web framework, `@pytest.fixture` และ `@property` ล้วนเป็น decorator ที่ทำงานเชิงโครงสร้างจริง ไม่ใช่แค่ห่อด้วย print statement
+- **"decorator ที่ซ้อนกันจะรันตามลำดับที่ apply (บนลงล่าง)"** — ข้อเท็จจริง: มัน *apply* จากล่างขึ้นบน (ตัวที่ใกล้ function ที่สุดก่อน) แต่ wrapper ที่ได้จะ *รัน* จากนอกเข้าในตอนเรียกใช้ — code ของ decorator ตัวบนสุดคือตัวแรกที่ทำงาน
+
+## อ่านโค้ดที่ AI เขียน
+
+- decorator ทุกตัวมี `@functools.wraps(func)` อยู่เหนือ `wrapper` ตัวในหรือเปล่า? การขาดมันสังเกตยากตอน review และทำให้ `__name__`, `__doc__` และ `inspect.signature` พังไป
+- `@lru_cache` หรือ `@cache` ถูกใช้กับ method (function ที่ parameter ตัวแรกคือ `self`) หรือเปล่า? เช็คว่าตั้งใจให้ instance ถูก cache ไว้ตลอดไปจริงหรือไม่ — ถ้าไม่ นี่คือ memory leak
+- function ที่ถูก cache เคยได้รับ argument เป็น `list`, `dict` หรือ unhashable อื่น ๆ หรือเปล่า? การเรียกนั้นจะ raise `TypeError` ที่จุดเรียกใช้ ไม่ใช่ตอน decorate
+- decorator ถูกใช้กับ class แทนที่จะเป็น function หรือเปล่า? ตรวจว่ามัน return class (หรือสิ่งทดแทนที่ใช้ได้) จริง — class decorator ที่ return `None` จะทำลายชื่อ class ไปแบบเงียบ ๆ
+- สำหรับ decorator ที่รับ argument ให้นับวงเล็บ: มีการซ้อนสามชั้นจริงหรือไม่ (factory → decorator → wrapper) หรือผู้เขียนลืมไปหนึ่งชั้นแล้วส่ง function เข้า factory ตรง ๆ
+
+<SpotTheBug code={`import functools
+
+
+class ReportGenerator:
+    def __init__(self, dataset_id: str) -> None:
+        self.dataset_id = dataset_id
+
+    @functools.lru_cache(maxsize=None)
+    def summary(self, rows: int) -> str:
+        return f"{self.dataset_id}: summarized {rows} rows"
+
+
+def build_report(dataset_id: str, rows: int) -> str:
+    generator = ReportGenerator(dataset_id)
+    return generator.summary(rows)
+
+
+for i in range(100_000):
+    build_report(f"dataset-{i}", rows=10)
+
+print("done")`}>
+`@functools.lru_cache(maxsize=None)` บน `summary` รวม `self` เข้าไปใน cache key ด้วย ทุกหนึ่งใน 100,000 instance ของ `ReportGenerator` ที่มีอายุสั้น ๆ ที่ถูกสร้างในลูปจะถูก cache เก็บไว้ตลอดไป — ไม่มีการ evict เลย จึงไม่มี instance ไหนถูก garbage collect ได้ และ cache จะโตไม่มีขอบเขตตลอดอายุของ process (ยืนยันแล้ว: `ReportGenerator.summary.cache_info().currsize` ขึ้นไปถึง `100000` หลังจบลูป และไม่มีวันลดลง) ทางแก้คือไม่ cache method ที่พก state เฉพาะ instance แบบนี้เลย — ให้ cache function ธรรมดาที่รับข้อมูล hashable แทน (`functools.cache(lambda dataset_id, rows: f"{dataset_id}: summarized {rows} rows")`) หรือใช้การ cache แบบต่อ instance สไตล์ `functools.cached_property` ถ้าค่านั้นควรมีอายุคู่กับ instance เดียว
+</SpotTheBug>
+
 <Callout title="@deco คือรูปแบบย่อของ func = deco(func)">
 syntax `@` เป็น syntactic sugar ล้วน ๆ ไม่มี protocol พิเศษอะไรซ่อนอยู่เบื้องหลัง
 `@my_decorator` ที่ใช้กับ `def f(): ...` ก็คือ `f = my_decorator(f)` เป๊ะ ๆ
-นั่นหมายความว่า decorator จะประกอบกันจากล่างขึ้นบน:
+นั่นหมายความว่า decorator จะประกอบกันจากล่างขึ้นบนตอน apply แต่จะรันจากนอกเข้าในตอนเรียกใช้:
 
 ```python
 @a
@@ -187,7 +527,7 @@ def f(): ...
 # equivalent to: f = a(b(c(f)))
 ```
 
-decorator ที่อยู่ในสุด (`c`) จะถูกใช้ก่อน ตามด้วย `b` แล้วจึง `a`
+decorator ที่อยู่ในสุด (`c`) จะห่อ `f` ก่อน ตามด้วย `b` ห่อผลลัพธ์นั้น แล้ว `a` ห่อผลลัพธ์ของ `b` — แต่ตอน `f(...)` ถูกเรียกจริง code ของ `a` คือตัวแรกที่ทำงาน
 </Callout>
 
 export const quizDecorators = [
@@ -199,17 +539,41 @@ export const quizDecorators = [
       "เรียก function ทันทีตอน import",
       "ทำเครื่องหมายว่า function เลิกใช้แล้ว (deprecated)"
     ],
-    answer: 1
+    answer: 1,
+    explain: "@my_decorator ที่อยู่เหนือ def f(): ... ก็คือ f = my_decorator(f) เป๊ะ ๆ — decorator ถูกเรียกครั้งเดียวด้วย function ต้นฉบับ แล้วชื่อ f จะถูก rebind ไปยังสิ่งที่มัน return กลับมา"
   },
   {
     q: "ทำไมเราควรใช้ `@functools.wraps(func)` ภายใน decorator?",
     options: [
       "ทำให้ function wrapper ทำงานเร็วขึ้น",
-      "รักษา __name__, __doc__ และ metadata อื่น ๆ ของ function ต้นฉบับไว้",
+      "รักษา __name__, __doc__ และ inspect.signature ของ function ต้นฉบับไว้",
       "ป้องกันไม่ให้ decorator ถูกใช้ซ้ำมากกว่าหนึ่งครั้ง",
       "จำเป็นต้องมีเพื่อให้ syntax ของ decorator ทำงานได้"
     ],
-    answer: 1
+    answer: 1,
+    explain: "ถ้าไม่มี functools.wraps function wrapper จะไปแทนที่ __name__, __doc__ และที่สำคัญคือ inspect.signature จะรายงาน (*args, **kwargs) แทนที่จะเป็น parameter จริงของ function ที่ถูกห่อ functools.wraps จะก็อป metadata ทั้งหมดนี้มาไว้บน wrapper"
+  },
+  {
+    q: "โค้ดนี้พิมพ์อะไร?\n\nimport functools\n\n@functools.lru_cache(maxsize=None)\ndef f(items):\n    return sum(items)\n\nprint(f([1, 2, 3]))",
+    options: [
+      "6",
+      "TypeError: unhashable type: 'list'",
+      "None",
+      "โปรแกรมค้างตลอดไป"
+    ],
+    answer: 1,
+    explain: "lru_cache สร้าง cache key จาก argument ของ function ซึ่งต้องการให้ argument นั้น hashable list ไม่ hashable ดังนั้นการเรียก f([1, 2, 3]) จะ raise TypeError: unhashable type: 'list' ทันที — body ของ function ไม่มีโอกาสได้รันเลย"
+  },
+  {
+    q: "class หนึ่งนิยาม method ที่ decorate ด้วย `@functools.lru_cache(maxsize=None)` ความเสี่ยงหลักคืออะไร?",
+    options: [
+      "method จะรับ keyword argument ไม่ได้อีกต่อไป",
+      "self เป็นส่วนหนึ่งของ cache key ดังนั้นทุก instance ที่เคยเรียก method นี้จะถูก cache เก็บไว้ให้มีชีวิตอยู่ตลอด",
+      "method จะกลายเป็น staticmethod โดยอัตโนมัติ",
+      "lru_cache ใช้กับ method ไม่ได้เลย มันจะ raise TypeError ตอนนิยาม class"
+    ],
+    answer: 1,
+    explain: "lru_cache ใช้ argument ทั้งหมดเป็น cache key รวมถึง self ของการเรียกแบบ bound method ด้วย เพราะ cache เก็บ reference ของ self แต่ละตัวที่เคยเห็นไว้ instance เหล่านั้นจึงไม่มีวันถูก garbage collect ตราบใดที่ cache entry ยังอยู่ — เป็น memory leak ที่โตไม่มีขอบเขตสำหรับ instance ที่มีอายุสั้น"
   },
   {
     q: "เมื่อมี `@retry(max_attempts=3)` อยู่เหนือ `def fetch(): ...` ลำดับการเรียกเป็นอย่างไร?",
@@ -219,12 +583,19 @@ export const quizDecorators = [
       "fetch = retry(fetch)(max_attempts=3)",
       "fetch = max_attempts(retry(fetch, 3))"
     ],
-    answer: 1
+    answer: 1,
+    explain: "retry(max_attempts=3) ถูกเรียกก่อน (factory) แล้ว return decorator ออกมา จากนั้น Python จะนำ decorator ไปใช้กับ fetch ดังนั้น chain ทั้งหมดคือ fetch = retry(max_attempts=3)(fetch)"
   },
   {
-    q: "หาก decorator ถูกซ้อนกัน `@a` แล้ว `@b` แล้ว `@c` บน `def f()` ตัวใดถูกใช้ก่อน?",
-    options: ["a", "b", "c", "ใช้พร้อมกันทั้งหมด"],
-    answer: 2
+    q: "`type(Temperature.celsius)` จะพิมพ์อะไร เมื่อ `celsius` ถูกนิยามด้วย `@property`?",
+    options: [
+      "<class 'function'>",
+      "<class 'property'>",
+      "<class 'method'>",
+      "float"
+    ],
+    answer: 1,
+    explain: "@property แทนที่ method ด้วย instance ของ built-in class ที่ชื่อ property — กลไกเดียวกับ 'decorator แทนที่ชื่อด้วยค่าที่มัน return' เหมือน decorator อื่น ๆ ทุกตัว เพียงแต่ return property object แทนที่จะ return function ที่ถูกห่อ"
   }
 ];
 
