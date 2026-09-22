@@ -24,13 +24,13 @@ Exception คือ object — instance ของ class ที่สืบทอ
 try:
     result = risky_operation()
 except SomeError as e:
-    # ทำงานเฉพาะเมื่อ SomeError (หรือ subclass) ถูก raise
+    # runs only if SomeError (or a subclass) was raised
     handle(e)
 else:
-    # ทำงานเฉพาะเมื่อไม่มี exception เกิดขึ้นใน try
+    # runs only if NO exception was raised in try
     use(result)
 finally:
-    # ทำงานเสมอ — ไม่ว่าจะเกิด exception หรือไม่
+    # ALWAYS runs — exception or not
     cleanup()
 ```
 
@@ -46,7 +46,7 @@ def risky():
     try:
         raise ValueError("lost")
     finally:
-        return "swallowed"   # SyntaxWarning ใน 3.14 — ValueError ไม่มีทางหลุดออกมา
+        return "swallowed"   # SyntaxWarning in 3.14 — the ValueError never escapes
 ```
 
 ให้ `finally` ทำแค่ cleanup แล้วปล่อยให้ exception ไหลต่อไป
@@ -96,7 +96,7 @@ Re-raise exception ปัจจุบันภายใน `except` block ด้
 ```python
 except ValueError:
     log_error()
-    raise   # re-raise exception เดิมโดยไม่เปลี่ยนแปลง
+    raise   # re-raises the same exception unchanged
 ```
 
 ## Exception chaining ด้วย `raise ... from`

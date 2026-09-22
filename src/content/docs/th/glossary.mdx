@@ -1,0 +1,184 @@
+---
+title: Glossary
+description: คำศัพท์ Python ที่ใช้ตลอด course นี้ — เก็บ term ภาษาอังกฤษไว้ตามที่ developer ใช้จริง แล้วอธิบายความหมายเป็นภาษาไทย
+sidebar:
+  order: 99
+---
+
+import ProgressTracker from '../../../components/ProgressTracker.tsx';
+
+หน้านี้คือข้อตกลงเรื่องคำศัพท์ของทั้ง course เราคง term ภาษาอังกฤษไว้ตามที่ developer ไทยใช้จริงในการทำงาน แล้วอธิบายความหมายเป็นภาษาไทย เวลาอ่านบทเรียนแล้วเจอคำที่ไม่คุ้น ให้กลับมาดูที่นี่
+
+## Object model and names
+
+| English | Thai Style | หมายเหตุ |
+|---------|-----------|---------|
+| Object | object | ทุกอย่างที่โปรแกรม Python จัดการ ทั้ง value, function, class ล้วนเป็น object ที่มี identity, type และ value ของตัวเอง |
+| Name | name | ป้ายชื่อใน namespace ที่ผูก (bind) อยู่กับ object หนึ่งตัว — ไม่ใช่กล่องที่ "เก็บ" ค่าไว้ข้างใน |
+| Binding | binding | การผูกชื่อเข้ากับ object ด้วย `=` การ assign ไม่เคย copy object เลย แค่ผูกชื่อใหม่เข้ากับ object เดิมหรือใหม่ |
+| Identity | identity | object ตัวไหนกันแน่ที่ name หนึ่งชี้ไปหา ตรวจด้วย `is` และดูได้จาก `id()` |
+| `is` vs `==` | is / == | `is` เทียบ identity (เป็น object เดียวกันหรือเปล่า) ส่วน `==` เทียบ value (เรียก `__eq__`) สอง value ที่เท่ากันไม่จำเป็นต้องเป็น object เดียวกัน และการ cache small-int/string ทำให้ `is` "ดูเหมือนถูก" จนกว่าจะพังแบบเงียบ ๆ |
+| Mutable / immutable | mutable / immutable | object เปลี่ยนค่าได้หลังสร้างโดยไม่เปลี่ยน identity หรือไม่ `list`, `dict`, `set` เป็น mutable ส่วน `int`, `str`, `tuple`, `frozenset` เป็น immutable |
+| Hashable | hashable | object ที่ `__hash__` คืนค่าคงที่และสอดคล้องกับ `__eq__` (object ที่เท่ากันต้อง hash เท่ากัน) จำเป็นสำหรับการเป็น key ของ dict หรือสมาชิกของ set |
+| Namespace | namespace | mapping จาก name ไปยัง object เก็บอยู่ในรูป dict (`globals()`, `locals()`, `__dict__` ของ module) |
+| Scope | scope | ขอบเขตของ code ที่การค้นหา name หนึ่งจะเจอ binding ที่ต้องการ ตัดสินผ่านลำดับ LEGB |
+| LEGB | LEGB | ลำดับที่ Python ค้นหา name ผ่าน namespace: Local, Enclosing, Global, Built-in |
+| Shadowing | shadowing | การผูก name ใหม่ทับ builtin หรือ name จาก scope ด้านนอก (เช่น `list = [1, 2]`) จนของเดิมเข้าถึงไม่ได้อีกใน scope นั้น |
+| Truthiness | truthiness | object นับเป็น `True` ใน boolean context หรือไม่ `0`, `""`, `[]`, `None` และ container ว่างอื่น ๆ เป็น falsy ทั้งที่เป็นค่าจริงที่มีอยู่ |
+
+## Data structures
+
+| English | Thai Style | หมายเหตุ |
+|---------|-----------|---------|
+| `list` | list | sequence แบบ mutable ที่มีลำดับ |
+| `tuple` / `NamedTuple` | tuple / NamedTuple | `tuple` คือ sequence แบบ immutable ที่มีลำดับ — immutable แปลว่า slot ข้างในเปลี่ยนตัว object ไม่ได้ ไม่ได้แปลว่าเนื้อหาข้างในเปลี่ยนไม่ได้ (tuple เก็บ list ที่ mutate ได้อยู่ข้างในก็ได้) ส่วน `NamedTuple` คือ record แบบ immutable ที่สร้างจาก tuple และมีชื่อ field เข้าถึงได้ทั้งผ่าน attribute และ index |
+| `dict` | dict | mapping แบบ mutable จาก key ที่ hashable ไปยัง value เรียงตามลำดับที่ insert ตั้งแต่ Python 3.7 |
+| `set` / `frozenset` | set / frozenset | collection ของสมาชิกที่ hashable และไม่ซ้ำกัน ไม่มีลำดับ `set` เป็น mutable ส่วน `frozenset` ไม่ mutable และ hashable ในตัวเอง |
+| Dict view | dict view | object ที่คืนจาก `.keys()`, `.values()`, `.items()` เป็น live view ที่สะท้อนการเปลี่ยนแปลงของ dict ภายหลัง ไม่ใช่ snapshot ที่ตายตัว |
+| `defaultdict` | defaultdict | dict subclass ที่เรียก factory เพื่อสร้างค่าของ key ที่ยังไม่มี แทนที่จะ raise `KeyError` |
+| `Counter` | Counter | dict subclass สำหรับนับจำนวนของ item ที่ hashable รองรับการบวก/ลบระหว่างชุดนับ |
+| `deque` | deque | queue สองทางที่ append/pop จากปลายทั้งสองข้างได้ในเวลา O(1) ต่างจาก list ที่ `insert(0, ...)` เป็น O(n) |
+| Slice | slice | การระบุช่วง `start:stop:step` เขียนแบบ inline (`a[1:3]`) หรือสร้างเป็น `slice` object ก็ได้ |
+| Aliasing | aliasing | สอง name ที่ผูกกับ mutable object ตัวเดียวกัน mutate ผ่าน name หนึ่งแล้วอีก name เห็นการเปลี่ยนแปลงด้วย ไม่เหมือนการ copy |
+| Shallow copy / deep copy | shallow copy / deep copy | shallow copy ก็อป container ชั้นนอกเท่านั้น mutable element ที่ซ้อนอยู่ข้างในยัง share กันอยู่ ส่วน deep copy (`copy.deepcopy`) ก็อปทุกชั้นแบบ recursive |
+
+## Functions
+
+| English | Thai Style | หมายเหตุ |
+|---------|-----------|---------|
+| Parameter vs argument | parameter / argument | parameter คือชื่อใน definition ของ function ส่วน argument คือค่าที่ส่งเข้าไปตอนเรียกใช้จริง |
+| Positional-only parameter | positional-only parameter | parameter ที่ต้องส่งตามตำแหน่งเท่านั้น กำกับด้วย `/` ใน signature |
+| Keyword-only parameter | keyword-only parameter | parameter ที่ต้องส่งโดยระบุชื่อเท่านั้น กำกับด้วย `*` เดี่ยว ๆ ใน signature |
+| `*args` / `**kwargs` | *args / **kwargs | รวบ positional argument ส่วนเกินเป็น tuple หรือรวบ keyword argument ส่วนเกินเป็น dict |
+| Default argument | default argument | ค่าที่ใช้เมื่อผู้เรียกไม่ส่ง argument นั้นมา ถูกประเมินครั้งเดียวตอน define function |
+| Mutable default | mutable default | default argument ที่เป็น mutable object (เช่น `def f(items=[])`) เพราะ default ถูกสร้างครั้งเดียว ทุก call ที่ไม่ override จึงใช้ object เดียวกันร่วมกัน และสะสมสถานะข้ามกันได้ |
+| Closure | closure | function ที่จำตัวแปรจาก scope ที่ครอบมันอยู่ได้ แม้ scope นั้นทำงานจบไปแล้ว โดย capture ผ่าน reference ไม่ใช่ผ่าน value |
+| `nonlocal` / `global` | nonlocal / global | การประกาศที่ให้ inner function assign (ไม่ใช่แค่อ่าน) name จาก scope ของ function ที่ครอบอยู่ หรือจาก module scope แทนที่จะสร้าง local ใหม่ |
+| Decorator | decorator | function ที่รับ function (หรือ class) แล้วคืน object ตัวใหม่มาแทน ใช้ผ่าน syntax `@name` |
+| `functools.wraps` | functools.wraps | helper สำหรับเขียน decorator ที่ก็อป `__name__`, `__doc__` และ metadata อื่นจาก function เดิมมาไว้บน wrapper ไม่งั้นเครื่องมือ introspection จะเห็น identity ของ wrapper แทน |
+| Generator / generator expression | generator / generator expression | เรียก function ที่มี `yield` แล้วจะได้ generator object กลับมาทันทีโดยยังไม่รัน body ส่วน generator expression คือรูปแบบสั้นแบบ lazy เขียนด้วยวงเล็บ เช่น `(x*x for x in range(10))` |
+| Iterable | iterable | object ที่ `__iter__` คืน iterator กลับมา วนซ้ำได้หลายรอบ เช่น `list` |
+| Iterator | iterator | object ที่มี `__next__` (และ `__iter__` ที่คืนตัวเอง) ผลิตค่าออกมาทีละตัว และหมดสภาพเมื่อถูกดึงจนครบ generator คือ iterator ชนิดหนึ่งโดยเฉพาะ |
+
+## OOP and the data model
+
+| English | Thai Style | หมายเหตุ |
+|---------|-----------|---------|
+| Class | class | แม่แบบสำหรับสร้าง object ที่กำหนด attribute และ method ร่วมกัน ตัว class เองก็เป็น object เช่นกัน คือ instance ของ `type` |
+| Instance | instance | object ที่สร้างจากการเรียก class |
+| `self` | self | instance ที่ method ถูกเรียกด้วย ส่งเข้ามาเป็น parameter ตัวแรกตามธรรมเนียม (ไม่ใช่ keyword พิเศษ) |
+| Method | method | function ที่ประกาศไว้ใน class body เมื่อเข้าถึงผ่าน instance จะกลายเป็น bound method ที่ผูกกับ instance นั้นแล้ว จึงไม่ต้องส่ง `self` เอง |
+| `classmethod` / `staticmethod` | classmethod / staticmethod | `classmethod` รับ class (`cls`) แทน instance นิยมใช้ทำ alternate constructor ส่วน `staticmethod` ไม่รับทั้งคู่ เป็นแค่ function ที่อยู่ภายใต้ namespace ของ class |
+| Dunder method | dunder method | method แบบ "double underscore" (`__init__`, `__repr__`, `__eq__`, ...) ที่ Python เรียกให้เองเพื่อ implement พฤติกรรมอย่างการสร้าง object, การพิมพ์, หรือการเปรียบเทียบ `__repr__` คือรูปแบบสำหรับ developer อ่าน ไม่กำกวม (ใช้โดย REPL และ container) ส่วน `__str__` คือรูปแบบให้ user อ่าน ถ้าไม่ define จะ fallback ไปใช้ `__repr__` แทน |
+| `__init__` vs `__new__` | __init__ / __new__ | `__new__` สร้างและคืน instance ส่วน `__init__` รับ instance นั้นมา initialize ต่อ การ override `__new__` จำเป็นเมื่อ subclass ของ immutable type หรือทำ singleton เพราะ `__init__` ทำงานช้าเกินไปที่จะเปลี่ยนสิ่งที่ถูกคืนกลับ |
+| MRO (Method Resolution Order) | MRO | ลำดับที่ Python ค้นหา attribute ผ่าน base class ของ class หนึ่ง คำนวณด้วย C3 linearization algorithm ดูได้จาก `Cls.__mro__` |
+| `super()` | super() | เรียก class ตัวถัดไปใน MRO ไม่ใช่ parent ตัวถัดไปเสมอไป ใช้สำหรับ cooperative multiple inheritance |
+| Duck typing | duck typing | อาศัยแค่ว่า object มี method หรือ attribute ที่ต้องการตอน runtime โดยไม่ต้องประกาศ type อย่างเป็นทางการ ("ถ้าเดินเหมือนเป็ด") |
+| Protocol | Protocol | static type แบบ structural: class ไหนก็ตามที่มี method ตรงตามที่กำหนด ก็ satisfy ได้เองโดยไม่ต้อง inherit ทำให้ type checker ตรวจสอบ duck typing ล่วงหน้าได้ |
+| ABC (Abstract Base Class) | ABC | base class ที่บังคับให้ subclass implement method ที่กำหนด ตรวจตอนสร้าง instance ผ่าน `abc.ABCMeta` / `@abstractmethod` |
+| Descriptor | descriptor | object ที่ implement `__get__` / `__set__` (หรือ `__delete__`) เพื่อ customize การเข้าถึง attribute เมื่อวางไว้เป็น class attribute `property` คือ descriptor ในตัวที่พบบ่อยที่สุด |
+| Dataclass | dataclass | class ที่ decorate ด้วย `@dataclasses.dataclass` ให้สร้าง `__init__`, `__repr__`, `__eq__` ให้อัตโนมัติจาก field ที่ประกาศไว้ |
+| `__slots__` | __slots__ | class attribute ที่จองพื้นที่คงที่สำหรับ instance attribute ชุดที่กำหนดไว้ ตัด `__dict__` ต่อ instance ทิ้งเพื่อประหยัด memory และห้ามเพิ่ม attribute ใหม่ |
+
+## Typing
+
+| English | Thai Style | หมายเหตุ |
+|---------|-----------|---------|
+| Type hint | type hint | annotation ที่บอก type ที่ตั้งใจไว้ของตัวแปร, parameter หรือ return value เป็นแค่ documentation สำหรับ CPython ซึ่งไม่เคยตรวจตอน runtime |
+| Annotation | annotation | syntax `: Type` หรือ `-> Type` เอง เก็บไว้ใน `__annotations__` แต่ไม่ได้ถูกบังคับใช้ |
+| Static type checker | static type checker | เครื่องมือแยกต่างหาก (mypy, pyright) ที่อ่าน annotation แล้วรายงาน type error โดยไม่ต้องรันโปรแกรมจริง |
+| `Any` | Any | type ที่ปิดการตรวจสอบ type ทั้งหมดสำหรับ value นั้น การ assign เข้า/ออกจาก `Any` ผ่านเสมอ ทำให้ mismatch จริง ๆ ถูกซ่อนไปแบบเงียบ ๆ |
+| `Optional[T]` | Optional[T] | ย่อมาจาก `T \| None` การ narrow ให้เหลือแค่ `T` ต้องเช็คแบบชัดเจนอย่าง `if x is not None` ไม่ใช่แค่ `if x:` (ซึ่งกันค่า falsy-แต่-มีอยู่จริงออกไปด้วย) |
+| Narrowing | narrowing | checker ปรับ type ที่รู้ของตัวแปรให้แคบลงภายใน branch หนึ่ง โดยอิงจากการเช็คก่อนหน้า (`isinstance`, `is None`, ...) |
+| Invariance | invariance | generic container เป็น invariant โดย default: `list[Dog]` ไม่ใช่ `list[Animal]` เพราะ function อาจ insert `Animal` ที่ไม่ใช่ `Dog` ผ่าน reference นั้นได้ ให้ใช้ `Sequence` / `Iterable` สำหรับ parameter ที่อ่านอย่างเดียวเพื่อรับ subtype ได้ |
+| `Protocol` (typing) | Protocol (typing) | ใช้เป็น parameter type แปลว่า "อะไรก็ได้ที่มีรูปร่างแบบนี้" ตรวจแบบ structural — ดู Protocol ด้านบน |
+| `TypedDict` | TypedDict | dict type ที่มี schema ของแต่ละ key และ type ตายตัว ตรวจแบบ static เท่านั้น ตอน runtime ยังเป็น `dict` ธรรมดา |
+| `TypeVar` / generics (`def f[T]`) | TypeVar / generics | type parameter ที่เป็นตัวแทน ให้ function หรือ class เขียนครั้งเดียวแล้วใช้กับหลาย concrete type ได้ โดย checker ติดตามว่า call ไหนใช้ type ไหน |
+| `Literal` / `Final` / `ClassVar` | Literal / Final / ClassVar | `Literal` จำกัด type ให้เหลือค่าที่ระบุไว้เท่านั้น (เช่น `Literal["get", "post"]`) ไม่ใช่แค่ type ของมัน `Final` บอกว่า name นี้จะไม่ถูก assign ซ้ำหลังผูกครั้งแรก `ClassVar` บอกว่า attribute ที่ annotate ไว้เป็นของ class ไม่ใช่ของแต่ละ instance ทั้งสามตรวจแบบ static เท่านั้น |
+| `Self` | Self | return-type annotation ที่แปลว่า "type เดียวกับ class ที่เรียก" ทำให้ subclass ได้ return type ที่ถูกต้องแทนที่จะเป็น base class |
+| `cast()` | cast() | บอก checker ให้เชื่อ type นั้นโดยไม่มีการตรวจตอน runtime เป็นการยืนยันข้อเท็จจริงมากกว่าการตรวจสอบ ถ้าเดาผิดก็คือโกหก |
+| `TypeGuard` vs `TypeIs` | TypeGuard / TypeIs | ทั้งคู่กำกับ function ว่าเป็น custom narrowing check `TypeGuard` narrow เฉพาะ branch `True` และ narrow ไป type อื่นที่ไม่เกี่ยวข้องได้ ส่วน `TypeIs` narrow ทั้งสอง branch และ type ที่ narrow ต้องเป็น subtype ของ input เท่านั้น |
+| `Never` | Never | type ที่ไม่มี value ที่ถูกต้องเลย ใช้เป็น return type ของ function ที่ไม่มีวัน return (raise เสมอ) และใช้คู่กับ `assert_never()` เพื่อให้ตรวจ exhaustiveness ของ `match` / `if` ได้ |
+| `@overload` | @overload | ประกาศ signature หลายแบบให้ function เดียว เพื่อให้ checker เลือก return type ที่ถูกต้องตาม argument type โดยไม่เปลี่ยนพฤติกรรมตอน runtime |
+| `TYPE_CHECKING` | TYPE_CHECKING | ค่าคงที่ที่เป็น `False` ตอน runtime แต่ type checker ถือว่าเป็น `True` ใช้ import type ที่จำเป็นแค่สำหรับ annotation โดยไม่เสีย cost การ import จริงหรือเจอ circular import |
+
+## Errors
+
+| English | Thai Style | หมายเหตุ |
+|---------|-----------|---------|
+| Exception | exception | object ที่แทนความหมายของ error, raise ด้วย `raise` และจับด้วย `except` เป็น subclass ของ `BaseException` |
+| `BaseException` | BaseException | รากของ exception hierarchy ครอบคลุมสิ่งที่แทบไม่ควร catch แบบกว้าง ๆ (`SystemExit`, `KeyboardInterrupt`) เพิ่มเติมจาก `Exception` |
+| Traceback | traceback | บันทึก call stack ณ จุดที่ exception ถูก raise อ่านจากล่างขึ้นบน (error จริงอยู่ล่างสุด ตามด้วยเส้นทางที่พาไปถึงจุดนั้น) |
+| Exception chaining | exception chaining | การเชื่อม exception ตัวใหม่เข้ากับตัวที่เป็นสาเหตุ แบบ implicit ผ่าน `__context__` (raise ขึ้นระหว่างจัดการ exception อื่นอยู่) หรือแบบ explicit ผ่าน `raise ... from err` (`__cause__`) |
+| `raise` vs `raise err` | raise / raise err | `raise` เปล่า ๆ raise exception ปัจจุบันซ้ำโดยคง traceback เดิมไว้ครบ ส่วน `raise err` บน exception ที่จับไว้แล้วและตั้งชื่อไว้ จะเพิ่ม traceback frame ใหม่ ณ จุดนั้น |
+| Bare `except:` | bare except | จับ `BaseException` ทุกตัว รวมถึง `KeyboardInterrupt` และ `SystemExit` ด้วย แทบจะผิดเสมอ ยกเว้นจะ re-raise ทุกครั้ง |
+| EAFP vs LBYL | EAFP / LBYL | "Easier to ask forgiveness than permission" (ลองทำไปเลยแล้วค่อยจับ exception) เทียบกับ "look before you leap" (เช็คก่อนทำ) EAFP หลีกเลี่ยง race ระหว่างตอนเช็คกับตอนใช้จริง (TOCTOU) |
+| `assert` | assert | การเช็คสำหรับ debug เท่านั้น ถูกตัดทิ้งทั้งหมดเมื่อรัน Python ด้วย `-O` ห้ามใช้ validate input ที่มาจากภายนอก |
+| Custom exception | custom exception | `Exception` subclass ที่ผู้ใช้นิยามเอง มักตั้งราก base class เดียวไว้ระดับ package เพื่อให้ผู้เรียก catch ทั้งตระกูลได้ในทีเดียว |
+| Exception group / `except*` | exception group / except* | `ExceptionGroup` รวม exception หลายตัวที่ไม่เกี่ยวข้องกันแต่ raise มาพร้อมกัน (เช่นจาก concurrent task) `except*` จับและจัดการแยกตาม type ได้ |
+| Context manager | context manager | object ที่ implement `__enter__` / `__exit__` ใช้กับ `with` เพื่อรับประกันว่า cleanup จะรันเสมอแม้ block ข้างในจะ raise |
+| `contextlib.contextmanager` | contextlib.contextmanager | เปลี่ยน generator function (มี `yield` เดียว แบ่งเป็น setup กับ teardown) ให้กลายเป็น context manager โดยไม่ต้องเขียน class เอง |
+
+## Async and concurrency
+
+| English | Thai Style | หมายเหตุ |
+|---------|-----------|---------|
+| Coroutine function | coroutine function | function ที่ define ด้วย `async def` การเรียกมันไม่ได้รัน body ทันที แต่คืน coroutine object กลับมา |
+| Coroutine (object) | coroutine | object ที่ได้จากการเรียก coroutine function มันจะไม่ทำอะไรจนกว่าจะถูก await หรือถูก schedule และจะขึ้น `RuntimeWarning` ถ้าถูก garbage-collect ทั้งที่ยังไม่ถูกใช้ |
+| `await` | await | หยุด coroutine ปัจจุบันไว้ชั่วคราวจนกว่า awaitable ที่ await อยู่ (coroutine อีกตัว, `Task`, หรือ Future) จะเสร็จ ระหว่างนั้นให้ event loop ไปทำงานอื่นก่อน |
+| Event loop | event loop | scheduler แบบ single-thread ที่รัน coroutine โดยสลับกันทำงาน ณ จุดที่มี `await` `asyncio.run()` เป็นคนสร้างและขับเคลื่อน event loop ให้ |
+| `Task` | Task | coroutine ที่ถูกห่อและ schedule ให้รันบน event loop แบบ concurrent สร้างด้วย `asyncio.create_task()` หรือ `TaskGroup` ถ้าไม่มี reference เก็บไว้ก็ถูก garbage-collect ทิ้งกลางทางแบบเงียบ ๆ ได้ ต้องเก็บ reference ไว้ (เช่นใน set) จนกว่าจะเสร็จ |
+| `TaskGroup` | TaskGroup | context manager แบบ structured concurrency ที่รันและ await task หลายตัวพร้อมกัน ถ้าตัวไหน fail จะ cancel ตัวที่เหลือแล้ว raise `ExceptionGroup` |
+| `asyncio.gather` | asyncio.gather | รัน awaitable หลายตัวพร้อมกันแล้วเก็บผลลัพธ์ตามลำดับ input ถ้าใส่ `return_exceptions=True` จะทำตัวคล้าย `Promise.allSettled` แทนที่จะ fail ทันทีที่ตัวใดตัวหนึ่งพัง |
+| GIL (Global Interpreter Lock) | GIL | lock ของ CPython ที่ทำให้มีแค่ thread เดียวรัน Python bytecode ได้ในแต่ละขณะ มันปกป้อง internal state ของ interpreter เท่านั้น ไม่ได้ปกป้อง data structure ของเรา `x += 1` ข้าม thread ก็ยัง race ได้ |
+| Free-threaded build | free-threaded build | build แบบ `python3.14t` / no-GIL (PEP 703) ที่เอา GIL ออก ทำให้หลาย thread รัน Python bytecode ขนานกันจริง ๆ แลกมาด้วย overhead ของ lock ต่อ object ที่เพิ่มขึ้น เป็นคนละ build กัน ไม่ใช่ flag ที่เปิดบน interpreter ปกติ |
+| Thread | thread | หน่วยการทำงานระดับ OS ที่ share memory กับ process เดียวกัน มีประโยชน์ใน Python หลัก ๆ กับงานที่รอ I/O เพราะติดข้อจำกัดของ GIL |
+| Process | process | process ระดับ OS ที่มี memory และ GIL เป็นของตัวเอง ใช้เพื่อทำงานขนานจริงบน CPU ผ่าน `multiprocessing` |
+| Start method / `__main__` guard | start method / __main__ guard | วิธีที่ `multiprocessing` สร้าง interpreter ของ process ใหม่ (`spawn` บน macOS/Windows, `forkserver` เป็น default บน Unix ที่ไม่ใช่ macOS ตั้งแต่ Python 3.14) ทุก entry point ที่เริ่ม process ต้องครอบด้วย `if __name__ == "__main__":` ไม่งั้น module ที่ถูก import ซ้ำใน interpreter ใหม่จะรัน launch code ระดับบนสุดซ้ำอีกรอบ |
+| Race condition | race condition | thread หลายตัว (หรือ task ที่ share state ข้าม `await`) อ่านและเขียน mutable state เดียวกันโดยไม่มีการ synchronize อย่างน้อยหนึ่งตัวเขียนอยู่ ผลลัพธ์จึงขึ้นกับ timing |
+| `Lock` | Lock | primitive สำหรับ synchronize ที่ให้แค่ thread เดียว (หรือ task เดียว สำหรับ `asyncio.Lock`) ถือมันได้ในแต่ละขณะ ปกป้อง critical section |
+| Blocking call | blocking call | การเรียกแบบ synchronous (`time.sleep`, HTTP request แบบ sync, งานที่กิน CPU หนัก) ที่ทำอยู่ข้างใน coroutine ซึ่งจะ freeze event loop ทั้งตัวแทนที่จะคืน control ให้ |
+| Concurrency vs parallelism | concurrency / parallelism | concurrency คือการจัดโครงสร้างโปรแกรมให้หลายงานคืบหน้าในช่วงเวลาเดียวกัน (asyncio, thread) ส่วน parallelism คือหลายงานทำงานพร้อมกันจริง ๆ ในขณะเดียวกันเป๊ะ ๆ (multiprocessing, หลาย CPU core) |
+
+## Testing and tooling
+
+| English | Thai Style | หมายเหตุ |
+|---------|-----------|---------|
+| `pytest` | pytest | test runner/framework ของ third-party ที่ใช้กันเป็นมาตรฐาน อิงกับ statement `assert` ธรรมดา ไม่ใช้ method แบบ `self.assertEqual` |
+| Fixture | fixture | function ของ `pytest` ที่จัดการ setup (และ teardown ได้ถ้าต้องการ) ที่ test เรียกใช้โดยระบุชื่อเป็น parameter default เป็น scope ต่อ function เดียว แต่ใช้ร่วมกันข้าม session หรือ module ได้ |
+| `parametrize` | parametrize | decorator ของ `pytest` ที่รัน test function เดิมซ้ำตามชุด input ที่ให้มา แล้วรายงานเป็น test case แยกกัน |
+| Mock | mock | object ตัวปลอมที่จำได้ว่าถูกเรียกยังไงบ้างและคืนค่าที่กำหนดไว้ล่วงหน้า ใช้แยก code ที่ test ออกจาก dependency จริง |
+| `monkeypatch` | monkeypatch | fixture ของ `pytest` ที่แทนที่ attribute, key ของ dict หรือ environment variable ชั่วคราวระหว่าง test หนึ่งตัว แล้วคืนค่าเดิมให้อัตโนมัติเมื่อจบ |
+| Patch target | patch target | `unittest.mock.patch` แทนที่ name ตรงจุดที่ถูก *lookup* (reference ในฝั่ง module ที่ import ไปใช้) ไม่ใช่ตรงจุดที่ define ต้นทาง patch ผิด module แล้วจะไม่มีอะไรเกิดขึ้นแบบเงียบ ๆ |
+| Coverage | coverage | สัดส่วนของ line หรือ branch ที่ test รันผ่าน เป็นสัญญาณที่จำเป็นแต่ไม่พอ — coverage 100% พิสูจน์แค่ว่าทุก line ถูกรัน ไม่ได้พิสูจน์ว่าถูกตรวจสอบถูกต้อง |
+| `venv` | venv | environment ของ Python ที่แยกจาก stdlib มี package ติดตั้งเป็นของตัวเอง แยกจาก interpreter ของระบบ |
+| `uv` | uv | เครื่องมือที่เขียนด้วย Rust ทำงานเร็ว มาแทน `pip` / `venv` / `pip-tools` ทั้งสร้าง environment, ติดตั้ง dependency, และ lock version |
+| Lockfile | lockfile | ไฟล์ (`uv.lock`) ที่ pin version ที่ resolve แล้วแบบเป๊ะของทุก dependency ทั้งทางตรงและทางอ้อม ให้การติดตั้งได้ผลเหมือนกันทุกเครื่อง |
+| Wheel vs sdist | wheel / sdist | wheel (`.whl`) คือ binary distribution ที่ build ไว้พร้อมติดตั้งเลย ข้ามขั้นตอน build ไปได้ ส่วน sdist (`.tar.gz` ของ source) อาจต้อง build (compile extension) บนเครื่องปลายทางเอง |
+| `pyproject.toml` | pyproject.toml | ไฟล์ metadata และ config การ build ของ project ที่เป็นมาตรฐาน (PEP 518 / PEP 621) มาแทน `setup.py` สำหรับประกาศ dependency, build backend และ config ของเครื่องมือต่าง ๆ |
+| Linter | linter | เครื่องมือ static (ruff) ที่ชี้ปัญหา style และ bug ที่มักเกิด (เช่น mutable default argument, bare `except:`) โดยไม่ต้องรัน code จริง |
+| `-X dev` / `-W error` | -X dev / -W error | runtime flag ที่เปิดการเช็คเพิ่มเติม (dev mode) หรือยกระดับ warning — อย่าง coroutine ที่ไม่ถูก await — ให้กลายเป็น error จริง เผยให้เห็น bug ที่ปกติจะผ่านไปแบบเงียบ ๆ |
+
+## เมื่อไม่ควรใช้ literal Thai translation
+
+| หลีกเลี่ยง | ใช้แทน |
+|------------|--------|
+| ฟังก์ชัน | function |
+| คลาส | class |
+| เมธอด | method |
+| ประเภทข้อมูล | type |
+| พจนานุกรม | dict |
+| รายการ | list |
+| ทูเพิล | tuple |
+| ข้อยกเว้น | exception |
+| การตกแต่ง | decorator |
+| โครูทีน | coroutine |
+| เธรด | thread |
+| กระบวนการ | process |
+| ตัวสร้าง (สำหรับ generator) | generator |
+| ตัววนซ้ำ | iterator |
+| ผู้เรียก | caller |
+| คุณสมบัติ (สำหรับ property/descriptor) | property / descriptor |
+| ตัวแปร | ตัวแปร (ใช้ได้ปกติ ไม่ใช่ calque) |
+
+<ProgressTracker client:visible id="th/glossary" />

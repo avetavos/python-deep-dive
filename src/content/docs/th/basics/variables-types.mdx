@@ -16,9 +16,9 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 ชนิดของตัวแปรถูกกำหนดโดยออบเจกต์ที่อ้างถึงในขณะนั้น ไม่ใช่โดยการประกาศ
 
 ```python
-x = 10          # x อ้างถึง int
-x = "hello"     # x อ้างถึง str แล้ว — ถูกต้องสมบูรณ์
-x = [1, 2, 3]   # x อ้างถึง list แล้ว
+x = 10          # x references an int
+x = "hello"     # x now references a str — perfectly valid
+x = [1, 2, 3]   # x now references a list
 ```
 
 นี่เรียกว่า **dynamic typing**
@@ -48,7 +48,7 @@ Python มีชนิดข้อมูล scalar สี่ชนิดที�
 age = 30
 print(type(age))           # <class 'int'>
 print(isinstance(age, int))  # True
-print(isinstance(True, int)) # True — bool เป็น subclass ของ int
+print(isinstance(True, int)) # True — bool is a subclass of int
 ```
 
 ## การแปลงชนิดข้อมูล
@@ -83,7 +83,7 @@ name = ""
 if name:
     print("has name")
 else:
-    print("name is empty")   # branch นี้ทำงาน
+    print("name is empty")   # this branch runs
 ```
 
 ## Demo ที่รันได้จริง

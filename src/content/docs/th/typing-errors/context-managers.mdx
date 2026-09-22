@@ -20,7 +20,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 ```python
 with open("data.txt") as f:
     content = f.read()
-# f ถูกปิดเสมอที่นี่ แม้ read() จะ raise
+# f is always closed here, even if read() raised
 ```
 
 ## วิธีที่ `with` ทำงาน: protocol
@@ -88,7 +88,7 @@ import contextlib
 def managed_resource(name: str):
     print(f"Acquiring {name}")
     try:
-        yield name          # ค่าที่ bind ให้ as-variable
+        yield name          # value bound to the as-variable
     finally:
         print(f"Releasing {name}")
 ```

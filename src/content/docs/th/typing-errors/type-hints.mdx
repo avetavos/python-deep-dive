@@ -58,7 +58,7 @@ from typing import Optional
 
 def find_user(user_id: int) -> Optional[str]:
     users = {1: "Alice", 2: "Bob"}
-    return users.get(user_id)   # คืน str หรือ None
+    return users.get(user_id)   # returns str or None
 ```
 
 ใน Python 3.10+ เขียนเป็น `str | None` ได้เลย:
@@ -140,7 +140,7 @@ function ที่จะทำงานเมื่อมีคนขอเท�
 
 ```python
 class Node:
-    def link(self, other: Node) -> Node:   # Node ยังไม่ถูกนิยาม — แต่ไม่มีปัญหา
+    def link(self, other: Node) -> Node:   # Node is not defined yet — still fine
         self.other = other
         return self
 ```
@@ -150,9 +150,9 @@ class Node:
 ```python
 from annotationlib import Format, get_annotations
 
-get_annotations(Node.link, format=Format.VALUE)       # object ที่ resolve แล้ว
-get_annotations(Node.link, format=Format.STRING)      # ข้อความจาก source
-get_annotations(Node.link, format=Format.FORWARDREF)  # ForwardRef ตรงที่ resolve ไม่ได้
+get_annotations(Node.link, format=Format.VALUE)       # resolved objects
+get_annotations(Node.link, format=Format.STRING)      # the source text
+get_annotations(Node.link, format=Format.FORWARDREF)  # ForwardRef where it cannot resolve
 ```
 
 ## เครื่องมือ typing สมัยใหม่ที่เหลือ

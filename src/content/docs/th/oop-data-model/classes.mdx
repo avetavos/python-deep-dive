@@ -34,7 +34,7 @@ Python ส่งให้อัตโนมัติ คุณไม่ต้อ
 
 ```python
 rex = Dog("Rex", 3)
-rex.bark()   # Python เรียก Dog.bark(rex) ภายใต้ hood
+rex.bark()   # Python calls Dog.bark(rex) under the hood
 ```
 
 `self` ไม่ใช่ keyword — คุณตั้งชื่ออื่นได้ — แต่ `self` เป็น convention สากลใน Python และการเบี่ยงเบนจะทำให้ผู้อ่านและเครื่องมือทุกอย่างสับสน
@@ -67,7 +67,7 @@ class Animal:
 
 class Dog(Animal):
     def __init__(self, name: str) -> None:
-        super().__init__(name, "woof")   # delegate ไปยัง Animal.__init__
+        super().__init__(name, "woof")   # delegate to Animal.__init__
 
     def fetch(self, item: str) -> str:
         return f"{self.name} fetches the {item}!"

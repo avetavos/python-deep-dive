@@ -104,7 +104,7 @@ export const projectLayoutDiagram = `flowchart TD
   root --> reqs["requirements.txt"]
   root --> pyproj["pyproject.toml"]`;
 
-<Mermaid code={projectLayoutDiagram} title="Typical Python project layout" />
+<Mermaid code={projectLayoutDiagram} title="โครงสร้างโปรเจกต์ Python ทั่วไป" />
 
 <Callout title="ใช้ virtual environment แยกสำหรับแต่ละโปรเจกต์เสมอ">
 อย่าติดตั้งแพ็กเกจใน Python environment ระดับ global แต่ละโปรเจกต์ควรมี `.venv` ของตัวเองเพื่อแยก dependency versions ออกจากกัน เพิ่ม `.venv/` ลงใน `.gitignore` โปรเจกต์สมัยใหม่ใช้ `pyproject.toml` ร่วมกับ `pip install -e .` สำหรับ editable installs — ดูที่บทเรียน Packaging

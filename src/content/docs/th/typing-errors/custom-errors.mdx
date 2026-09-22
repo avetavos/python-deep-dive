@@ -39,7 +39,7 @@ Override `__init__` เพื่อแนบข้อมูลเพิ่มเ
 ```python
 class AppError(Exception):
     def __init__(self, message: str, code: int = 0) -> None:
-        super().__init__(message)   # ส่ง message ให้ Exception
+        super().__init__(message)   # pass message to Exception
         self.code = code
 ```
 
@@ -68,9 +68,9 @@ class NotFoundError(AppError):
 try:
     raise ValidationError("email", "must contain @")
 except ValidationError as e:
-    print(f"Field {e.field!r} invalid: {e}")   # เฉพาะเจาะจง
+    print(f"Field {e.field!r} invalid: {e}")   # specific
 except AppError as e:
-    print(f"App error [{e.code}]: {e}")          # กว้างกว่า
+    print(f"App error [{e.code}]: {e}")          # broad
 ```
 
 ## `str(exception)` และ `repr(exception)`

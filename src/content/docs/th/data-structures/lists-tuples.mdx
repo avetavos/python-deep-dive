@@ -16,9 +16,9 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ```python
 fruits = ['apple', 'banana', 'cherry']
-fruits.append('date')        # เพิ่มที่ท้าย
-fruits.insert(1, 'avocado')  # แทรกก่อน index 1
-fruits.remove('banana')      # ลบรายการแรกที่พบ
+fruits.append('date')        # add to end
+fruits.insert(1, 'avocado')  # insert before index 1
+fruits.remove('banana')      # remove first occurrence
 print(fruits)                # ['apple', 'avocado', 'cherry', 'date']
 ```
 
@@ -58,9 +58,9 @@ print(words)    # ['apple', 'banana', 'cherry']
 ใช้ tuple เพื่อแสดง record ที่คงที่ซึ่งตำแหน่งมีความหมาย
 
 ```python
-rgb = (255, 128, 0)   # สีส้ม
-point = (3.0, 4.0)    # พิกัด 2 มิติ
-row = (1, 'Alice', 42)  # แถวในฐานข้อมูล
+rgb = (255, 128, 0)   # an orange colour
+point = (3.0, 4.0)    # a 2-D coordinate
+row = (1, 'Alice', 42)  # a database row
 ```
 
 ### Tuple unpacking

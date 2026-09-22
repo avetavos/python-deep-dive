@@ -23,10 +23,10 @@ async def fetch(label: str, delay: float) -> str:
     return f"{label} result"
 
 async def sequential() -> None:
-    a = await fetch("A", 0.3)   # รอ 0.3 วินาที
-    b = await fetch("B", 0.2)   # รอ 0.2 วินาทีหลัง A เสร็จ
+    a = await fetch("A", 0.3)   # waits 0.3 s
+    b = await fetch("B", 0.2)   # waits 0.2 s after A finishes
     print(a, b)
-    # รวม: ~0.5 วินาที
+    # Total: ~0.5 s
 
 asyncio.run(sequential())
 ```
@@ -46,7 +46,7 @@ async def concurrent() -> None:
         fetch("B", 0.2),
     )
     print(a, b)
-    # รวม: ~0.3 วินาที
+    # Total: ~0.3 s
 
 asyncio.run(concurrent())
 ```
@@ -66,11 +66,11 @@ async def worker(name: str, delay: float) -> str:
     return f"{name}-result"
 
 async def main() -> None:
-    # Schedule ทั้งสอง task ทันที — รันพร้อมกัน
+    # Schedule both tasks immediately — they run concurrently
     task_a = asyncio.create_task(worker("A", 0.3))
     task_b = asyncio.create_task(worker("B", 0.1))
 
-    # Await เพื่อรวบรวมผลลัพธ์
+    # Await them to collect results
     result_a = await task_a
     result_b = await task_b
     print(result_a, result_b)
@@ -99,11 +99,11 @@ async def long_running() -> None:
         print("done")
     except asyncio.CancelledError:
         print("cancelled — cleaning up")
-        raise    # re-raise CancelledError เสมอ
+        raise    # always re-raise CancelledError
 
 async def main() -> None:
     task = asyncio.create_task(long_running())
-    await asyncio.sleep(0.05)   # ให้มันเริ่มก่อน
+    await asyncio.sleep(0.05)   # let it start
     task.cancel()
     try:
         await task
@@ -129,7 +129,7 @@ import asyncio
 async def progress_bar(total: int) -> None:
     for i in range(total):
         print(f"\r[{'#' * (i + 1)}{' ' * (total - i - 1)}]", end="", flush=True)
-        await asyncio.sleep(0)   # yield ระหว่างแต่ละขั้นตอน
+        await asyncio.sleep(0)   # yield between steps
     print()
 
 asyncio.run(progress_bar(20))
@@ -152,7 +152,7 @@ async def main() -> None:
         task_a = tg.create_task(step("A", 0.2))
         task_b = tg.create_task(step("B", 0.1))
         task_c = tg.create_task(step("C", 0.3))
-    # ทั้งสาม task เสร็จสิ้น (หรือ group raise ExceptionGroup)
+    # All three tasks complete (or the group raises ExceptionGroup)
     print(task_a.result())
     print(task_b.result())
     print(task_c.result())

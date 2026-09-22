@@ -26,10 +26,10 @@ seq[start : stop : step]
 
 ```python
 nums = [10, 20, 30, 40, 50, 60, 70]
-nums[:3]    # [10, 20, 30]       — สามตัวแรก
-nums[2:5]   # [30, 40, 50]       — index 2, 3, 4
-nums[::2]   # [10, 30, 50, 70]   — ทุก element ที่สอง
-nums[::-1]  # [70, 60, 50, 40, 30, 20, 10]  — กลับลำดับ
+nums[:3]    # [10, 20, 30]       — first three
+nums[2:5]   # [30, 40, 50]       — indices 2, 3, 4
+nums[::2]   # [10, 30, 50, 70]   — every other element
+nums[::-1]  # [70, 60, 50, 40, 30, 20, 10]  — reversed
 ```
 
 ## Negative indices
@@ -38,9 +38,9 @@ Python รองรับ negative index: `-1` คือ element สุดท้
 
 ```python
 nums = [10, 20, 30, 40, 50, 60, 70]
-nums[-1]     # 70   — element สุดท้าย
-nums[-3:]    # [50, 60, 70]  — สามตัวสุดท้าย
-nums[:-3]    # [10, 20, 30, 40]  — ทุกอย่างยกเว้นสามตัวสุดท้าย
+nums[-1]     # 70   — last element
+nums[-3:]    # [50, 60, 70]  — last three
+nums[:-3]    # [10, 20, 30, 40]  — everything except last three
 ```
 
 Negative index ทำให้เข้าถึงส่วนท้ายของ sequence ได้ง่ายโดยไม่ต้องรู้ความยาว
@@ -53,7 +53,7 @@ Negative index ทำให้เข้าถึงส่วนท้ายข�
 ```python
 original = [1, 2, 3, 4, 5]
 reversed_copy = original[::-1]  # [5, 4, 3, 2, 1]
-print(original)                 # [1, 2, 3, 4, 5] — ไม่เปลี่ยนแปลง
+print(original)                 # [1, 2, 3, 4, 5] — unchanged
 ```
 
 สำหรับ string `[::-1]` ทำงานเหมือนกัน:
@@ -72,7 +72,7 @@ list ใหม่เป็น object ที่ต่างกันแต่แ�
 original = [1, 2, 3, 4, 5]
 copy = original[:]
 copy[0] = 99
-print(original)  # [1, 2, 3, 4, 5]  — ไม่เปลี่ยนแปลง
+print(original)  # [1, 2, 3, 4, 5]  — unchanged
 print(copy)      # [99, 2, 3, 4, 5]
 ```
 

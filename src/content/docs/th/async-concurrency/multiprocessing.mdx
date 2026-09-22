@@ -25,7 +25,7 @@ from multiprocessing import Pool
 def square(x: int) -> int:
     return x * x
 
-if __name__ == "__main__":        # จำเป็นบน macOS/Windows
+if __name__ == "__main__":        # REQUIRED on macOS/Windows
     with Pool(processes=4) as pool:
         results = pool.map(square, range(10))
     print(results)
@@ -57,7 +57,7 @@ def is_prime(n: int) -> bool:
 
 if __name__ == "__main__":
     candidates = list(range(1, 1_000_001))
-    with Pool() as pool:              # Pool() ใช้ cpu_count() workers เป็นค่าเริ่มต้น
+    with Pool() as pool:              # Pool() defaults to cpu_count() workers
         flags = pool.map(is_prime, candidates)
     primes = [n for n, flag in zip(candidates, flags) if flag]
     print(f"Found {len(primes)} primes up to 1,000,000")
@@ -155,7 +155,7 @@ if __name__ == "__main__":
 from multiprocessing import shared_memory
 import numpy as np
 
-# สร้าง shared memory block
+# Create a shared memory block
 shm = shared_memory.SharedMemory(create=True, size=400)   # 100 float32 values
 arr = np.ndarray((100,), dtype=np.float32, buffer=shm.buf)
 arr[:] = np.arange(100, dtype=np.float32)

@@ -1,0 +1,162 @@
+---
+title: Glossary
+description: 'Every term this course uses, in one place — object model, data structures, functions, OOP, typing, errors, async and concurrency, and testing and tooling.'
+sidebar:
+  order: 99
+---
+
+import ProgressTracker from '../../../components/ProgressTracker.tsx';
+
+Python's vocabulary looks familiar if you know another language, but several terms mean something narrower — or something different — here than they do elsewhere. When a lesson uses a word you are unsure about, look it up here.
+
+## Object model and names
+
+| Term | Meaning |
+|------|---------|
+| Object | Everything a Python program manipulates: every value, function, and class is an object with an identity, a type, and a value. |
+| Name | A label in a namespace that refers to (is bound to) an object — not a container that "holds" a value. |
+| Binding | The act of pointing a name at an object with `=`. Assignment never copies the object; it only rebinds the name. |
+| Identity | Which specific object a name refers to, checked with `is` and reported by `id()`. |
+| `is` vs `==` | `is` compares identity (the same object); `==` compares value (calls `__eq__`). Two equal values need not be the same object, and small-int/string caching can make `is` look "correct" until it silently isn't. |
+| Mutable / immutable | Whether an object's value can change after creation without changing its identity. `list`, `dict`, and `set` are mutable; `int`, `str`, `tuple`, and `frozenset` are immutable. |
+| Hashable | An object whose `__hash__` returns a stable value consistent with `__eq__` (objects that compare equal must hash equal). Required to be a dict key or set member. |
+| Namespace | A mapping from names to objects, implemented as a dict (`globals()`, `locals()`, a module's `__dict__`). |
+| Scope | The region of code where a name lookup can find a given binding, resolved through LEGB. |
+| LEGB | The order Python searches namespaces for a name: Local, Enclosing, Global, Built-in. |
+| Shadowing | Rebinding a builtin or outer-scope name (for example `list = [1, 2]`) so the original becomes unreachable in that scope. |
+| Truthiness | Whether an object counts as `True` in a boolean context. `0`, `""`, `[]`, `None`, and other empty containers are falsy even though they are valid, present values. |
+
+## Data structures
+
+| Term | Meaning |
+|------|---------|
+| `list` | A mutable, ordered sequence. |
+| `tuple` / `NamedTuple` | `tuple` is an immutable, ordered sequence — immutable only means its slots can't be reassigned, not that its contents can't mutate (a tuple can hold a mutable list). `NamedTuple` is an immutable, tuple-based record with named fields, accessed by attribute or index. |
+| `dict` | A mutable mapping of hashable keys to values, ordered by insertion since Python 3.7. |
+| `set` / `frozenset` | Unordered collections of unique hashable elements. `set` is mutable; `frozenset` is not, and is itself hashable. |
+| Dict view | The live, dynamic objects returned by `.keys()`, `.values()`, and `.items()`. They reflect later changes to the dict rather than freezing a snapshot. |
+| `defaultdict` | A dict subclass that calls a factory to create a missing key's value instead of raising `KeyError`. |
+| `Counter` | A dict subclass for counting hashable items, supporting arithmetic between counts. |
+| `deque` | A double-ended queue with O(1) append/pop from both ends, unlike a list's O(n) `insert(0, ...)`. |
+| Slice | A `start:stop:step` range description, written inline (`a[1:3]`) or built as a `slice` object. |
+| Aliasing | Two names bound to the same mutable object, so a mutation through one name is visible through the other. Not the same as copying. |
+| Shallow copy / deep copy | A shallow copy duplicates the outer container only, so nested mutable elements are still shared. A deep copy (`copy.deepcopy`) recursively duplicates everything. |
+
+## Functions
+
+| Term | Meaning |
+|------|---------|
+| Parameter vs argument | A parameter is the name in a function's definition; an argument is the value supplied at a call site. |
+| Positional-only parameter | A parameter that must be passed by position, marked by a `/` in the signature. |
+| Keyword-only parameter | A parameter that must be passed by name, marked by a bare `*` in the signature. |
+| `*args` / `**kwargs` | Collecting extra positional arguments into a tuple, or extra keyword arguments into a dict. |
+| Default argument | A value used when the caller omits that argument. Evaluated once, at function-definition time. |
+| Mutable default | A default argument value that is a mutable object (for example `def f(items=[])`). Because defaults are created once, every call that doesn't override it shares — and can accumulate state in — the same object. |
+| Closure | A function that remembers the variables from an enclosing scope even after that scope has finished executing, capturing them by reference, not by value. |
+| `nonlocal` / `global` | Declarations that let an inner function assign to (not just read) a name from an enclosing function scope or the module scope, instead of creating a new local. |
+| Decorator | A function that takes a function (or class) and returns a replacement, applied with `@name` syntax. |
+| `functools.wraps` | A decorator-writing helper that copies `__name__`, `__doc__`, and other metadata from the wrapped function onto the wrapper, so introspection tools don't see the wrapper's identity instead. |
+| Generator / generator expression | Calling a function that contains `yield` returns a generator object without running the body. A generator expression is the lazy, one-line form written with parentheses, for example `(x*x for x in range(10))`. |
+| Iterable | An object whose `__iter__` returns an iterator. Can be looped over repeatedly, for example a `list`. |
+| Iterator | An object with `__next__` (and `__iter__` returning itself) that produces values one at a time and is exhausted once consumed. A generator is one specific kind of iterator. |
+
+## OOP and the data model
+
+| Term | Meaning |
+|------|---------|
+| Class | A factory for objects that defines shared attributes and methods. Itself an object — an instance of `type`. |
+| Instance | An object created by calling a class. |
+| `self` | The instance a method was called on, passed explicitly as the first parameter by convention (not a keyword). |
+| Method | A function defined in a class body. Accessed on an instance it becomes a bound method, already associated with that instance, so calling it no longer requires passing `self` manually. |
+| `classmethod` / `staticmethod` | A `classmethod` receives the class (`cls`) instead of an instance — commonly used for alternate constructors. A `staticmethod` receives neither and is just a function namespaced under the class. |
+| Dunder method | A "double underscore" method (`__init__`, `__repr__`, `__eq__`, ...) that Python calls implicitly to implement a protocol like construction, printing, or comparison. `__repr__` is the unambiguous, developer-facing form (used by the REPL and containers); `__str__` is the readable, user-facing one and falls back to `__repr__` if undefined. |
+| `__init__` vs `__new__` | `__new__` creates and returns the instance; `__init__` receives that instance and initializes it. Overriding `__new__` is needed for immutable-type subclasses or singletons, where `__init__` runs too late to change what gets returned. |
+| MRO (Method Resolution Order) | The linear order Python searches a class's bases for an attribute, computed by the C3 linearization algorithm. Visible as `Cls.__mro__`. |
+| `super()` | Calls the next class in the MRO — not necessarily the immediate parent. Used for cooperative multiple inheritance. |
+| Duck typing | Relying on an object simply having the right methods or attributes at runtime, with no formal type declaration ("if it walks like a duck"). |
+| Protocol | A static, structural type: any class with the matching methods satisfies it without inheriting from it, letting a type checker verify duck typing ahead of time. |
+| ABC (Abstract Base Class) | A base class that enforces its subclasses implement specific methods, checked at instantiation time via `abc.ABCMeta` / `@abstractmethod`. |
+| Descriptor | An object implementing `__get__` / `__set__` (or `__delete__`) that customizes attribute access when placed as a class attribute. `property` is the most common built-in descriptor. |
+| Dataclass | A class decorated with `@dataclasses.dataclass` that auto-generates `__init__`, `__repr__`, and `__eq__` from its declared fields. |
+| `__slots__` | A class attribute that reserves fixed storage for a fixed set of instance attributes, removing the per-instance `__dict__` to save memory and block new attributes. |
+
+## Typing
+
+| Term | Meaning |
+|------|---------|
+| Type hint | An annotation describing the intended type of a variable, parameter, or return value. Pure documentation to CPython, which never checks it at runtime. |
+| Annotation | The `: Type` or `-> Type` syntax itself, stored in `__annotations__` but not enforced. |
+| Static type checker | A separate tool (mypy, pyright) that reads annotations and reports type errors without running the program. |
+| `Any` | A type that opts out of type checking entirely for that value. Assigning to or from `Any` is always accepted, silently hiding real mismatches. |
+| `Optional[T]` | Shorthand for `T | None`. Narrowing it to `T` needs an explicit check like `if x is not None`, not just `if x:` (which also excludes falsy-but-present values). |
+| Narrowing | A checker refining a variable's known type within a branch based on a preceding check (`isinstance`, `is None`, ...). |
+| Invariance | Generic containers are invariant by default: `list[Dog]` is not a `list[Animal]`, because a function could insert a non-`Dog` `Animal` through that reference. Use `Sequence` / `Iterable` for read-only parameters to allow subtypes. |
+| `Protocol` (typing) | Used as a parameter type to mean "anything shaped like this," checked structurally — see Protocol above. |
+| `TypedDict` | A dict type with a fixed, named, per-key type schema, checked statically but still a plain `dict` at runtime. |
+| `TypeVar` / generics (`def f[T]`) | A placeholder type parameter that lets a function or class be written once and used at multiple concrete types, with the checker tracking which one applies per call. |
+| `Literal` / `Final` / `ClassVar` | `Literal` restricts a type to one or more exact values (for example `Literal["get", "post"]`) rather than just their type. `Final` marks a name as never reassigned after its first binding. `ClassVar` marks an annotated attribute as belonging to the class, not to each instance. All three are checked statically only. |
+| `Self` | A return-type annotation meaning "the same type as the calling class," so subclasses get the correct return type instead of the base class. |
+| `cast()` | Tells the checker to trust a type with no runtime verification — an assertion of a fact rather than a check of one. A lie if you're wrong. |
+| `TypeGuard` vs `TypeIs` | Both mark a function as a custom narrowing check. `TypeGuard` only narrows in the `True` branch and can narrow to an unrelated type. `TypeIs` narrows in both branches and requires the narrowed type to be a subtype of the input. |
+| `Never` | A type with no valid values, used as a return type for functions that never return (always raise), and paired with `assert_never()` to make `match` / `if` exhaustiveness checkable. |
+| `@overload` | Declares multiple type signatures for one function so a checker can pick the right return type based on argument types, without changing runtime behavior. |
+| `TYPE_CHECKING` | A constant that's `False` at runtime but treated as `True` by type checkers. Used to import types only needed for annotations, without a runtime import cost or circular import. |
+
+## Errors
+
+| Term | Meaning |
+|------|---------|
+| Exception | An object representing an error, raised with `raise` and matched by `except`. A subclass of `BaseException`. |
+| `BaseException` | The root of the exception hierarchy. Includes things you almost never want to catch broadly (`SystemExit`, `KeyboardInterrupt`) in addition to `Exception`. |
+| Traceback | The record of the call stack at the point an exception was raised, read from bottom (the actual error) to top (how execution got there). |
+| Exception chaining | Linking a new exception to the one that caused it — implicit via `__context__` (raised while handling another) or explicit via `raise ... from err` (`__cause__`). |
+| `raise` vs `raise err` | Bare `raise` re-raises the current exception with its original traceback intact. `raise err` on a caught, already-named exception adds a new traceback frame at that point. |
+| Bare `except:` | Catches every `BaseException`, including `KeyboardInterrupt` and `SystemExit`. Almost always wrong unless it always re-raises. |
+| EAFP vs LBYL | "Easier to ask forgiveness than permission" (try the operation, catch the exception) vs "look before you leap" (check first). EAFP avoids a race between the check and the use (TOCTOU). |
+| `assert` | A debug-only check removed entirely when Python runs with `-O`. Never use it to validate untrusted input. |
+| Custom exception | A user-defined `Exception` subclass, usually rooted at one package-level base class so callers can catch the whole family at once. |
+| Exception group / `except*` | `ExceptionGroup` bundles multiple unrelated exceptions raised together (for example from concurrent tasks). `except*` matches and handles them by type. |
+| Context manager | An object implementing `__enter__` / `__exit__`, used with `with` to guarantee cleanup runs even if the block raises. |
+| `contextlib.contextmanager` | Turns a generator function (one `yield`, split into setup and teardown) into a context manager without writing a class. |
+
+## Async and concurrency
+
+| Term | Meaning |
+|------|---------|
+| Coroutine function | A function defined with `async def`. Calling it does not run the body — it returns a coroutine object. |
+| Coroutine (object) | The object returned by calling a coroutine function. It does nothing until awaited or scheduled, and produces a `RuntimeWarning` if garbage-collected unused. |
+| `await` | Suspends the current coroutine until the awaited awaitable (another coroutine, a `Task`, or a Future) completes, letting the event loop run other work. |
+| Event loop | The single-threaded scheduler that runs coroutines, switching between them at `await` points. `asyncio.run()` creates and drives one. |
+| `Task` | A coroutine wrapped and scheduled to run on the event loop concurrently, created by `asyncio.create_task()` or a `TaskGroup`. A task with no kept reference can be silently garbage-collected mid-run — keep a reference (for example in a set) until it finishes. |
+| `TaskGroup` | A structured-concurrency context manager that runs and awaits multiple tasks together, cancelling siblings and raising an `ExceptionGroup` if any fail. |
+| `asyncio.gather` | Runs multiple awaitables concurrently and collects their results in input order. With `return_exceptions=True` it behaves like `Promise.allSettled` instead of failing fast. |
+| GIL (Global Interpreter Lock) | CPython's lock ensuring only one thread executes Python bytecode at a time. It protects the interpreter's internal state, not your data structures — `x += 1` across threads can still race. |
+| Free-threaded build | The `python3.14t` / no-GIL build (PEP 703) that removes the GIL and lets threads run Python bytecode truly in parallel, at the cost of extra per-object locking overhead. A distinct build, not a runtime flag on the normal interpreter. |
+| Thread | An OS-level unit of execution sharing one process's memory. Useful in Python mainly for I/O-bound work because of the GIL. |
+| Process | An independent OS process with its own memory and its own GIL, used for real CPU parallelism via `multiprocessing`. |
+| Start method / `__main__` guard | How `multiprocessing` creates a new process's Python interpreter (`spawn` on macOS/Windows, `forkserver` the non-macOS Unix default since Python 3.14). Every entry point that starts processes must be wrapped in `if __name__ == "__main__":` so a re-imported module in the new interpreter doesn't re-run the top-level launch code. |
+| Race condition | Two threads (or tasks sharing state across an `await`) reading and writing the same mutable state without synchronization, at least one of them writing, so the outcome depends on timing. |
+| `Lock` | A synchronization primitive that lets only one thread (or one task, for `asyncio.Lock`) hold it at a time, protecting a critical section. |
+| Blocking call | A synchronous call (`time.sleep`, a sync HTTP request, heavy CPU work) made inside a coroutine, which freezes the entire event loop instead of yielding control. |
+| Concurrency vs parallelism | Concurrency is structuring a program to make progress on multiple tasks over the same period (asyncio, threads). Parallelism is multiple tasks executing at the literal same instant (multiprocessing, multiple CPU cores). |
+
+## Testing and tooling
+
+| Term | Meaning |
+|------|---------|
+| `pytest` | The de facto third-party test runner and framework, layered on plain `assert` statements instead of `self.assertEqual`-style methods. |
+| Fixture | A `pytest` function providing setup (and optional teardown) that tests request by naming it as a parameter. Scoped per-function by default, reusable across a session or module. |
+| `parametrize` | A `pytest` decorator that runs the same test function once per given set of inputs, reported as separate test cases. |
+| Mock | A stand-in object that records how it was called and returns canned values, used to isolate the code under test from a real dependency. |
+| `monkeypatch` | A `pytest` fixture that safely replaces an attribute, dict entry, or environment variable for the duration of one test and restores it automatically afterward. |
+| Patch target | `unittest.mock.patch` replaces a name where it is *looked up* (the importing module's reference), not where it's originally defined. Patching the wrong module silently does nothing. |
+| Coverage | The percentage of code lines or branches executed by a test run. A necessary but not sufficient signal — 100% coverage proves every line ran, not that it was checked correctly. |
+| `venv` | A stdlib-provided isolated Python environment with its own installed packages, keeping project dependencies separate from the system interpreter. |
+| `uv` | A fast, Rust-based tool that replaces `pip` / `venv` / `pip-tools` for creating environments, installing dependencies, and locking versions. |
+| Lockfile | A file (`uv.lock`) pinning the exact resolved version of every dependency, direct and transitive, so installs are reproducible across machines. |
+| Wheel vs sdist | A wheel (`.whl`) is a prebuilt, ready-to-install binary distribution — installing one skips the build step. An sdist (`.tar.gz` of the source) may need to be built (compiling extensions) on the target machine. |
+| `pyproject.toml` | The standardized project metadata and build-configuration file (PEP 518 / PEP 621), replacing `setup.py` for declaring dependencies, build backend, and tool config. |
+| Linter | A static tool (ruff) that flags style issues and likely bugs (for example mutable default arguments, bare `except:`) without running the code. |
+| `-X dev` / `-W error` | Runtime flags that turn on extra runtime checks (dev mode) or promote warnings — like an un-awaited coroutine — into hard errors, surfacing bugs that otherwise pass silently. |
+
+<ProgressTracker client:visible id="en/glossary" />

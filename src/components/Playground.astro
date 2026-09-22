@@ -23,6 +23,25 @@ const { code, lang = 'python' } = Astro.props;
 <script>
   import { runPython } from './py-runner';
 
+  const TH = document.documentElement.lang?.startsWith('th');
+  const T = TH
+    ? {
+        run: 'รัน ▸',
+        running: 'กำลังรัน…',
+        open: 'เปิด REPL ออนไลน์',
+        hint: 'กำลังโหลด Python runtime (เฉพาะครั้งแรก)…',
+        noOutput: '(ไม่มี output)',
+        failed: 'รันไม่สำเร็จ — ลองใช้ REPL ออนไลน์',
+      }
+    : {
+        run: 'Run ▸',
+        running: 'Running…',
+        open: 'Open in an online REPL',
+        hint: 'Loading Python runtime (first run only)…',
+        noOutput: '(no output)',
+        failed: T.failed,
+      };
+
   document.querySelectorAll<HTMLElement>('.pg').forEach((pg) => {
     if (pg.dataset.wired) return;
     pg.dataset.wired = '1';
@@ -33,6 +52,10 @@ const { code, lang = 'python' } = Astro.props;
     const hint = pg.querySelector<HTMLElement>('[data-hint]');
     const errBox = pg.querySelector<HTMLElement>('[data-err]');
     const outBox = pg.querySelector<HTMLElement>('[data-out]');
+    if (hint) hint.textContent = T.hint;
+    if (runBtn) runBtn.textContent = T.run;
+    const openBtn2 = pg.querySelector<HTMLElement>('[data-open]');
+    if (openBtn2) openBtn2.textContent = T.open;
 
     openBtn?.addEventListener('click', () => {
       navigator.clipboard?.writeText(code);
@@ -40,7 +63,7 @@ const { code, lang = 'python' } = Astro.props;
 
     runBtn?.addEventListener('click', async () => {
       runBtn.disabled = true;
-      runBtn.textContent = 'Running…';
+      runBtn.textContent = T.running;
       if (hint) hint.hidden = false;
       if (errBox) errBox.hidden = true;
       if (outBox) outBox.hidden = true;
@@ -51,17 +74,17 @@ const { code, lang = 'python' } = Astro.props;
           errBox.hidden = false;
         }
         if (outBox) {
-          outBox.querySelector('code')!.textContent = (data.output ?? '') || '(no output)';
+          outBox.querySelector('code')!.textContent = (data.output ?? '') || T.noOutput;
           outBox.hidden = false;
         }
       } catch {
         if (errBox) {
-          errBox.querySelector('code')!.textContent = 'Run failed — try the online REPL.';
+          errBox.querySelector('code')!.textContent = T.failed;
           errBox.hidden = false;
         }
       } finally {
         runBtn.disabled = false;
-        runBtn.textContent = 'Run ▸';
+        runBtn.textContent = T.run;
         if (hint) hint.hidden = true;
       }
     });
