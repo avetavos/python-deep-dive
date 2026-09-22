@@ -1,0 +1,331 @@
+---
+title: 'Worked review 1: CSV report CLI'
+description: 'โปรแกรม CSV order report สไตล์ AI 65 บรรทัด ที่มี bug ปลูกไว้ 4 ตัว -- mutable default argument, aliasing, bare except และ naive datetime -- หา, แก้ และ verify ใหม่'
+sidebar:
+  order: 5
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+นี่คือ script แบบที่ AI assistant ผลิตออกมาในครั้งเดียวสำหรับ "parse CSV นี้แล้วให้ discount report หน่อย": มันรันได้ พิมพ์ report ที่ดูสมเหตุสมผล และมี bug จริง 4 ตัว อ่านมันเองรอบหนึ่งก่อนขยาย `<details>` ไหนก็ตามด้านล่าง หาให้ได้มากที่สุดเท่าที่จะทำได้ แล้วค่อยเทียบ
+
+<Playground code={csvReportBuggyCode} />
+
+export const csvReportBuggyCode = `import csv
+import io
+from datetime import datetime
+
+
+def parse_orders(csv_text: str, errors: list[str] = []) -> list[dict]:
+    orders = []
+    reader = csv.DictReader(io.StringIO(csv_text))
+    for row in reader:
+        try:
+            row["amount"] = float(row["amount"])
+            orders.append(row)
+        except:
+            errors.append(row["order_id"])
+    return orders
+
+
+def apply_discount(orders: list[dict], pct: float) -> list[dict]:
+    for order in orders:
+        order["amount"] = order["amount"] * (1 - pct)
+    return orders
+
+
+def build_report(orders: list[dict]) -> dict:
+    total = sum(order["amount"] for order in orders)
+    return {
+        "generated_at": datetime.utcnow().isoformat(),
+        "order_count": len(orders),
+        "total": round(total, 2),
+    }
+
+
+BATCH_1 = """order_id,customer,amount
+1001,Ada,120.50
+1002,Grace,not-a-number
+1003,Linus,89.99
+"""
+
+BATCH_2 = """order_id,customer,amount
+2001,Bob,45.00
+2002,Frank,not-a-number
+"""
+
+orders_1 = parse_orders(BATCH_1)
+before_discount = orders_1[0]["amount"]
+discounted_1 = apply_discount(orders_1, 0.10)
+print("batch 1 order 1001 before discount:", before_discount)
+print("batch 1 order 1001 after discount:", orders_1[0]["amount"])
+
+report_1 = build_report(discounted_1)
+print("report 1:", report_1)
+
+orders_2 = parse_orders(BATCH_2)
+report_2 = build_report(orders_2)
+print("report 2:", report_2)
+
+leaked_errors = parse_orders.__defaults__[0]
+print("shared default errors list after both batches:", leaked_errors)
+`.trim();
+
+**output จริง** (timestamp จะต่างกันตอนคุณรัน ส่วนที่เหลือตรงเป๊ะ):
+
+```text
+batch 1 order 1001 before discount: 120.5
+batch 1 order 1001 after discount: 108.45
+report 1: {'generated_at': '2026-09-22T14:32:20.889615', 'order_count': 2, 'total': 189.44}
+report 2: {'generated_at': '2026-09-22T14:32:20.889744', 'order_count': 1, 'total': 45.0}
+shared default errors list after both batches: ['1002', '2002']
+```
+
+## สิ่งที่พบ
+
+<details>
+<summary>Bug 1: <code>errors: list[str] = []</code> เป็น mutable default argument (catalog #1)</summary>
+
+**อาการ:** `parse_orders.__defaults__[0]` — object ของ default argument จริงที่ทุก call ที่ไม่มี `errors` ของตัวเองแชร์กัน — มี `['1002', '2002']` จากทั้งสองแบตช์ ทั้งที่ทั้งสอง call ในโค้ดข้างบนไม่เคยส่ง argument `errors` เข้าไปเลย และดูเหมือนเป็นอิสระจากกันโดยสมบูรณ์
+
+**หลักฐาน:** default value `[]` ถูกสร้างครั้งเดียวเป๊ะ ตอน `parse_orders` ถูก define ไม่ใช่ครั้งละ call ทุก call ที่พึ่ง default นี้แชร์ object เดียวกันนั้น
+
+**ทางแก้:** default เป็น `None` แล้วสร้าง list ใหม่ข้างใน function body:
+
+```python
+def parse_orders(csv_text: str, errors: list[str] | None = None) -> list[dict]:
+    if errors is None:
+        errors = []
+    ...
+```
+
+</details>
+
+<details>
+<summary>Bug 2: <code>apply_discount</code> mutate list ของผู้เรียกในที่เดิม (catalog #3)</summary>
+
+**อาการ:** `before_discount` (`120.5`) และ `orders_1[0]["amount"]` หลัง call (`108.45`) เป็น *dict entry เดียวกัน* — `apply_discount` ไม่ได้คืน copy ที่ลด discount แล้วตัวใหม่ มันเขียนทับ field `amount` บนทุก dict ที่ผู้เรียกส่งเข้ามาแบบเงียบ ๆ แล้วคืน list เดิมนั้นกลับไป
+
+**หลักฐาน:** `discounted_1 is orders_1` จะเป็น `True` — function ไม่มีบรรทัดไหน copy อะไรเลย
+
+**ทางแก้:** สร้างค่า `Order` ใหม่แทนที่จะ mutate ในที่เดิม เพื่อให้ข้อมูลต้นฉบับของผู้เรียกรอด:
+
+```python
+def apply_discount(orders: list[Order], pct: float) -> list[Order]:
+    return [replace(order, amount=order.amount * (1 - pct)) for order in orders]
+```
+
+</details>
+
+<details>
+<summary>Bug 3: bare <code>except:</code> กลืนมากกว่าแค่ parse failure ที่ตั้งใจ (catalog #6)</summary>
+
+**อาการ:** แถว `1002` ("not-a-number") ถูกบันทึกเป็น error และถูกตัดออกจาก report อย่างเงียบ ๆ — ซึ่งดูถูกต้องสำหรับ input นี้ แต่ `except:` clause จับ *ทุกอย่าง* ไม่ใช่แค่ `ValueError` จาก `float(...)` ที่ fail: column `"amount"` ที่หายไป, `row` ที่เป็น `None` หรือ bug จริงอื่นใดใน function นี้จะถูกกลืนแบบเดียวกันเป๊ะ ถูกบันทึกราวกับเป็นแค่แถวที่ไม่ดีอีกแถวหนึ่ง
+
+**หลักฐาน:** การรัน `ruff` บนไฟล์นี้ flag bare `except:` ตรง ๆ (ดู **สิ่งที่เครื่องมือจับได้** ด้านล่าง)
+
+**ทางแก้:** ระบุ exception เฉพาะเจาะจง:
+
+```python
+try:
+    amount = float(row["amount"])
+except ValueError:
+    errors.append(row["order_id"])
+    continue
+```
+
+</details>
+
+<details>
+<summary>Bug 4: <code>datetime.utcnow()</code> ให้ timestamp แบบ naive ที่ deprecated แล้ว (catalog #19)</summary>
+
+**อาการ:** การรันด้วย `-X dev` พิมพ์ `DeprecationWarning` จริงชี้ไปที่บรรทัดนี้เป๊ะ และ field `generated_at` ในทั้งสอง report ไม่มีข้อมูล timezone เลย — ผู้ใช้ report นี้บอกไม่ได้ว่า `"2026-09-22T14:32:20.889615"` หมายถึง UTC, เวลาท้องถิ่นของ server หรืออะไรอื่น
+
+**หลักฐาน — warning จริง:**
+
+```text
+DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+```
+
+**ทางแก้:**
+
+```python
+"generated_at": datetime.now(timezone.utc).isoformat(),
+```
+
+</details>
+
+## เวอร์ชันที่แก้แล้ว
+
+แก้ทั้งสี่ bug แล้ว บวกกับเปลี่ยน data model จาก `dict` row หลวม ๆ เป็น `Order` dataclass เล็ก ๆ — ทางแก้ของ bug 2 (คืนค่าใหม่แทนที่จะ mutate) เป็นธรรมชาติกว่ามากเมื่อแต่ละ order เป็น object จริงที่สร้างแยกจากกัน ไม่ใช่ dict ที่แชร์กัน:
+
+<Playground code={csvReportFixedCode} />
+
+export const csvReportFixedCode = `import csv
+import io
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
+
+
+@dataclass
+class Order:
+    order_id: str
+    customer: str
+    amount: float
+
+
+def parse_orders(csv_text: str, errors: list[str] | None = None) -> list[Order]:
+    if errors is None:
+        errors = []
+    orders: list[Order] = []
+    reader = csv.DictReader(io.StringIO(csv_text))
+    for row in reader:
+        try:
+            amount = float(row["amount"])
+        except ValueError:
+            errors.append(row["order_id"])
+            continue
+        orders.append(Order(order_id=row["order_id"], customer=row["customer"], amount=amount))
+    return orders
+
+
+def apply_discount(orders: list[Order], pct: float) -> list[Order]:
+    return [replace(order, amount=order.amount * (1 - pct)) for order in orders]
+
+
+def build_report(orders: list[Order]) -> dict[str, object]:
+    total = sum(order.amount for order in orders)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "order_count": len(orders),
+        "total": round(total, 2),
+    }
+
+
+BATCH_1 = """order_id,customer,amount
+1001,Ada,120.50
+1002,Grace,not-a-number
+1003,Linus,89.99
+"""
+
+BATCH_2 = """order_id,customer,amount
+2001,Bob,45.00
+2002,Frank,not-a-number
+"""
+
+orders_1 = parse_orders(BATCH_1)
+before_discount = orders_1[0].amount
+discounted_1 = apply_discount(orders_1, 0.10)
+print("batch 1 order 1001 before discount:", before_discount)
+print("batch 1 order 1001 after discount (original unchanged):", orders_1[0].amount)
+
+report_1 = build_report(discounted_1)
+print("report 1:", report_1)
+
+orders_2 = parse_orders(BATCH_2)
+report_2 = build_report(orders_2)
+print("report 2:", report_2)
+
+errors_1: list[str] = []
+parse_orders(BATCH_1, errors_1)
+errors_2: list[str] = []
+parse_orders(BATCH_2, errors_2)
+print("batch 1 errors:", errors_1)
+print("batch 2 errors (independent from batch 1):", errors_2)
+`.trim();
+
+**output จริง** (timestamp จะต่างกัน):
+
+```text
+batch 1 order 1001 before discount: 120.5
+batch 1 order 1001 after discount (original unchanged): 120.5
+report 1: {'generated_at': '2026-09-22T14:33:23.884852+00:00', 'order_count': 2, 'total': 189.44}
+report 2: {'generated_at': '2026-09-22T14:33:23.885013+00:00', 'order_count': 1, 'total': 45.0}
+batch 1 errors: ['1002']
+batch 2 errors (independent from batch 1): ['2002']
+```
+
+`orders_1[0].amount` ตอนนี้ไม่เปลี่ยนหลัง `apply_discount` (`120.5` ไม่ใช่ `108.45`), errors ของแต่ละแบตช์แยกจากกันจริง และ `generated_at` มี `+00:00` แล้ว
+
+## สิ่งที่เครื่องมือจับได้
+
+**`ruff` บนไฟล์ที่มี bug** — สามในสี่ bug จับได้ตรง ๆ:
+
+```text
+B006 Do not use mutable data structures for argument defaults
+E722 Do not use bare `except`
+DTZ003 `datetime.datetime.utcnow()` used
+```
+
+Bug 2 (aliasing) ไม่มีเครื่องมือไหนจับได้เลย — ไม่มี linter ตัวไหนนับว่า docstring หรือ contract ของ `apply_discount` สัญญาไว้ว่าจะไม่ mutate argument ของมัน
+
+**`ruff` บนไฟล์ที่แก้แล้ว:**
+
+```text
+All checks passed!
+```
+
+**`mypy --strict` และ `pyright` บนไฟล์ที่แก้แล้ว** — สะอาดทั้งคู่ หลังจาก `dict` row หลวม ๆ กลายเป็น `Order` dataclass ที่ type แล้ว:
+
+```text
+mypy --strict:  Success: no issues found in 1 source file
+pyright:        0 errors, 0 warnings, 0 informations
+```
+
+<Callout title="สามในสี่จับได้อัตโนมัติ หนึ่งต้องใช้คน">
+นี่คือสัดส่วนที่เป็นตัวแทนของ catalog นี้: `ruff` ตัวเดียวจับ 3 ใน 4 bug ในไฟล์นี้ได้โดยไม่ต้องตั้งค่าอะไรเลย ตัวที่สี่ — function ที่ mutate ข้อมูลของผู้เรียกแบบเงียบ ๆ — ต้องอ่าน body ของ `apply_discount` แล้วเทียบกับสิ่งที่ชื่อและ signature ของมันบอกใบ้ไว้
+</Callout>
+
+export const quizWorkedReview1 = [
+  {
+    q: "ทำไม `parse_orders.__defaults__[0]` ถึงมี error code จากทั้งสองแบตช์ ทั้งที่ไม่มี call ไหนในสคริปต์ส่ง argument `errors` เลย?",
+    options: [
+      "Python merges all list arguments across function calls automatically",
+      "The default value `[]` is created once at function-definition time and shared by every call that omits the argument -- both batches append into that same object",
+      "This is a bug in the __defaults__ attribute itself",
+      "Global variables always leak between function calls"
+    ],
+    answer: 1,
+    explain: "ค่า default argument ถูก evaluate ครั้งเดียวเป๊ะ ตอน function ถูก define ไม่ใช่ครั้งละ call ทุก call ที่พึ่ง default แชร์ object เดียวกันนั้น -- ตรงกับ bug mutable-default-argument จาก AI Bug Catalog พอดี"
+  },
+  {
+    q: "`apply_discount(orders_1, 0.10)` คาดว่าจะคืน copy ที่ลด discount แล้ว แต่ `orders_1[0][\"amount\"]` เปลี่ยนไปด้วย ทำไม?",
+    options: [
+      "Python always deep-copies list arguments automatically, so this shouldn't happen",
+      "apply_discount iterates the list and rewrites each dict's \"amount\" key directly -- it mutates the same dict objects the caller passed in, rather than building new ones",
+      "This only happens because the CSV had a parsing error in it",
+      "dict values cannot be reassigned after creation"
+    ],
+    answer: 1,
+    explain: "order[\"amount\"] = ... ข้างใน loop mutate dict object เดียวกันเป๊ะที่ทั้ง orders_1 และ parameter orders ของ function เอง reference อยู่ -- function ต้นฉบับไม่มีบรรทัดไหน copy อะไรเลย"
+  },
+  {
+    q: "bare `except:` ใน parse_orders ต้นฉบับถูกเขียนขึ้นเพื่อจับ ValueError จาก float() ที่ fail มันจับอะไรอีกบ้างจริง ๆ?",
+    options: [
+      "Nothing else -- bare except only catches the specific error type it was 'meant' for",
+      "Every exception, including KeyboardInterrupt, SystemExit, and any unrelated bug (a missing column, a malformed row) that would otherwise reveal itself as a crash",
+      "Only exceptions raised inside the try block's first line",
+      "TypeError specifically, but not other exception types"
+    ],
+    answer: 1,
+    explain: "bare except: (เหมือนกับ except BaseException: เป๊ะ) จับทุกอย่าง ไม่สนใจว่าผู้เขียนตั้งใจจับอะไร -- แปลง bug อื่นที่ไม่เกี่ยวข้องให้กลายเป็นผลลัพธ์ 'แถวไม่ดี' เดียวกันกับ parse failure จริงแบบเงียบ ๆ"
+  },
+  {
+    q: "ทั้งเวอร์ชันที่มี bug และที่แก้แล้วของ build_report ให้ field 'generated_at' ที่ดูเหมือน timestamp string ที่ valid ความต่างเชิงฟังก์ชันจริง ๆ คืออะไร?",
+    options: [
+      "There is no real difference -- both are equally usable",
+      "The fixed version's timestamp carries timezone information (+00:00); the buggy version's is naive, meaning nothing in the string itself says what timezone it represents",
+      "The fixed version is always exactly one hour ahead",
+      "The buggy version fails to parse as a valid ISO timestamp at all"
+    ],
+    answer: 1,
+    explain: "datetime.utcnow() คืนค่าเวลา wall-clock UTC แต่ไม่มี tzinfo ผูกอยู่ -- 'naive' datetime.now(timezone.utc) ผูก timezone info จริง ทำให้ string ที่ได้หมายถึง UTC อย่างไม่กำกวมต่อผู้ใช้คนไหนก็ตาม และเทียบกับ aware datetime อื่นได้อย่างปลอดภัย"
+  }
+];
+
+<Quiz client:visible id="reading-python/worked-review-1" questions={quizWorkedReview1} />
+
+<ProgressTracker client:visible id="reading-python/worked-review-1" />

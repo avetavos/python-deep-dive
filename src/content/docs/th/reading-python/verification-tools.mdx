@@ -1,0 +1,297 @@
+---
+title: Verification tools
+description: 'ruff, mypy --strict, pyright, python -X dev, pytest + coverage, bandit และ pip-audit แต่ละตัวจับอะไรได้จริง และพลาดอะไร พร้อม output จริงจาก bug ใน catalog'
+sidebar:
+  order: 4
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+output ทุกอันด้านล่างเป็นของจริง จับมาจากการรันแต่ละเครื่องมือกับ pattern จาก **[AI Bug Catalog](/python/th/reading-python/ai-bug-catalog/)** ไม่มีเครื่องมือไหนครอบคลุมซ้อนกันสมบูรณ์ และไม่มีตัวไหนใกล้เคียงกับความสมบูรณ์เลย — ประเด็นของบทนี้คือรู้ให้ชัดว่าแต่ละตัว coverage สิ้นสุดตรงไหน เพื่อให้รู้ว่าอะไรยังเป็นหน้าที่ของคุณอยู่
+
+## `ruff` — ไบนารีเดียว ทั้ง lint และ format จับ pattern ได้มากที่สุดฟรี
+
+`ruff check` รันกฎหลายร้อยข้อ (reimplementation ของมันเองจาก `pyflakes`, `pycodestyle`, `flake8-bugbear`, security check ของ `bandit`, `flake8-async` และอื่น ๆ) ในรอบเดียวที่เร็ว โดยไม่ต้องติดตั้ง plugin แยก เก้าใน 24 pattern ของ catalog นี้ถูกจับโดย rule ของ `ruff` โดยไม่ต้องตั้งค่าอะไรเลย: `B006`, `B023`, `TRY201`, `S101`, `RUF006`, `ASYNC251`, `PLW1641`, `RUF012`, `DTZ003`, `SIM115`, `S602`, `T201` บวก coverage บางส่วนจาก `F632` และตระกูล `E722`/`S110`/`BLE001` สำหรับ pattern #6
+
+**`ruff --fix` ปลอดภัยโดยออกแบบ — `--unsafe-fixes` ไม่ปลอดภัย** `--fix` ใช้แค่ rewrite ที่ `ruff` มั่นใจว่ารักษาพฤติกรรมเดิม `--unsafe-fixes` ใช้ rewrite ที่ปกติถูกต้องแต่สามารถเปลี่ยนความหมายได้ — และมันไม่ถามก่อนทำ before/after จริงบน catalog pattern #1:
+
+```python
+# before
+def add_item(item: str, cart: list[str] = []) -> list[str]:
+    cart.append(item)
+    return cart
+```
+
+```bash
+ruff check --select B006 --fix --unsafe-fixes add_item.py
+```
+
+```python
+# after -- ruff's own unsafe rewrite
+def add_item(item: str, cart: list[str] = None) -> list[str]:
+    if cart is None:
+        cart = []
+    cart.append(item)
+    return cart
+```
+
+การ rewrite นี้แก้ runtime bug จริง — แต่มันปล่อยให้ parameter ถูก annotate เป็น `list[str]` ในขณะที่ default เป็น `None` ซึ่งไม่ใช่ทางแก้เดียวกับที่คนที่รอบคอบจะเขียน (`list[str] | None = None`) การรัน `mypy --strict` บนไฟล์ *ที่ rewrite แล้ว* โดยไม่แก้ไขอะไรเพิ่ม:
+
+```text
+error: Incompatible default for parameter "cart" (default has type "None", parameter has type "list[str]")  [assignment]
+note: PEP 484 prohibits implicit Optional. Accordingly, mypy has changed its default to no_implicit_optional=True
+```
+
+`--unsafe-fixes` แลก bug จริงหนึ่งตัวกับ type error จริงหนึ่งตัว แบบเงียบ ๆ ในรอบอัตโนมัติเดียว รัน type checker ใหม่เสมอ (และอ่าน diff) หลัง `--unsafe-fixes` — ห้ามรันมันแบบไม่มีคนดูใน CI เด็ดขาด
+
+## `mypy --strict` เทียบกับ `pyright` — เห็นตรงกันจริง และเห็นต่างกันจริง
+
+ทั้งคู่เป็น static type checker ที่อ่าน annotation เดียวกัน และมักเห็นตรงกัน — แต่ "มักจะ" ไม่ใช่ "เสมอ" และผู้รีวิวที่รันแค่ตัวเดียวอาจถูกหลอกโดยจุดบอดของอีกตัว
+
+**เห็นตรงกันจริง** บน catalog pattern #17 (`Optional` ไม่ narrow):
+
+```text
+mypy --strict:  error: Item "None" of "str | None" has no attribute "upper"  [union-attr]
+pyright:        error: "upper" is not a known attribute of "None" (reportOptionalMemberAccess)
+```
+
+**เห็นตรงกันจริง** บน catalog pattern #18 (list invariance):
+
+```text
+mypy --strict:  error: Argument 1 to "add_a_cat" has incompatible type "list[Dog]"; expected "list[Animal]"  [arg-type]
+pyright:        error: Argument of type "list[Dog]" cannot be assigned to parameter "animals" of type "list[Animal]" (reportArgumentType)
+```
+
+**เห็นต่างกันจริง** บน status check บรรทัดเดียวที่โค้ด AI เขียนบ่อยมาก:
+
+```python
+def is_ready(status: int) -> bool:
+    return status == "ready"
+```
+
+```text
+mypy --strict:  error: Non-overlapping equality check (left operand type: "int", right operand type: "Literal['ready']")  [comparison-overlap]
+pyright:        0 errors, 0 warnings, 0 informations
+```
+
+`mypy --strict` รวม `--strict-equality` ซึ่ง flag การเทียบระหว่างสอง type ที่ไม่มีทางเท่ากันได้จริง — `status` เป็น `int` เสมอ `"ready"` เป็น `str` เสมอ ดังนั้น `status == "ready"` เป็น `False` เสมอ และแทบจะแน่นอนว่าเป็น bug (เทียบตัวแปรผิด หรือเทียบกับ literal ผิด) `pyright` ไม่มี check เทียบเท่าเปิด default และเงียบสนิทกับไฟล์นี้เป๊ะ ถ้ารันแค่ `pyright` ใน CI จะปล่อย bug นี้ผ่านไป ถ้ารันแค่ `mypy --strict` จะจับได้
+
+**เงียบสนิทจริง ทั้งสองเครื่องมือ ไฟล์เดียวกัน** บน catalog pattern #16 (`Any` บวก `# type: ignore` แบบเหมารวม):
+
+```text
+mypy --strict:  Success: no issues found in 1 source file
+pyright:        0 errors, 0 warnings, 0 informations
+```
+
+ไม่มีเครื่องมือไหนพูดอะไรเกี่ยวกับ `AttributeError` ตอน runtime ที่รออยู่บรรทัดถัดไปเลย — `Any` เป็นทางออกที่จงใจของทั้งสอง type system ไม่ใช่ช่องโหว่ใน implementation ของตัวไหนเลย
+
+<Callout title="รันทั้งคู่ แล้วอ่านสิ่งที่ทั้งคู่ไม่ flag">
+`mypy --strict` และ `pyright` เห็นต่างกันบ่อยพอ (ปุ่มความเข้มงวด default ต่างกัน, การจัดการ narrowing ต่างกัน, check แบบ opt-in อย่าง `--strict-equality` ต่างกัน) จนการรันแค่ตัวเดียวเป็นช่องว่าง coverage จริง ไม่ใช่แค่ความระมัดระวังซ้ำซ้อน จุดที่ *ทั้งคู่* เงียบ — `Any` ไหนก็ตาม `# type: ignore` ไหนก็ตาม — คือจุดที่ส่วน typing ของ **[Review Checklist](/python/th/reading-python/review-checklist/)** มีไว้จับสิ่งที่ไม่มีเครื่องมือไหนจับได้พอดี
+</Callout>
+
+## `python -X dev` / `-W error` — เครื่องมือเดียวที่เฝ้าดูโปรแกรมรันจริง
+
+`python3.14 -X dev` เปิด development mode ของ Python: assertion เพิ่มเติมตอน runtime, `ResourceWarning` สำหรับไฟล์ที่ไม่ปิด, asyncio debug mode (log slow-callback) และ — สำคัญที่สุดสำหรับ catalog นี้ — ข้อความ `RuntimeWarning: coroutine '...' was never awaited` ทันทีที่ coroutine ที่ถูกทิ้งไว้ถูก garbage-collect `-W error::RuntimeWarning` (ที่ verifier ของคอร์สนี้ใช้เอง) เปลี่ยน warning นั้นให้กลายเป็น exception ที่ raise ขึ้นมาเพิ่มเติม ทุกที่ที่ยังไม่ได้อยู่ใน `warnings.catch_warnings()` block
+
+**output จริง** catalog pattern #9 (coroutine ที่ไม่เคย await):
+
+```text
+Exception ignored while finalizing coroutine <coroutine object greet at 0x...>:
+RuntimeWarning: coroutine 'greet' was never awaited
+```
+
+**output จริง** catalog pattern #19 (`datetime.utcnow()`):
+
+```text
+DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+```
+
+**พลาด:** ทุกอย่างที่ต้องการให้ code path นั้นรันจริง ๆ ระหว่างการรันนั้น coroutine ที่ไม่เคย await แต่ไม่เคยถูก garbage-collect ระหว่าง script สั้น ๆ หรือ race condition ที่บังเอิญไม่สลับผิดจังหวะในรอบนี้ ไม่ให้ warning อะไรเลย — `-X dev` พิสูจน์ว่ามีปัญหาที่มันสังเกตเห็น ไม่เคยพิสูจน์การไม่มีปัญหาที่มันบังเอิญไม่ trigger
+
+## `pytest` + coverage — บอกว่าอะไรไม่เคยถูกรัน ไม่ใช่บอกว่าอะไรพัง
+
+```python
+def withdraw(balance: int, amount: int) -> int:
+    if amount > balance:
+        raise ValueError("insufficient funds")
+    return balance - amount
+```
+
+```python
+def test_withdraw_success():
+    assert withdraw(100, 30) == 70
+```
+
+**output จริง** `pytest --cov=account --cov-report=term-missing`:
+
+```text
+.                                                                        [100%]
+Name         Stmts   Miss  Cover   Missing
+------------------------------------------
+account.py       4      1    75%   3
+------------------------------------------
+TOTAL            4      1    75%
+1 passed in 0.01s
+```
+
+test ตัวเดียวผ่าน และ coverage เป็น 75% — 25% ที่ขาดไปคือบรรทัด 3 พอดี ซึ่งคือ branch `raise ValueError` coverage ไม่ได้เจอ bug ในบรรทัดนั้น มันแค่เจอว่าไม่มีใคร test มันเลย ซึ่งเป็นการรับประกันที่ต่างกัน (และอ่อนกว่า)
+
+**พลาด:** ความถูกต้องทั้งหมด coverage 100% พิสูจน์ว่าทุกบรรทัดถูกรันอย่างน้อยหนึ่งครั้งระหว่าง test ใดก็ได้ — มันไม่พิสูจน์อะไรเลยว่า assertion ใน test นั้นถูกต้องหรือเปล่า หรือ input เฉพาะที่ trigger bug (เช่น race ใน catalog pattern #12) เคยถูกลองหรือเปล่า ดู **[Worked Review 4](/python/th/reading-python/worked-review-4/)** สำหรับ suite เต็มที่ผ่านด้วย coverage สูงทั้งที่มี bug จริงหลายตัวหลุดไป
+
+## `bandit` — static analysis เน้น security overlap กับ `S` rule ของ `ruff` โดยตั้งใจ
+
+`bandit` มีมาก่อน `ruff` จะ port security rule มาและยังมีประโยชน์เป็นความเห็นที่สองที่เป็นอิสระ หรือในโปรเจกต์ที่ยังใช้ `ruff` ไม่ได้ บน catalog นี้มัน flag ปัญหาเดียวกันกับที่ `ruff`'s `S`-prefixed rule ทำ ภายใต้ code หมายเลข `B` ของตัวเอง:
+
+```text
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+>> Issue: [B602:subprocess_popen_with_shell_equals_true] subprocess call with shell=True identified, security issue.
+>> Issue: [B404:blacklist] Consider possible security implications associated with the subprocess module.
+```
+
+**พลาด:** อะไรก็ตามนอกเหนือจาก rule set ที่เน้น security ของมัน logic bug, mutability bug และ async pattern ส่วนใหญ่ใน catalog นี้อยู่นอกขอบเขตของ `bandit` โดยการออกแบบ
+
+## `pip-audit` (หรือเครื่องมือเทียบเท่าของ `uv`) — CVE ที่รู้จักใน version ที่ pin ไว้จริง
+
+```text
+requirements.txt:
+requests
+urllib3==1.26.4
+```
+
+**output จริงจาก `pip-audit -r requirements.txt`:**
+
+```text
+Found 18 known vulnerabilities in 1 package
+Name    Version ID              Fix Versions
+------- ------- --------------- -------------
+urllib3 1.26.4  PYSEC-2021-108  1.26.5
+urllib3 1.26.4  PYSEC-2023-192  1.26.17,2.0.6
+urllib3 1.26.4  PYSEC-2023-212  1.26.18,2.0.7
+...
+```
+
+**พลาด:** โค้ดของคุณเองทั้งหมด `pip-audit` ตอบคำถามเดียวเท่านั้น — "version ที่ pin ไว้มีช่องโหว่ที่รู้จักและเผยแพร่แล้วหรือเปล่า" — และไม่มีอะไรพูดเกี่ยวกับ logic bug, concurrency bug หรือการใช้ API ผิด ไม่ว่าจะอยู่ในโค้ดของคุณเองหรือช่องโหว่ที่ยังไม่ถูกค้นพบใน dependency มันยังจับ requirement ที่ *ไม่ pin* ที่ค่อย ๆ เก่าไปในทิศทางตรงข้ามไม่ได้ หรือ `sudo pip install` ที่ทำให้ system Python สกปรก — ดู catalog pattern #23
+
+<SpotTheBug code={`# requirements.txt
+django>=4.0`}>
+
+ไม่มีอะไรผิด syntax ที่นี่เลย และ `pip-audit` อาจรายงานช่องโหว่ที่รู้จักเป็นศูนย์กับอะไรก็ตามที่ `>=4.0` resolve ไปวันนี้ นั่นแหละคือกับดัก: lower bound ที่ไม่ pin หมายความว่า *ไฟล์เดียวกันเป๊ะ* สามารถ resolve เป็น major version ใหม่ที่ต่างออกไปในเดือนหน้า โดยไม่จำเป็นต้องมีช่องโหว่เกี่ยวข้องเลย — แค่พฤติกรรมที่เปลี่ยนไปโดยไม่มีใครขอตอน install `uv lock` (หรือ `pip-compile`) เปลี่ยนสิ่งนี้ให้เป็น pin ที่แน่นอนและ reproducible ได้ รัน audit tool ใหม่ทุกครั้งที่ lockfile อัปเดต ไม่ใช่แค่ครั้งเดียว
+
+</SpotTheBug>
+
+## รันทั้งชุดในคำสั่งเดียว
+
+แต่ละเครื่องมือครอบคลุมส่วนที่ต่างกันของ catalog นี้ ไม่ overlap กัน เมื่อ chain ด้วย `&&` คำสั่งจะหยุดที่เครื่องมือแรกที่เจออะไรบางอย่าง — output จริง รันกับไฟล์ของ catalog pattern #17 หยุดที่ `mypy`:
+
+```bash
+ruff check . && mypy --strict . && pyright . && bandit -q -r . && pytest --cov
+```
+
+```text
+All checks passed!
+file.py:2: error: Item "None" of "str | None" has no attribute "upper"  [union-attr]
+Found 1 error in 1 file (checked 1 source file)
+```
+
+`ruff` ผ่าน `mypy --strict` จับ bug ได้และ chain หยุดตรงนั้น — พฤติกรรม fail-fast แบบที่ต้องการพอดีใน pre-commit hook หรือ CI gate เพิ่ม `pip-audit -r requirements.txt` เป็นขั้นตอนแยกที่รันเป็นระยะ (ช่องโหว่ของ dependency เปลี่ยนไปตามเวลาแม้โค้ดของคุณจะไม่เปลี่ยนก็ตาม)
+
+## Mental Model
+
+```text
+                     Static (source only)              Dynamic (must run)
+                   ┌────────────────────────┐        ┌────────────────────────┐
+Mutability/errors/ │ ruff (B006, B023,      │        │                        │
+style bugs         │ TRY201, S101, RUF006,  │        │                        │
+                    │ ASYNC251, PLW1641,     │        │                        │
+                    │ RUF012, DTZ003, SIM115,│        │                        │
+                    │ S602, T201, F632*)     │        │                        │
+                    ├────────────────────────┤        ├────────────────────────┤
+Security-specific   │ bandit (overlaps ruff  │        │                        │
+                    │ S-rules independently) │        │                        │
+                    ├────────────────────────┤        ├────────────────────────┤
+Type mismatches     │ mypy --strict          │        │                        │
+                    │ pyright                │        │                        │
+                    │ (usually agree; can    │        │                        │
+                    │  disagree; both silent │        │                        │
+                    │  on bare Any)          │        │                        │
+                    ├────────────────────────┤        ├────────────────────────┤
+Runtime-only        │                        │        │ python -X dev / -W     │
+warnings            │                        │        │ error (never-awaited,  │
+                    │                        │        │ deprecated calls)      │
+                    ├────────────────────────┤        ├────────────────────────┤
+Known CVEs in       │ pip-audit / uv audit   │        │                        │
+pinned dependencies │                        │        │                        │
+                    ├────────────────────────┤        ├────────────────────────┤
+What ran vs. didn't │                        │        │ pytest --cov           │
+                    └────────────────────────┘        └────────────────────────┘
+* F632 only catches the direct-literal is-comparison shape, not variable-vs-variable.
+```
+
+<Callout title="ทุกเครื่องมือที่นี่เป็นตัวกรอง ไม่ใช่คำตัดสิน">
+การรันสะอาดทั้งหน้านี้ยังเหลือประมาณหนึ่งในสามของ **[AI Bug Catalog](/python/th/reading-python/ai-bug-catalog/)** ที่ไม่ถูกแตะ — aliasing, แถว `[[...]]*n` ที่แชร์กัน, race ข้าม `await`, `Pool()` ที่ไม่มี guard, `mock.patch` target ผิด และอื่น ๆ รันทุกเครื่องมือ แล้วยังต้องไล่ **[Review Checklist](/python/th/reading-python/review-checklist/)** ด้วยตาอยู่ดี
+</Callout>
+
+export const quizVerificationTools = [
+  {
+    q: "การรัน `ruff check --fix --unsafe-fixes` บน mutable-default-argument pattern เปลี่ยน `cart: list[str] = []` เป็น `cart: list[str] = None` สิ่งนี้แสดงอะไร?",
+    options: [
+      "unsafe-fixes always produces perfectly correct code, this is expected",
+      "The rewrite fixed the runtime aliasing bug but introduced a real mypy --strict error (assigning None to a list[str]-annotated parameter) -- unsafe fixes need a type-checker re-run and a human read, not blind trust",
+      "ruff never modifies type annotations",
+      "This proves --unsafe-fixes should never be used under any circumstances"
+    ],
+    answer: 1,
+    explain: "การแก้นี้ซ่อม shared-mutable-default bug ได้จริง แต่ปล่อย annotation ที่ไม่สอดคล้องกันไว้ ซึ่งการรัน mypy --strict ครั้งถัดมาจับได้ทันที -- นี่คือเหตุผลว่าทำไม output ของ --unsafe-fixes ต้องถูกรีวิว ไม่ใช่เหตุผลว่ามันไม่มีประโยชน์"
+  },
+  {
+    q: "บน `def is_ready(status: int) -> bool: return status == \"ready\"` mypy --strict รายงาน comparison-overlap error และ pyright รายงาน zero error สิ่งนี้บอกอะไรผู้รีวิวที่รันแค่ตัวเดียว?",
+    options: [
+      "pyright is broken and should be replaced",
+      "Running only pyright in CI would ship this exact bug; mypy --strict's --strict-equality check has no pyright equivalent enabled by default",
+      "mypy is wrong here because status could theoretically be compared to a string",
+      "Both tools would catch this if run with --strict"
+    ],
+    answer: 1,
+    explain: "mypy --strict รวม --strict-equality ซึ่ง flag การเทียบระหว่าง type ที่ไม่มีทางเท่ากันได้ pyright ไม่มี default เทียบเท่า ผู้รีวิวที่พึ่ง pyright อย่างเดียวจึงได้ false all-clear บนการเทียบที่เป็น always-False จริง ๆ"
+  },
+  {
+    q: "ทั้ง mypy --strict และ pyright รายงาน zero issue บน function parameter ที่ type เป็น Any ซึ่งทำให้เกิด AttributeError จริงทีหลัง ผู้รีวิวควรสรุปว่าอย่างไร?",
+    options: [
+      "The function is correct, since both strict checkers agree",
+      "Any is a deliberate escape hatch both type systems honor identically -- a clean report next to an Any-typed value proves nothing about how that value is actually used",
+      "This means both tools have the same bug",
+      "Any is not really supported by either checker"
+    ],
+    answer: 1,
+    explain: "Any ปิดการเช็ค type ของทุกอย่างที่มันแตะทั้งใน mypy และ pyright โดยการออกแบบ -- ไม่ใช่ช่องว่าง coverage ใน implementation ตัวใดตัวหนึ่ง รายงาน strict-mode ที่สะอาดข้าง value ที่เป็น Any ไม่ใช่หลักฐานของความถูกต้องเลย"
+  },
+  {
+    q: "test suite รายงาน coverage 75% โดย 25% ที่ขาดไปคือบรรทัดที่ raise ValueError เมื่อ input ผิด coverage report บอกอะไรจริง ๆ?",
+    options: [
+      "The ValueError line has a bug",
+      "That line was never executed by any test -- coverage measures what ran, not whether the code that ran (or didn't) is correct",
+      "The test suite is broken and needs to be rewritten",
+      "75% coverage means the code is 75% likely to be bug-free"
+    ],
+    answer: 1,
+    explain: "coverage วัดแค่ 'บรรทัดนี้ถูกรันระหว่าง test ใดก็ได้หรือเปล่า' บรรทัดที่ไม่ถูก test อาจถูกต้องสมบูรณ์หรือพังยับก็ได้ -- coverage แยกแยะสองอย่างนี้ไม่ได้ มันแค่ flag ว่าไม่มีใครดูมัน"
+  },
+  {
+    q: "`pip-audit -r requirements.txt` รายงานช่องโหว่ที่รู้จัก 18 รายการสำหรับ `urllib3==1.26.4` ที่ pin ไว้ pip-audit จะจับความเสี่ยงเดียวกันได้ไหม ถ้า requirement เป็น `urllib3` ที่ไม่ pin version เลย?",
+    options: [
+      "Yes, identically -- pip-audit checks the package name regardless of version",
+      "Not the same way -- pip-audit audits the versions actually resolved/installed at the time it runs; an unpinned requirement can resolve to a different version on a different day, which is a reproducibility risk pip-audit doesn't directly flag on the requirements file alone",
+      "pip-audit refuses to run on files with unpinned requirements",
+      "Unpinned requirements are always safer because they get the newest version automatically"
+    ],
+    answer: 1,
+    explain: "การเช็ค CVE ของ pip-audit ทำงานบน version ที่ resolve/install จริง requirement ที่ไม่ pin หลีกเลี่ยงคำถามเรื่อง version เฉพาะเจาะจงที่ pip-audit ถูกสร้างมาตอบ และเปิดความเสี่ยงอีกแบบ (install ที่ reproduce ไม่ได้) ที่ไม่มี vulnerability scanner ตัวไหนถูกออกแบบมาจับจากข้อความใน requirements file เพียงอย่างเดียว"
+  }
+];
+
+<Quiz client:visible id="reading-python/verification-tools" questions={quizVerificationTools} />
+
+<ProgressTracker client:visible id="reading-python/verification-tools" />

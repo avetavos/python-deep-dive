@@ -1,0 +1,1203 @@
+---
+title: The AI bug catalog
+description: '24 bug ที่โค้ด Python ที่ AI generate ผลิตออกมาบ่อยมาก -- โค้ดที่ผิด, อาการจริง, ทางแก้ และเครื่องมือ (ถ้ามี) ที่จับมันได้'
+sidebar:
+  order: 2
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+pattern ทุกอันด้านล่างถูกเขียนให้เหมือน Python ที่ AI assistant ผลิตออกมาจริง ๆ แล้วรันบน `python3.14 -X dev -W error::RuntimeWarning`, เช็คด้วย `ruff`/`mypy --strict`/`pyright`/`bandit` ในจุดที่เกี่ยวข้อง และคัดลอกมาตรง ๆ จากการรันจริง — ไม่ได้เขียนจากความจำ แต่ละหัวข้อจบด้วย **Caught by** ระบุเครื่องมือตัวเดียวที่จับมันได้จริง หรือบอกตรง ๆ ว่าไม่มีเครื่องมือไหนจับได้เลย
+
+24 pattern ถูกจัดกลุ่มแบบเดียวกับ **[Review Checklist](/python/th/reading-python/review-checklist/)** ที่ตามมาหลังบทนี้: mutability, errors, async/concurrency, typing, resources & security และ tooling/style
+
+<Playground code={mutableDefaultCode} />
+
+export const mutableDefaultCode = `def add_item(item: str, cart: list[str] = []) -> list[str]:
+    cart.append(item)
+    return cart
+
+
+first = add_item("apple")
+second = add_item("banana")
+print(first)
+print(second is first)
+`.trim();
+
+pattern แรกนี้คือตัวที่ควรลองรันเองก่อนอ่านต่อ — playground ด้านบนพิมพ์ `['apple', 'banana']` สำหรับ `first` ไม่ใช่ `['apple']` และพิมพ์ `True` สำหรับ identity check ทุกอย่างด้านล่างเป็นไปตามกฎเดียวกัน: โค้ดจริง output จริง ไม่มีข้อยกเว้น
+
+## Mutability
+
+### 1. Mutable default argument ถูกสร้างครั้งเดียว ไม่ใช่ทุก call
+
+`cart: list[str] = []` ถูก evaluate ครั้งเดียวเป๊ะ ตอนที่ `add_item` ถูก *define* — ไม่ใช่ครั้งละ call ทุก call ที่ไม่ได้ส่ง `cart` ของตัวเองมาจะแชร์ list object เดียวกันนั้นตลอดไป
+
+**อาการ — output จริง** (ตรงกับ playground ด้านบน):
+
+```text
+['apple', 'banana']
+True
+```
+
+`second = add_item("banana")` ควรจะเริ่ม cart ใหม่ แต่กลับไป append ต่อบน cart ของ call *แรก* และ `second is first` พิสูจน์ว่ามันเป็น object เดียวกัน
+
+**ทางแก้:** ใช้ default เป็น `None` แล้วสร้าง list ข้างใน function body:
+
+```python
+def add_item(item: str, cart: list[str] | None = None) -> list[str]:
+    if cart is None:
+        cart = []
+    cart.append(item)
+    return cart
+```
+
+**Caught by:** `ruff`'s `B006` ตรง ๆ ไม่ต้องตั้งค่าอะไรเพิ่ม:
+
+```text
+B006 Do not use mutable data structures for argument defaults
+help: Replace with `None`; initialize within function
+```
+
+ดู **[Functions](/python/th/basics/functions/)**
+
+<SpotTheBug code={`def log_event(event: str, history: list[str] = []) -> list[str]:
+    history.append(event)
+    return history
+
+
+first_run = log_event("startup")
+second_run = log_event("startup")`}>
+
+bug เดียวกัน ชื่อต่างกัน `second_run` ไม่ใช่ log ใหม่ — มันคือ list *เดียวกัน* กับ `first_run` ตอนนี้มี `["startup", "startup"]` เพราะ `history = []` ถูก evaluate ครั้งเดียวเป๊ะ ตอน function-definition time ทางแก้: `history: list[str] | None = None` แล้ว `if history is None: history = []` ข้างใน body
+
+</SpotTheBug>
+
+### 2. Closure ใน loop capture ตัวแปร loop ไม่ใช่ค่าของมัน
+
+```python
+def make_multipliers() -> list:
+    return [lambda x: x * i for i in range(3)]
+
+
+fns = make_multipliers()
+print([f(10) for f in fns])
+```
+
+แต่ละ lambda close over *ตัวแปร* `i` ไม่ใช่ค่าที่มันมีตอน lambda ถูกสร้าง พอถึงเวลาเรียก lambda ตัวไหนก็ตาม comprehension ทำงานเสร็จไปแล้ว และ `i` มีค่าสุดท้าย คือ `2` — ทุก lambda เห็น `i` ตัวสุดท้ายเดียวกัน
+
+**อาการ — output จริง:**
+
+```text
+[20, 20, 20]
+```
+
+ไม่ใช่ `[0, 10, 20]` ซึ่งเป็นสิ่งที่ผู้อ่านที่อ่านผ่าน ๆ "แต่ละ lambda คูณด้วย `i` ของตัวเอง" จะคาดหวัง
+
+**ทางแก้:** bind ค่าปัจจุบันเป็น default argument ซึ่ง *ถูก* evaluate ครั้งเดียวตอนสร้าง lambda แต่ละตัว:
+
+```python
+def make_multipliers() -> list:
+    return [lambda x, i=i: x * i for i in range(3)]
+```
+
+**Caught by:** `ruff`'s `B023` ตรง ๆ:
+
+```text
+B023 Function definition does not bind loop variable `i`
+```
+
+ดู **[Closures](/python/th/functions-deep/closures/)**
+
+### 3. Aliasing — function mutate list ที่ผู้เรียกส่งเข้ามา
+
+```python
+def normalize(scores: list[int]) -> list[int]:
+    scores.sort()
+    for i in range(len(scores)):
+        scores[i] = max(scores[i], 0)
+    return scores
+
+
+original = [3, -1, 2]
+result = normalize(original)
+print("caller's list after normalize:", original)
+print("result is original:", result is original)
+```
+
+`normalize` ดูเหมือน pure function — รับ list แล้วคืน list — แต่ `scores.sort()` และ `scores[i] = ...` ทั้งคู่ mutate list object เอง `original` ของผู้เรียกเปลี่ยนไปทั้งที่ไม่มีอะไรตรงจุดที่เรียก (`normalize(original)`) บ่งบอกแบบนั้นเลย
+
+**อาการ — output จริง:**
+
+```text
+caller's list after normalize: [0, 2, 3]
+result is original: True
+```
+
+ผู้เรียกน่าจะคาดหวังว่า `original` จะยังเป็น `[3, -1, 2]` และ `result` เป็น copy ที่ normalize แล้ว
+
+**ทางแก้:** copy ก่อน mutate ถ้า function ตั้งใจให้ non-destructive: `scores = list(scores)` เป็นบรรทัดแรก หรือใช้ `sorted(scores)` แทน `scores.sort()`
+
+**Caught by:** ไม่มี นี่เป็นคำถามเชิง semantic/API-contract ล้วน ๆ — ไม่มี linter ตัวไหนนับว่า docstring หรือชื่อ function สัญญาไว้ว่าจะไม่ mutate argument ของมัน ดู **[Lists & Tuples](/python/th/data-structures/lists-tuples/)**
+
+### 4. `[[0] * n] * m` — ทุกแถวคือ list เดียวกันที่แชร์กัน
+
+```python
+grid = [[0] * 3] * 3
+grid[0][0] = 1
+print(grid)
+```
+
+`[[0] * 3] * 3` สร้าง inner list *หนึ่งตัว* คือ `[0, 0, 0]` แล้วทำซ้ำ *reference* ไปยัง list ตัวเดียวกันนั้นสามครั้ง — ไม่ได้สร้างสามแถวที่เป็นอิสระต่อกัน
+
+**อาการ — output จริง:**
+
+```text
+[[1, 0, 0], [1, 0, 0], [1, 0, 0]]
+```
+
+การเขียนไปที่ `grid[0][0]` เปลี่ยนทุกแถว เพราะทั้งสามแถวเป็น object เดียวกัน
+
+**ทางแก้:** สร้างแต่ละแถวแยกกันด้วย comprehension เพื่อให้ `[0] * 3` แต่ละครั้งสร้าง list ใหม่:
+
+```python
+grid = [[0] * 3 for _ in range(3)]
+```
+
+**Caught by:** ไม่มี — ทั้งเวอร์ชันที่ผิดและที่แก้แล้วเป็น Python ปกติที่ valid ทั้งคู่ นี่เป็นกับดักเชิง semantic ล้วน ๆ ในวิธีที่ `*` บน list ทำซ้ำ reference ไม่ใช่ค่า ดู **[Lists & Tuples](/python/th/data-structures/lists-tuples/)**
+
+## Errors
+
+### 5. ใช้ `is` เทียบค่าแทนที่จะเป็น `==`
+
+```python
+a = "hello"
+b = "".join(["h", "e", "l", "l", "o"])
+print(a == b)
+print(a is b)
+
+x = 1000
+y = int("1000")
+print(x == y)
+print(x is y)
+```
+
+`is` เช็ค object identity ไม่ใช่ equality CPython intern integer เล็ก ๆ บางตัว (`-5` ถึง `256`) และ string literal บางตัวที่ compile พร้อมกัน ซึ่งทำให้ `is` ดูเหมือน "ใช้ได้" สำหรับค่าในช่วงนั้น — แต่ `b` ถูกสร้างตอน runtime ผ่าน `.join()` และ `y` ผ่าน `int(str)` ดังนั้นทั้งคู่ไม่ใช่ object เดียวกันกับคู่ที่เทียบเท่ากันด้วย `==`
+
+**อาการ — output จริง:**
+
+```text
+True
+False
+True
+False
+```
+
+ทั้งสองคู่เท่ากัน (`==` เป็น `True`) แต่ไม่มีคู่ไหนเป็น *object เดียวกัน* (`is` เป็น `False`) — `is` ให้คำตอบผิดสำหรับ "ค่าเหล่านี้เหมือนกันไหม" ทันทีที่ operand ตัวใดตัวหนึ่งไม่ใช่ integer เล็ก ๆ ที่ถูก cache หรือ literal ที่ถูก deduplicate ตอน compile
+
+**ทางแก้:** ใช้ `==` สำหรับเทียบค่า สงวน `is` ไว้สำหรับเช็ค singleton (`is None`, `is True`, `is False`) ที่ identity *คือ* contract จริง ๆ
+
+**Caught by:** `ruff`'s `F632` แต่จับได้เฉพาะรูปแบบ literal ตรง ๆ (`x is 5`, `s is "foo"`):
+
+```text
+F632 Use `==` to compare constant literals
+```
+
+รูปแบบตัวแปรเทียบกับตัวแปรที่แสดงข้างบน — ตัวที่กัด demo นี้จริง ๆ — ไม่ถูกจับโดย `F632` หรือเครื่องมือไหนใน list ของคอร์สนี้เลย ความบังเอิญเรื่อง object identity ต้องจับด้วยตาเท่านั้น ดู **[Variables & Types](/python/th/basics/variables-types/)**
+
+### 6. `except` ที่กว้างเกินไปกลืนสิ่งที่ผิดแบบเงียบ ๆ
+
+```python
+def risky_lookup(data: dict, key: str) -> int:
+    try:
+        return data[key]
+    except:
+        pass
+    return -1
+
+
+print(risky_lookup({}, "x"))
+print(risky_lookup(None, "x"))
+```
+
+**อาการ — output จริง:**
+
+```text
+-1
+-1
+```
+
+key ที่ไม่มีอยู่คืน `-1` ถูกต้อง แต่ `risky_lookup(None, "x")` raise `TypeError: 'NoneType' object is not subscriptable` — เป็น bug จริง (argument type ผิด) ไม่ใช่ key ที่หาย — และ bare `except:` กลืนมันแบบเดียวกันเป๊ะ คืน `-1` ราวกับไม่มีอะไรเกิดขึ้น
+
+เวอร์ชัน async ของ bug นี้อันตรายกว่า: การจับกว้างเกินไปคาบเกี่ยว `await` สามารถกลืน cancellation ของ task เองได้
+
+```python
+async def worker(n: int) -> None:
+    try:
+        await asyncio.sleep(n)
+        print(f"worker {n} finished normally")
+    except BaseException as e:
+        print(f"worker swallowed {type(e).__name__}: {e!r} -- keeps running")
+
+
+async def main() -> None:
+    task = asyncio.create_task(worker(5))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    await task
+    print("main: task.cancelled() =", task.cancelled())
+```
+
+**อาการ — output จริง:**
+
+```text
+worker swallowed CancelledError: CancelledError() -- keeps running
+main: task.cancelled() = False
+```
+
+`task.cancel()` ควรจะทำให้ task หยุด แต่ `except BaseException` กลับจับ `asyncio.CancelledError` ที่ raise ข้างใน `await asyncio.sleep(n)` พิมพ์ข้อความ แล้ว return ตามปกติ — `task.cancelled()` เป็น `False` แปลว่า cancellation request ถูกกลืนไปแบบเงียบ ๆ และ task รายงานตัวเองว่าจบตามปกติ
+
+**ทางแก้:** ระบุ exception เฉพาะเจาะจงที่คาดไว้ (`except KeyError:` สำหรับ sync case) ใน async code ห้ามจับ `BaseException` (หรือ bare `except:`) คาบเกี่ยว `await` เว้นแต่จะ re-raise `asyncio.CancelledError` ทันที การจับแค่ `Exception` ปลอดภัยกว่าเป็น default เพราะ `CancelledError` สืบทอดจาก `BaseException` ไม่ใช่ `Exception` โดยตั้งใจ เพื่อไม่ให้ error handler ทั่วไปดักมันไป
+
+**Caught by:** `ruff`'s `E722` สำหรับ bare `except:` และ `S110` สำหรับรูปแบบ `try`/`except`/`pass`:
+
+```text
+E722 Do not use bare `except`
+S110 `try`-`except`-`pass` detected, consider logging the exception
+```
+
+สำหรับรูปแบบ async `except BaseException` `ruff`'s `BLE001` (blind-except) จับได้ตรง ๆ:
+
+```text
+BLE001 Do not catch blind exception: `BaseException`
+```
+
+`BLE001` **ไม่** ทำงานกับรูปแบบ bare `except:` / `except: pass` ข้างบน — อันนั้นถูกจับโดย `E722`/`S110` เท่านั้น ดู **[Exceptions](/python/th/typing-errors/exceptions/)**
+
+### 7. `raise e` แทนที่จะเป็น bare `raise` เพิ่ม frame ที่ไม่จำเป็น — และโค้ด AI เขียนแบบนี้บ่อยมาก
+
+```python
+def a():
+    b()
+
+def b():
+    raise ValueError("deep failure")
+
+def reraise_bare():
+    try:
+        a()
+    except ValueError:
+        raise
+
+def reraise_e():
+    try:
+        a()
+    except ValueError as e:
+        raise e
+```
+
+**อาการ — output จริง** นับ traceback frame ด้วย `traceback.extract_tb`:
+
+```text
+bare raise frames: 4
+raise e frames: 5
+```
+
+ทั้งคู่ re-raise "exception เดียวกัน" แต่ `raise e` เพิ่ม frame มาอีกหนึ่ง — บรรทัด `raise e` เอง — เข้าไปใน traceback บน call stack ที่ลึก มันทำให้ traceback ยาวขึ้นและอ่านสับสนขึ้นเล็กน้อย โดยไม่ได้ประโยชน์อะไรเลย
+
+**ทางแก้:** ใช้ bare `raise` เพื่อ re-raise exception แบบไม่เปลี่ยนแปลง
+
+**Caught by:** `ruff`'s `TRY201` ตรง ๆ:
+
+```text
+TRY201 Use `raise` without specifying exception name
+help: Remove exception name
+```
+
+ดู **[Exceptions](/python/th/typing-errors/exceptions/)**
+
+### 8. `assert` ใช้ validate input — มันหายไปภายใต้ `-O`
+
+```python
+def withdraw(balance: int, amount: int) -> int:
+    assert amount <= balance, "insufficient funds"
+    return balance - amount
+
+
+print(withdraw(100, 30))
+print(withdraw(100, 999))
+```
+
+**อาการ — output จริง รันปกติ:**
+
+```text
+70
+Traceback (most recent call last):
+  ...
+AssertionError: insufficient funds
+```
+
+**อาการ — output จริง `python3.14 -O`:**
+
+```text
+70
+-899
+```
+
+ภายใต้ `-O` statement `assert` ถูกตัดออกจาก bytecode ที่ compile แล้วทั้งหมด — เงื่อนไขไม่ถูก evaluate เลย และการถอนเงินเกินยอดจะให้เลขติดลบแบบเงียบ ๆ แทนที่จะ fail
+
+**ทางแก้:** ใช้ `if`/`raise` สำหรับอะไรก็ตามที่ต้องถูกเช็คเสมอ:
+
+```python
+def withdraw(balance: int, amount: int) -> int:
+    if amount > balance:
+        raise ValueError("insufficient funds")
+    return balance - amount
+```
+
+**Caught by:** `ruff`'s `S101` (และ `bandit`'s `B101`) ตรง ๆ:
+
+```text
+S101 Use of `assert` detected
+```
+
+ดู **[Exceptions](/python/th/typing-errors/exceptions/)**
+
+## Async & concurrency
+
+### 9. Coroutine ที่สร้างโดยไม่มี `await` ไม่เคยรัน
+
+```python
+async def greet(name: str) -> None:
+    await asyncio.sleep(0.01)
+    print(f"hello, {name}")
+
+
+async def main() -> None:
+    greet("Ada")  # missing await -- creates a coroutine object, never runs it
+    await asyncio.sleep(0.02)
+    print("main done")
+```
+
+การเรียก `greet("Ada")` โดยไม่มี `await` ไม่รัน body ของ function เลย — มันสร้าง coroutine *object* แล้วทิ้งมันทันที `"hello, Ada"` ไม่เคยพิมพ์เลย
+
+**อาการ — output จริง** (จับด้วยการครอบการเรียกด้วย `warnings.catch_warnings(record=True)` เพื่อให้ demo ยังรันได้ภายใต้ verifier ของคอร์สนี้ ที่เปลี่ยน `RuntimeWarning` ให้เป็น error):
+
+```text
+caught: RuntimeWarning: coroutine 'greet' was never awaited
+main done
+```
+
+มีแค่ `"main done"` ที่พิมพ์ — greeting ไม่เคยเกิดขึ้นแบบเงียบ ๆ ถ้าไม่ครอบด้วย `catch_warnings` Python ยังรายงานสิ่งนี้ทันทีที่ coroutine object ที่ถูกทิ้งไว้ถูก garbage-collect:
+
+```text
+Exception ignored while finalizing coroutine <coroutine object greet at 0x...>:
+RuntimeWarning: coroutine 'greet' was never awaited
+```
+
+**ทางแก้:** เพิ่ม `await greet("Ada")` ที่ขาดไป หรือถ้าการเรียกนั้นตั้งใจให้รันเบื้องหลังจริง ๆ ใช้ `asyncio.create_task(greet("Ada"))` แล้วเก็บ reference ของ task ไว้ (ดู pattern 10)
+
+**Caught by:** ไม่มีอะไรแบบ static — ไม่มี linter ตัวไหนพิสูจน์ได้โดยทั่วไปว่าการเรียกที่คืน coroutine ขาด `await` มีแค่การรันโค้ดจริง (`python3.14 -X dev`) เท่านั้นที่เผย `RuntimeWarning` และเผยได้ก็ต่อเมื่อ coroutine ที่ถูกทิ้งไว้ถูก garbage-collect ระหว่างการรันจริง ๆ ดู **[asyncio basics](/python/th/async-concurrency/asyncio-basics/)**
+
+### 10. Fire-and-forget `create_task` — task หายไปก่อนที่มันจะรันได้
+
+```python
+async def send_metric(name: str) -> None:
+    await asyncio.sleep(0.2)
+    print(f"metric sent: {name}")  # this line may never run
+
+
+async def handle_request(n: int) -> str:
+    asyncio.create_task(send_metric(f"request-{n}"))  # no reference kept anywhere
+    return f"response-{n}"
+
+
+async def main() -> None:
+    results = [await handle_request(i) for i in range(3)]
+    print(results)
+    # main returns immediately -- nothing is waiting for the background tasks
+```
+
+**อาการ — output จริง:**
+
+```text
+['response-0', 'response-1', 'response-2']
+```
+
+ไม่มีบรรทัด `"metric sent: ..."` ทั้งสามบรรทัดพิมพ์ออกมาเลย `asyncio.run(main())` ปิด event loop ทันทีที่ `main` return ยกเลิกทุก task ที่ไม่มีใคร await อยู่ — แบบเงียบ ๆ ไม่มี error ไม่มี warning ในการรันนี้
+
+**ทางแก้:** เก็บ reference ของทุก background task ไว้ใน set ที่เป็นของสิ่งที่มี lifetime ยาวกว่า function ที่สร้างมัน แล้วเอาออกเมื่อเสร็จ — pattern ที่ official docs ของ `asyncio` แนะนำ:
+
+```python
+background_tasks: set[asyncio.Task] = set()
+
+def spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+```
+
+**Caught by:** `ruff`'s `RUF006` ตรง ๆ:
+
+```text
+RUF006 Store a reference to the return value of `asyncio.create_task`
+```
+
+ดู **[Tasks & gather](/python/th/async-concurrency/async-await/)**
+
+### 11. `time.sleep` ข้างใน async code block event loop ทั้งหมด
+
+```python
+async def slow_task(n: int) -> None:
+    print(f"task {n} start")
+    time.sleep(0.3)  # blocks the WHOLE event loop, not just this task
+    print(f"task {n} done")
+
+
+async def main() -> None:
+    start = time.perf_counter()
+    await asyncio.gather(slow_task(1), slow_task(2), slow_task(3))
+    elapsed = time.perf_counter() - start
+    print(f"elapsed: {elapsed:.2f}s (should be ~0.3s if truly concurrent)")
+```
+
+`time.sleep` เป็น blocking synchronous call — มันไม่คืน control กลับให้ event loop แบบที่ `await asyncio.sleep(...)` ทำ ระหว่างที่ task หนึ่งกำลัง sleep *ไม่มีอะไรอื่นในกระบวนการทำงานได้เลย* รวมถึงอีกสอง task ที่ "concurrent" ด้วย
+
+**อาการ — output จริง:**
+
+```text
+task 1 start
+task 1 done
+task 2 start
+task 2 done
+task 3 start
+task 3 done
+elapsed: 0.93s (should be ~0.3s if truly concurrent)
+```
+
+ทั้งสาม task รันเรียงกันทีละตัว ใช้เวลารวมประมาณ 3 เท่าของที่ควรจะเป็นถ้ามันซ้อนกันจริง ๆ — `asyncio.gather` ดูเหมือน concurrent ใน source แต่ถูก serialize เต็มรูปแบบตอน runtime การรันด้วย `-X dev` (ซึ่งเปิด asyncio debug mode ด้วย) ยัง log slow-callback warning สำหรับแต่ละ task ที่ถูก block:
+
+```text
+Executing <Task finished name='Task-2' coro=<slow_task() done, ...> took 0.311 seconds
+```
+
+**ทางแก้:** ใช้ `await asyncio.sleep(...)` สำหรับ delay หรือ `await loop.run_in_executor(None, blocking_fn)` สำหรับ blocking call ที่หลีกเลี่ยงไม่ได้จริง ๆ
+
+**Caught by:** `ruff`'s `ASYNC251` (จาก `flake8-async` rule set) ตรง ๆ:
+
+```text
+ASYNC251 Async functions should not call `time.sleep`
+```
+
+asyncio debug mode ของ `python -X dev` ยัง log slow callback ตอน runtime เพิ่มเติมตามที่แสดงข้างบน ดู **[GIL & threads](/python/th/async-concurrency/gil-threads/)**
+
+### 12. Shared mutable state ถูก mutate คาบเกี่ยว `await` โดยไม่มี lock
+
+```python
+class Account:
+    def __init__(self, balance: int) -> None:
+        self.balance = balance
+
+    async def withdraw(self, amount: int) -> bool:
+        if amount > self.balance:
+            return False
+        await asyncio.sleep(0)  # simulates an awaited I/O call mid-operation
+        self.balance -= amount  # another task can run between the check and this line
+        return True
+
+
+async def main() -> None:
+    acct = Account(balance=100)
+    results = await asyncio.gather(
+        acct.withdraw(80),
+        acct.withdraw(80),
+    )
+    print("withdraw results:", results)
+    print("final balance:", acct.balance)
+```
+
+การเรียก `withdraw` ทั้งสองครั้งเช็ค `amount > self.balance` (`80 > 100` เป็น `False` ทั้งคู่) *ก่อน* ที่ทั้งคู่จะไปถึง `await` — event loop สามารถสลับระหว่างทั้งสองที่จุด `await` นั้นได้ และทั้งคู่ก็ดำเนินการลบ `80` ต่อ ทั้งที่ account มี `100` เท่านั้น
+
+**อาการ — output จริง:**
+
+```text
+withdraw results: [True, True]
+final balance: -60
+```
+
+การถอนทั้งสองครั้งรายงานว่าสำเร็จ และ balance ติดลบ — race แบบ time-of-check-to-time-of-use แบบคลาสสิก เกิดขึ้นได้จาก `await` ใด ๆ ระหว่างการเช็คกับการ mutate ไม่ใช่จาก OS-thread parallelism จริง
+
+**ทางแก้:** ครอบทั้งลำดับ check-then-mutate ด้วย `asyncio.Lock`:
+
+```python
+def __init__(self, balance: int) -> None:
+    self.balance = balance
+    self._lock = asyncio.Lock()
+
+async def withdraw(self, amount: int) -> bool:
+    async with self._lock:
+        if amount > self.balance:
+            return False
+        await asyncio.sleep(0)
+        self.balance -= amount
+        return True
+```
+
+**Caught by:** ไม่มี นี่คือ race condition จริง — การเกิดขึ้นของมันขึ้นอยู่กับลำดับการสลับที่ event loop เลือกใช้จริง ๆ และไม่มีเครื่องมือ static ตัวไหนพิสูจน์หรือหักล้างมันได้ ดู **[Tasks & gather](/python/th/async-concurrency/async-await/)**
+
+### 13. `multiprocessing.Pool` ที่ไม่มี `if __name__ == "__main__":` guard
+
+```python
+from multiprocessing import Pool
+
+def square(n: int) -> int:
+    return n * n
+
+pool = Pool(processes=4)  # module-level -- no __main__ guard
+print(pool.map(square, [1, 2, 3, 4]))
+```
+
+บน macOS และ Windows start method default คือ `spawn` (Linux ตั้งแต่ 3.14 default เป็น `forkserver` นอก main interpreter — ดู **[multiprocessing](/python/th/async-concurrency/multiprocessing/)**) worker ของ `spawn`/`forkserver` re-import module *ทั้งหมด* ที่เริ่มมัน ถ้า `Pool(...)` รันระดับ module โดยไม่มี guard ทุกการ re-import จะสร้าง `Pool` *อีกตัว* ซึ่ง spawn worker *เพิ่ม* ซึ่ง re-import module อีกครั้ง — การสร้าง process แบบวนซ้ำไม่มีที่สิ้นสุด
+
+**อาการ — output จริง** (การรันนี้ถูก kill หลังจาก 5 วินาที มันไม่หยุดเองและต้อง kill ด้วยมือ — **ห้ามรันแบบไม่มี guard บนเครื่องของคุณเอง**):
+
+```text
+Traceback (most recent call last):
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=7, pipe_handle=18)
+  File ".../multiprocessing/spawn.py", line 122, in spawn_main
+    exitcode = _main(fd, parent_sentinel)
+  ...
+```
+
+28,569 บรรทัดของ traceback แบบวนซ้ำถูกจับไว้ในห้าวินาทีก่อนที่ process tree จะถูก force-kill — แต่ละ worker spawn worker เพิ่ม แต่ละตัว re-import module แล้วเจอ `Pool(...)` อีกครั้ง
+
+**ทางแก้:** guard entry point และใช้ context-manager form เพื่อให้ pool ถูกปิดเสมอ:
+
+```python
+if __name__ == "__main__":
+    with Pool(processes=4) as pool:
+        print(pool.map(square, [1, 2, 3, 4]))
+```
+
+**output จริง เวอร์ชันที่แก้แล้ว:**
+
+```text
+[1, 4, 9, 16]
+```
+
+**Caught by:** ไม่มีอะไรแบบ static — ไม่มี linter ตัวไหนนับว่าโค้ดระดับ module ที่ spawn process ถูก guard หรือเปล่า ความล้มเหลวเป็นคุณสมบัติเชิง runtime ล้วน ๆ ของ start method ที่เลือกใช้ ดู **[multiprocessing](/python/th/async-concurrency/multiprocessing/)**
+
+## Typing
+
+### 14. `__eq__` ถูกนิยามโดยไม่มี `__hash__` ทำให้ instance กลายเป็น unhashable
+
+```python
+class Point:
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Point):
+            return NotImplemented
+        return self.x == other.x and self.y == other.y
+
+
+p = Point(1, 2)
+print(p == Point(1, 2))
+print({p})
+```
+
+การนิยาม `__eq__` บน class ทำให้ Python ตั้ง `__hash__` เป็น `None` อัตโนมัติ เว้นแต่คุณจะนิยาม `__hash__` เองด้วย — สอง object ที่เทียบเท่ากันต้อง hash เท่ากัน และ Python ไม่สามารถรับประกันสิ่งนั้นให้ class ที่มันไม่ได้ควบคุมการ hash ของ
+
+**อาการ — output จริง:**
+
+```text
+True
+Traceback (most recent call last):
+  ...
+TypeError: cannot use 'Point' as a set element (unhashable type: 'Point')
+```
+
+`p == Point(1, 2)` ทำงานได้ปกติ การใส่ `Point` ลงใน `set` (หรือใช้เป็น `dict` key) พังทันที
+
+**ทางแก้:** นิยาม `__hash__` คู่กับ `__eq__` ถ้า instance จำเป็นต้อง hashable (และ immutable โดยพฤตินัย) หรือยอมรับว่า class นี้ตั้งใจให้ unhashable และเอกสารไว้:
+
+```python
+def __hash__(self) -> int:
+    return hash((self.x, self.y))
+```
+
+**Caught by:** `ruff`'s `PLW1641` ตรง ๆ:
+
+```text
+PLW1641 Object does not implement `__hash__` method
+```
+
+ดู **[Dunder methods](/python/th/oop-data-model/dunder-methods/)**
+
+### 15. Class attribute ที่ mutable ถูกแชร์ทุก instance
+
+```python
+class ShoppingCart:
+    items: list[str] = []  # class attribute, shared across every instance
+
+    def add(self, item: str) -> None:
+        self.items.append(item)
+
+
+cart_a = ShoppingCart()
+cart_b = ShoppingCart()
+cart_a.add("apple")
+cart_b.add("banana")
+print("cart_a.items:", cart_a.items)
+print("cart_b.items:", cart_b.items)
+print("same list object:", cart_a.items is cart_b.items)
+```
+
+`items: list[str] = []` ที่ประกาศระดับ class เป็น list เพียงตัวเดียวเป๊ะ ที่ class เป็นเจ้าของ — `self.items.append(...)` หา instance attribute ชื่อ `items` ไม่เจอ เลย mutate class attribute ที่แชร์กันแทน นี่คือ sibling ของ mutable default argument ใน pattern 1 แต่อยู่ใน class body
+
+**อาการ — output จริง:**
+
+```text
+cart_a.items: ['apple', 'banana']
+cart_b.items: ['apple', 'banana']
+same list object: True
+```
+
+สอง cart ที่สร้างแยกกันโดยอิสระแชร์ list เดียวกัน — การเพิ่มลงในตัวไหนก็ตามส่งผลกับทั้งคู่
+
+**ทางแก้:** initialize mutable state ต่อ instance ใน `__init__` (หรือ dataclass `field(default_factory=list)`):
+
+```python
+def __init__(self) -> None:
+    self.items: list[str] = []
+```
+
+**Caught by:** `ruff`'s `RUF012` ตรง ๆ:
+
+```text
+RUF012 Mutable default value for class attribute
+help: Consider initializing in `__init__` or annotating with `typing.ClassVar`
+```
+
+ดู **[Classes](/python/th/oop-data-model/classes/)**
+
+### 16. `Any` บวกกับ `# type: ignore` แบบเหมารวมปิดการเช็คทั้งหมด
+
+```python
+from typing import Any
+
+def process_config(config: Any) -> int:
+    return config.retries + 1  # type: ignore
+
+print(process_config({"retries": "3"}))
+```
+
+`Any` บอกทุก checker ให้หยุดตรวจสอบอะไรก็ตามเกี่ยวกับ `config` — attribute access, arithmetic ทุกอย่าง `# type: ignore` ด้านบนปิดเสียงสิ่งที่ควรจะถูก flag รวมกันแล้วไม่มีอะไรถูกเช็คเลย และ crash โผล่มาแค่ตอน runtime เท่านั้น
+
+**อาการ — output จริง:**
+
+```text
+Traceback (most recent call last):
+  ...
+AttributeError: 'dict' object has no attribute 'retries'
+```
+
+**mypy --strict output — จริง ไม่ได้แก้ไข:**
+
+```text
+Success: no issues found in 1 source file
+```
+
+**pyright output — จริง ไม่ได้แก้ไข:**
+
+```text
+0 errors, 0 warnings, 0 informations
+```
+
+ทั้งสอง checker รันในโหมดที่เข้มงวดที่สุด รายงานว่าไฟล์นี้สะอาดหมดจด — `Any` และ ignore แบบเหมารวมทำให้ AttributeError ข้างบนมองไม่เห็นสำหรับ static analysis เลย
+
+**ทางแก้:** ให้ `config` มี type จริง (`TypedDict`, dataclass หรือ Pydantic model) แทน `Any` และเอา ignore แบบเหมารวมออก ถ้าบรรทัดไหนต้องการ ignore จริง ๆ ให้ระบุ error code ที่มันปิดเสียงให้ชัดเจน
+
+**Caught by:** ไม่มีอะไรที่เช็ค *type* — `mypy --strict` และ `pyright` เงียบทั้งคู่ ซึ่งเป็นประเด็นของหัวข้อนี้ `ruff`'s `ANN401` flag parameter `Any` เอง และ `PGH003` flag ignore comment ที่ไม่มี code:
+
+```text
+ANN401 Dynamically typed expressions (typing.Any) are disallowed in `config`
+PGH003 Use specific rule codes when ignoring type issues
+```
+
+ดู **[Type hints](/python/th/typing-errors/type-hints/)**
+
+### 17. `X | None` ถูกใช้แต่ไม่เคย narrow ก่อนใช้งานจริง
+
+```python
+def greeting(name: str | None) -> str:
+    return "Hello, " + name.upper()
+
+print(greeting("ada"))
+print(greeting(None))
+```
+
+parameter ถูก type ถูกต้องเป็น `str | None` แต่ body ไม่เคยเช็ค `None` ก่อนเรียก `.upper()` — type hint บันทึกความเป็นไปได้ไว้แต่โค้ดไม่ได้จัดการมันจริง
+
+**อาการ — output จริง:**
+
+```text
+Hello, ADA
+Traceback (most recent call last):
+  ...
+AttributeError: 'NoneType' object has no attribute 'upper'
+```
+
+**mypy --strict output — จริง:**
+
+```text
+error: Item "None" of "str | None" has no attribute "upper"  [union-attr]
+Found 1 error in 1 file (checked 1 source file)
+```
+
+**pyright output — จริง:**
+
+```text
+error: "upper" is not a known attribute of "None" (reportOptionalMemberAccess)
+1 error, 0 warnings, 0 informations
+```
+
+checker ทั้งสองเห็นตรงกันในกรณีนี้ และทั้งคู่จับได้ *ก่อน* ที่โค้ดจะถูกรันเลยด้วยซ้ำ
+
+**ทางแก้:** narrow ก่อนใช้งาน:
+
+```python
+def greeting(name: str | None) -> str:
+    if name is None:
+        return "Hello, stranger"
+    return "Hello, " + name.upper()
+```
+
+**Caught by:** ทั้ง `mypy --strict` (`union-attr`) และ `pyright` (`reportOptionalMemberAccess`) ตรง ๆ ไม่ต้องตั้งค่าอะไรเพิ่ม — pattern นี้ไม่มีข้ออ้างที่ชอบธรรมให้ผ่านเข้ามาถึงขั้น code review ดู **[Type hints](/python/th/typing-errors/type-hints/)**
+
+### 18. `list[Dog]` ถูกส่งไปในจุดที่คาดหวัง `list[Animal]` — generic invariance
+
+```python
+class Animal:
+    def speak(self) -> str:
+        return "..."
+
+class Dog(Animal):
+    def speak(self) -> str:
+        return "Woof"
+
+class Cat(Animal):
+    def speak(self) -> str:
+        return "Meow"
+
+def add_a_cat(animals: list[Animal]) -> None:
+    animals.append(Cat())  # perfectly legal for list[Animal]
+
+dogs: list[Dog] = [Dog(), Dog()]
+add_a_cat(dogs)
+for d in dogs:
+    print(d.speak())
+```
+
+`Dog` เป็น `Animal` แต่ `list[Dog]` **ไม่ใช่** `list[Animal]` ในสายตาของ type system — `list` เป็น *invariant* ใน element type ของมัน เพราะ `add_a_cat` ได้รับอนุญาตให้ append `Animal` อะไรก็ได้ (รวมถึง `Cat`) เข้าไปใน list ที่มันได้รับมา ถ้า call นี้ถูกอนุญาต `dogs` จะจบลงด้วยการมี `Cat` อยู่ข้างใน ทำลาย assumption ในอนาคตทุกอันที่ว่าทุก element ของ `dogs` เป็น `Dog` แบบเงียบ ๆ
+
+**อาการ — output จริง** (interpreter เองไม่ได้หยุดสิ่งนี้ type checker ต่างหากที่หยุด ก่อนที่มันจะรันเลยด้วยซ้ำ):
+
+```text
+Woof
+Woof
+Meow
+```
+
+ไม่มีอะไร crash ตอน runtime — นั่นคืออันตรายพอดี: list ที่เสียหายทำงานได้ปกติจนกว่าจะมีอะไรเรียก method ที่เป็นของ `Dog` เท่านั้นบนสิ่งที่กลายเป็น `Cat`
+
+**mypy --strict output — จริง:**
+
+```text
+error: Argument 1 to "add_a_cat" has incompatible type "list[Dog]"; expected "list[Animal]"  [arg-type]
+note: "list" is invariant -- see https://mypy.readthedocs.io/en/stable/common_issues.html#variance
+note: Consider using "Sequence" instead, which is covariant
+```
+
+**pyright output — จริง:**
+
+```text
+error: Argument of type "list[Dog]" cannot be assigned to parameter "animals" of type "list[Animal]" in function "add_a_cat"
+  "list[Dog]" is not assignable to "list[Animal]"
+    Type parameter "_T@list" is invariant, but "Dog" is not the same as "Animal"
+    Consider switching from "list" to "Sequence" which is covariant (reportArgumentType)
+```
+
+checker ทั้งสองเห็นตรงกัน และแนะนำทางแก้เดียวกัน
+
+**ทางแก้:** ถ้า `add_a_cat` แค่ต้อง *อ่าน* list ให้รับ `Sequence[Animal]` (covariant) แทน `list[Animal]` ถ้ามันต้องได้รับอนุญาตให้ mutate list ของ `Animal` แบบผสมจริง ๆ ผู้เรียกก็ไม่ควรส่ง `list[Dog]` ที่เจาะจงกว่าเข้ามาตั้งแต่แรก
+
+**Caught by:** ทั้ง `mypy --strict` และ `pyright` ตรง ๆ ไม่ต้องตั้งค่าอะไรเพิ่ม ดู **[Type hints](/python/th/typing-errors/type-hints/)**
+
+## Resources & security
+
+### 19. `datetime.utcnow()` คืน naive datetime
+
+```python
+from datetime import datetime, timezone
+
+def is_expired(expires_at: datetime) -> bool:
+    return datetime.utcnow() > expires_at  # naive datetime -- no tzinfo
+
+aware_deadline = datetime.now(timezone.utc)
+print(is_expired(aware_deadline))
+```
+
+`datetime.utcnow()` คืนเวลา wall-clock UTC แต่ **ไม่มี timezone ผูกอยู่** — มัน "เป็น" UTC แค่ตามธรรมเนียม ไม่ใช่ตาม type การเทียบมันกับ aware datetime (ที่มี `tzinfo` แบบ `datetime.now(timezone.utc)`) ไม่ใช่แค่ผิด แต่เป็น `TypeError` แข็ง ๆ เลย
+
+**อาการ — output จริง:**
+
+```text
+.../19_naive_datetime.py:5: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+Traceback (most recent call last):
+  ...
+TypeError: can't compare offset-naive and offset-aware datetimes
+```
+
+`utcnow()` ยังถูก deprecate อย่างเป็นทางการตั้งแต่ Python 3.12 โดย interpreter เองชี้ทางแก้ให้เลย
+
+**ทางแก้:** ใช้ `datetime.now(timezone.utc)` (หรือ `datetime.now(UTC)` ตั้งแต่ 3.11) ทุกที่ที่ต้องการ UTC timestamp:
+
+```python
+def is_expired(expires_at: datetime) -> bool:
+    return datetime.now(timezone.utc) > expires_at
+```
+
+**Caught by:** `ruff`'s `DTZ003` ตรง ๆ:
+
+```text
+DTZ003 `datetime.datetime.utcnow()` used
+help: Use `datetime.datetime.now(tz=...)` instead
+```
+
+ดู **[stdlib tour](/python/th/stdlib-testing-tooling/stdlib-tour/)**
+
+### 20. `open()` โดยไม่มี `with` และไม่มี `encoding=`
+
+```python
+def read_report(path: str) -> str:
+    f = open(path)  # no `with`, no encoding= -- leaks the fd, platform-dependent decoding
+    data = f.read()
+    f.close()
+    return data
+```
+
+สองปัญหาแยกกันในบรรทัดเดียว: ไม่มี `with` แปลว่า file descriptor ยังเปิดค้างอยู่ถ้า `f.read()` raise ก่อนที่ `f.close()` จะรัน ไม่มี `encoding=` แปลว่า text ถูก decode ด้วย locale encoding default ของ platform ซึ่งเป็น UTF-8 บน Linux/macOS ส่วนใหญ่ทุกวันนี้ แต่ **ไม่รับประกัน** — โค้ดเดียวกันเป๊ะสามารถ decode ต่างกันบนเครื่องอื่น
+
+**อาการ — output จริง** (บนเครื่อง Unix นี้ ด้วย UTF-8 locale สิ่งนี้ round-trip สะอาดพอดี — อันตรายจริงมองเห็นได้เฉพาะข้าม platform เท่านั้น ซึ่ง environment นี้ไม่สามารถจำลองได้อย่างซื่อสัตย์):
+
+```text
+'héllo\n'
+```
+
+**ทางแก้:** ใช้ `with` เสมอ และส่ง `encoding=` อย่างชัดเจนเสมอ:
+
+```python
+def read_report(path: str) -> str:
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+```
+
+**Caught by:** `ruff`'s `SIM115` สำหรับ context manager ที่ขาดหายไป ตรง ๆ:
+
+```text
+SIM115 Use a context manager for opening files
+```
+
+การเช็ค `encoding` ที่ขาดหายไป (`PLW1514`) มีอยู่ใน `ruff` แต่เป็น rule แบบ **preview** ไม่เปิดใช้งาน default:
+
+```text
+warning: Selection `PLW1514` has no effect because preview is not enabled.
+```
+
+รัน `ruff check --preview` เพื่อรวมมันด้วย ดู **[stdlib tour](/python/th/stdlib-testing-tooling/stdlib-tour/)**
+
+### 21. `subprocess(..., shell=True)` กับ untrusted input คือ shell injection
+
+```python
+import subprocess
+
+def list_files(directory: str) -> str:
+    result = subprocess.run(f"ls {directory}", shell=True, capture_output=True, text=True)
+    return result.stdout
+
+print(list_files(". ; echo INJECTED"))
+```
+
+`shell=True` รัน string ทั้งหมดผ่าน `/bin/sh` ซึ่งตีความ `;`, `&&`, backtick และ `$()` — attacker (หรือแค่ input ที่ไม่เรียบร้อย) สามารถต่อคำสั่งอื่นเข้าไปได้
+
+**อาการ — output จริง:** directory listing ตามด้วยบรรทัดที่ไม่เคยเป็นส่วนหนึ่งของชื่อไฟล์ใดเลย:
+
+```text
+... (directory listing) ...
+INJECTED
+```
+
+`; echo INJECTED` ใน argument รันเป็นคำสั่ง shell ที่สองที่แยกออกมาต่างหากโดยสมบูรณ์
+
+**ทางแก้:** ส่ง list ของ argument และห้ามตั้ง `shell=True` เลยสำหรับอะไรก็ตามที่สร้างจาก external input:
+
+```python
+def list_files(directory: str) -> str:
+    result = subprocess.run(["ls", directory], capture_output=True, text=True)
+    return result.stdout
+```
+
+**Caught by:** `ruff`'s `S602` (และ `bandit`'s `B602` บวก `B404` สำหรับการ import `subprocess` เลย) ตรง ๆ:
+
+```text
+S602 `subprocess` call with `shell=True` identified, security issue
+```
+
+ดู **[stdlib tour](/python/th/stdlib-testing-tooling/stdlib-tour/)**
+
+### 22. `mock.patch` patch ผิดตำแหน่ง
+
+```python
+# weather_from_import.py
+from requests import get
+
+def get_temperature(city: str) -> float:
+    response = get(f"https://api.example.com/weather/{city}")
+    return response.json()["temp"]
+```
+
+```python
+# test_weather_from_import_wrong.py
+from unittest.mock import patch
+import weather_from_import
+
+@patch("requests.get")  # WRONG: weather_from_import already bound its own name `get`
+def test_get_temperature(mock_get):
+    mock_get.return_value.json.return_value = {"temp": 72.0}
+    result = weather_from_import.get_temperature("bangkok")  # calls the REAL requests.get
+    assert result == 72.0
+```
+
+`unittest.mock.patch("requests.get")` แทนที่ attribute `get` บน module `requests` แต่ `weather_from_import.py` ทำ `from requests import get` — นั่นสร้างชื่อ `get` *ของตัวเอง* แยกต่างหากข้างใน module `weather_from_import` ที่ผูกกับ function เดิมตอน import time การ patch `requests.get` ทีหลังไม่แตะ `weather_from_import.get` เลย
+
+**อาการ — pytest output จริง:**
+
+```text
+requests.exceptions.ConnectionError: HTTPSConnectionPool(host='api.example.com', port=443): Max retries exceeded with url: /weather/bangkok (Caused by NameResolutionError("...Failed to resolve 'api.example.com'..."))
+1 failed in 0.14s
+```
+
+mock มีผลเป็นศูนย์ — test เรียก network จริงไปยัง domain ที่ไม่มีอยู่จริง และ fail ด้วย DNS error ไม่ใช่ด้วยค่า mocked ใน CI environment ที่สภาพ network ต่างออกไป bug เดียวกันนี้สามารถทำให้ test **ผ่าน** แบบผิด ๆ ได้เช่นกัน ถ้า code path บังเอิญทนต่อ call จริงได้ — ดู **[Worked Review 4](/python/th/reading-python/worked-review-4/)** สำหรับ variant นั้น
+
+**ทางแก้:** patch ชื่อ *ตามที่ถูก lookup จาก module ที่ถูกทดสอบ* เสมอ — `@patch("weather_from_import.get")` ไม่ใช่ `@patch("requests.get")` เพราะนั่นคือ attribute จริงที่โค้ดที่ถูกทดสอบจะเรียก
+
+**Caught by:** ไม่มี ไม่มีเครื่องมือไหนตรวจว่า target string ของ `@patch` ตรงกับวิธีที่โค้ดที่ถูกทดสอบ import ชื่อนั้นมาจริง ๆ หรือเปล่า test สามารถ fail ดัง ๆ (แบบนี้) หรือผ่านแบบเงียบ ๆ ด้วยเหตุผลผิด ๆ ก็ได้ มีแค่คนที่อ่านทั้งสองไฟล์เทียบกันเท่านั้นที่จับได้ ดู **[pytest](/python/th/stdlib-testing-tooling/pytest/)**
+
+### 23. `requirements.txt` ไม่ pin หรือติดตั้งด้วย `sudo pip`
+
+```text
+requests
+urllib3==1.26.4
+```
+
+dependency ที่ไม่ pin (`requests` ไม่มี version) จะ resolve เป็น version ล่าสุดที่ compatible *ในวันที่ใครสักคนรัน `pip install`* — `requirements.txt` เดียวกันเป๊ะสามารถติดตั้งโค้ดที่ต่างกัน อาจมีช่องโหว่ ห่างกันแค่หนึ่งเดือน `sudo pip install ...` ติดตั้งเข้าไปใน system Python ที่ตัว operating system เองพึ่งพาอยู่ ซึ่งสามารถทำลาย OS tooling อื่นที่ไม่เกี่ยวข้องแบบเงียบ ๆ และต้องการสิทธิ์ root สำหรับสิ่งที่ควรเป็น operation ระดับ user หรือ project เท่านั้น
+
+**อาการ — `pip-audit` output จริง** รันกับบรรทัดที่ pin ไว้ข้างบนพอดี:
+
+```text
+Found 18 known vulnerabilities in 1 package
+Name    Version ID              Fix Versions
+------- ------- --------------- -------------
+urllib3 1.26.4  PYSEC-2021-108  1.26.5
+urllib3 1.26.4  PYSEC-2023-192  1.26.17,2.0.6
+urllib3 1.26.4  PYSEC-2023-212  1.26.18,2.0.7
+...
+```
+
+การ pin จำเป็นต่อ reproducibility แต่ไม่พอในตัวมันเอง — การ pin สามารถ freeze version ที่ *มีช่องโหว่ที่รู้อยู่แล้ว* ไว้ตลอดไปได้เช่นกัน ซึ่งเป็นสิ่งที่ tooling audit ของ `pip-audit`/`uv` มีไว้จับอย่างต่อเนื่องพอดี
+
+**ทางแก้:** pin ทุก dependency (`uv lock` สร้างและดูแลสิ่งนี้ให้อัตโนมัติ) รัน `pip-audit` (หรือเครื่องมือ audit เทียบเท่าของ `uv`) ใน CI และห้ามติดตั้งเข้าไปใน Python ที่ system จัดการ — ใช้ virtual environment (`uv venv`) หรือ `pipx` สำหรับ standalone tool
+
+**Caught by:** เครื่องมือ `pip-audit`/`uv audit`-เทียบเท่าจับ version ที่ pin ไว้แล้วแต่มีช่องโหว่ได้ ตามที่แสดงข้างบน ไม่มีอะไร automated จับ requirement ที่ *ไม่ pin* เอง และไม่มีอะไร automated หยุด `sudo pip install` — ทั้งสองอย่างเป็นเรื่อง process discipline ไม่ใช่สิ่งที่ linter มองเห็นได้ ดู **[venv, pip & uv](/python/th/stdlib-testing-tooling/venv-pip/)**
+
+## Tooling & style
+
+### 24. `print()` แทนที่จะเป็น `logging` ในโค้ดที่เป็น library
+
+```python
+def process_batch(items: list[int]) -> list[int]:
+    results = []
+    for item in items:
+        if item < 0:
+            print(f"skipping invalid item: {item}")  # library code -- caller can't filter/redirect this
+            continue
+        results.append(item * 2)
+    return results
+
+print(process_batch([1, -2, 3]))
+```
+
+**อาการ — output จริง:**
+
+```text
+skipping invalid item: -2
+[2, 6]
+```
+
+output ดูไม่เป็นอันตรายตรงนี้ แต่ `print` ข้างในโค้ดที่เป็น library (ต่างจาก output ของ CLI ของ script เอง) ไม่สามารถถูก filter ตาม level, redirect ไปไฟล์หรือ log aggregator, ปิดใน production หรือ correlate กับ timestamp และชื่อ logger ได้เลย — ทุกอย่างที่ `logging` ให้ฟรี
+
+**ทางแก้:**
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+def process_batch(items: list[int]) -> list[int]:
+    results = []
+    for item in items:
+        if item < 0:
+            logger.warning("skipping invalid item: %s", item)
+            continue
+        results.append(item * 2)
+    return results
+```
+
+**Caught by:** `ruff`'s `T201` ตรง ๆ บนทุกการเรียก `print` ในไฟล์:
+
+```text
+T201 `print` found
+help: Remove `print`
+```
+
+ดู **[Logging](/python/th/stdlib-testing-tooling/index/)**
+
+## Mental Model
+
+```text
+24 patterns, sorted by who actually catches them:
+
+ruff (default rule sets)  → 1 (B006), 2 (B023), 7 (TRY201), 8 (S101), 10 (RUF006),
+                             11 (ASYNC251), 14 (PLW1641), 15 (RUF012), 16 (ANN401/PGH003),
+                             19 (DTZ003), 20 (SIM115), 21 (S602), 24 (T201)
+ruff, partially            → 5 (F632 -- literal form only), 6 (E722/S110 sync;
+                             BLE001 async -- two different rules for two shapes of
+                             the same mistake)
+bandit                     → 8 (B101), 21 (B602/B404) -- overlaps ruff's S-rules
+mypy --strict + pyright    → 17 (union-attr / reportOptionalMemberAccess),
+                             18 (arg-type / reportArgumentType) -- both agree
+mypy --strict, silent      → 16 -- Any + blanket ignore defeats strict mode entirely
+pyright, silent            → 16 -- same file, same silence
+python -X dev (runtime)    → 9 (RuntimeWarning), 19 (DeprecationWarning)
+pip-audit / uv audit       → 23, but only the pinned-and-vulnerable half of it
+Nothing                    → 3, 4, 12, 13, 22, and the unpinned/sudo half of 23 --
+                             a full third of the catalog
+```
+
+<Callout title="หนึ่งในสามของ catalog นี้ไม่มี automated safety net">
+แปดใน 24 pattern ข้างบนไม่มีเครื่องมือไหนในคอร์สนี้จับได้ ไม่ว่าจะตั้งค่าอย่างไรก็ตาม นั่นคือข้อโต้แย้งจริงของโมดูลนี้: tooling ช่วยแคบขอบเขตที่ต้องอ่านด้วยตา มันไม่เคยแทนที่การอ่าน รันทุกเครื่องมือใน **[Verification Tools](/python/th/reading-python/verification-tools/)** บนทุก diff — แล้วยังต้องอ่าน diff อยู่ดี
+</Callout>
+
+export const quizAiBugCatalog = [
+  {
+    q: "```python\ndef add_item(item, cart=[]):\n    cart.append(item)\n    return cart\n\nfirst = add_item(\"apple\")\nsecond = add_item(\"banana\")\n```\n`second` มีค่าอะไร และทำไม?",
+    options: [
+      "['banana'] -- each call gets a fresh cart",
+      "['apple', 'banana'] -- the default list is created once at definition time and shared across every call that doesn't pass its own",
+      "TypeError -- you cannot append to a default argument",
+      "[] -- default arguments are always reset per call"
+    ],
+    answer: 1,
+    explain: "cart=[] ถูก evaluate ครั้งเดียวเป๊ะ ตอน function ถูก define ทุก call ที่ไม่ได้ส่ง cart มาแชร์ list object เดียวกัน ดังนั้น second สะสมต่อบน append ของ first"
+  },
+  {
+    q: "ทำไม `except BaseException` ข้างใน try/await block ของ async function ถึงเป็นอันตรายต่อ cancellation โดยเฉพาะ ในแบบที่ `except Exception` ไม่เป็น?",
+    options: [
+      "except Exception is always slower to execute",
+      "asyncio.CancelledError inherits from BaseException, not Exception, precisely so ordinary exception handlers don't intercept a cancellation request -- catching BaseException defeats that design",
+      "BaseException cannot be caught at all in async functions",
+      "There is no difference; both catch the exact same set of exceptions"
+    ],
+    answer: 1,
+    explain: "CancelledError จงใจอยู่ใต้ BaseException ไม่ใช่ Exception เพื่อให้ task.cancel() propagate ผ่าน error handling แบบ 'except Exception' ปกติได้อย่างเชื่อถือได้ การจับ BaseException (หรือ bare except:) กลืนสัญญาณนั้นไปด้วย และ task รายงานตัวเองว่าจบแทนที่จะถูกยกเลิกแบบเงียบ ๆ"
+  },
+  {
+    q: "จาก mypy --strict และ pyright ที่รายงาน 'no issues found' เหมือนกันบน function ที่ type เป็น `def process_config(config: Any) -> int:` ซึ่ง crash ตอน runtime ด้วย AttributeError สิ่งนี้บอกอะไร?",
+    options: [
+      "Both tools have a bug",
+      "The function is actually correct and the crash is unrelated to typing",
+      "Any turns off type checking for everything it touches -- a clean strict-mode report is not evidence of correctness when Any is anywhere in the signature",
+      "mypy and pyright only check syntax, not runtime behavior, so this is expected for all functions"
+    ],
+    answer: 2,
+    explain: "Any เป็นทางออกที่จงใจ: ทุก checker ปฏิบัติกับมันว่า compatible กับทุกอย่าง ดังนั้น operation บนค่าที่ type เป็น Any ไม่เคยถูก flag ไม่ว่าจะผิดแค่ไหนก็ตาม รายงาน strict ที่สะอาดข้าง parameter ที่เป็น Any ไม่พิสูจน์อะไรเลยเกี่ยวกับการใช้งาน parameter นั้นจริง ๆ"
+  },
+  {
+    q: "ทำไม `ruff`'s `F632` ถึงจับ `x is 5` ได้ แต่จับ `a is b` ที่ `a` กับ `b` เป็น string ที่สร้างแยกกันแต่บังเอิญเท่ากันไม่ได้?",
+    options: [
+      "F632 is broken and should catch both",
+      "F632 only recognizes the direct literal-comparison shape at the syntax level; whether two arbitrary runtime values happen to be the same object is a property of interning and object construction that static analysis can't determine in general",
+      "String comparisons are never checked by any tool",
+      "is is always safe for strings specifically"
+    ],
+    answer: 1,
+    explain: "F632 จับคู่ pattern `is`/`is not` กับ literal ด้านใดด้านหนึ่ง -- เป็นการเช็คเชิง syntax ล้วน ๆ ว่าสอง runtime value ที่สร้างมาบังเอิญแชร์ object identity กันหรือเปล่าขึ้นอยู่กับพฤติกรรม interning ของ CPython ซึ่งเป็น implementation detail ที่ static analysis ไม่สามารถแก้ปัญหาให้กับ expression ทั่วไปได้"
+  },
+  {
+    q: "pytest test หนึ่งใช้ `@patch(\"requests.get\")` เพื่อ mock function ข้างใน `weather.py` ซึ่งทำ `from requests import get` ที่ด้านบนของไฟล์ เกิดอะไรขึ้น?",
+    options: [
+      "The mock works normally -- patch always finds every reference to the same function",
+      "The patch has no effect on weather.py's code, because `from requests import get` created a separate name bound in weather.py's own namespace, not a lookup of requests.get at call time",
+      "pytest raises an error immediately because the patch target doesn't exist",
+      "weather.py fails to import"
+    ],
+    answer: 1,
+    explain: "unittest.mock.patch แทนที่ attribute บน object ที่ระบุใน string จาก requests import get ได้ copy reference ของ function เข้าไปใน namespace ของ weather.py เองแล้วตอน import time การ patch requests.get ทีหลังไม่แตะชื่อ get ที่แยกไว้แล้วของ weather.py เลย"
+  },
+  {
+    q: "async task สองตัวเรียก `Account.withdraw(80)` บน account ที่มี balance=100 พร้อมกัน และการเช็คเกิดขึ้นก่อน `await asyncio.sleep(0)` กลาง function ผลลัพธ์จริงที่สังเกตได้คืออะไร?",
+    options: [
+      "One withdrawal succeeds and one fails, as expected for balance=100",
+      "Both withdrawals report success and the balance goes negative (-60), because both tasks pass the balance check before either one reaches the mutation",
+      "asyncio automatically serializes any two calls to the same object's method",
+      "A RuntimeError is raised for concurrent access to the same object"
+    ],
+    answer: 1,
+    explain: "โดยไม่มี lock event loop สามารถสลับระหว่างสอง task ที่จุด await ที่อยู่ระหว่างการเช็คกับการ mutate ทั้งสอง task เห็น balance=100 ว่ายังพอก่อนที่ตัวไหนจะลบอะไรออกไปเลย ทั้งคู่จึงดำเนินการต่อ"
+  },
+  {
+    q: "ทำไมการเรียก `Pool()` โดยไม่มี `if __name__ == \"__main__\":` guard ถึงอันตรายเป็นพิเศษบน macOS และ Windows มากกว่าการไม่มี guard บน Linux แบบ `fork` คลาสสิก?",
+    options: [
+      "It isn't -- the guard is only a style preference everywhere",
+      "spawn/forkserver workers re-import the entire starting module from scratch; an unguarded module-level Pool() call re-executes on every re-import, creating more pools and more workers recursively",
+      "macOS and Windows do not support multiprocessing at all",
+      "The guard is only needed when using threads, not processes"
+    ],
+    answer: 1,
+    explain: "fork copy memory ของ process ที่รันอยู่แล้ว ดังนั้นโค้ดระดับ module ไม่รันซ้ำใน child spawn และ forkserver เริ่ม interpreter ใหม่ที่ re-import module ที่เริ่มมัน -- ถ้าการ import นั้นมี side effect สร้าง Pool worker ใหม่แต่ละตัวก็จะสร้าง pool ของ worker ของตัวเองซ้ำไปเรื่อย ๆ จนเครื่องรับไม่ไหว"
+  },
+  {
+    q: "ทั้ง mypy --strict และ pyright ปฏิเสธ `add_a_cat(dogs)` ที่ `dogs: list[Dog]` และ `add_a_cat` คาดหวัง `list[Animal]` ทั้งที่ `Dog` เป็น `Animal` ทำไม?",
+    options: [
+      "Dog does not actually inherit from Animal in this example",
+      "list is invariant in its element type -- add_a_cat is allowed to append any Animal (including a Cat) into whatever list it receives, so accepting a list[Dog] there would let a Cat end up inside a list the caller believes contains only Dogs",
+      "Both tools have an unrelated bug in this specific case",
+      "list[Dog] and list[Animal] are actually the same type, so this should be allowed and both tools are wrong"
+    ],
+    answer: 1,
+    explain: "Covariance จะปลอดภัยก็ต่อเมื่อ list เป็น read-only เท่านั้น เพราะ add_a_cat สามารถ append เข้าไปใน list ที่มันได้รับมาได้ การอนุญาต list[Dog] ในจุดที่คาดหวัง list[Animal] จะทำให้ Cat ถูก append เข้าไปในสิ่งที่ผู้เรียกยังเชื่อว่าเป็น list ของ Dog ล้วน ๆ -- ตรงกับช่องโหว่ที่ invariance มีไว้ปิดพอดี"
+  }
+];
+
+<Quiz client:visible id="reading-python/ai-bug-catalog" questions={quizAiBugCatalog} />
+
+<ProgressTracker client:visible id="reading-python/ai-bug-catalog" />

@@ -1,0 +1,297 @@
+---
+title: Verification tools
+description: 'What ruff, mypy --strict, pyright, python -X dev, pytest + coverage, bandit, and pip-audit each actually catch — and what they miss — with real output on catalog bugs.'
+sidebar:
+  order: 4
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+Every output below is real, captured by running each tool against patterns from the **[AI Bug Catalog](/python/en/reading-python/ai-bug-catalog/)**. None of these tools overlap perfectly, and none of them is close to complete — the point of this lesson is to know exactly where each one's coverage ends, so you know what is still on you.
+
+## `ruff` — one binary, linting and formatting, catches the most patterns for free
+
+`ruff check` runs hundreds of rules (its own reimplementations of `pyflakes`, `pycodestyle`, `flake8-bugbear`, `bandit`'s security checks, `flake8-async`, and more) in one fast pass, with no per-plugin installation. Nine of this catalog's 24 patterns are caught by a `ruff` rule with zero configuration: `B006`, `B023`, `TRY201`, `S101`, `RUF006`, `ASYNC251`, `PLW1641`, `RUF012`, `DTZ003`, `SIM115`, `S602`, `T201`, plus the partial coverage on `F632` and the `E722`/`S110`/`BLE001` family for pattern #6.
+
+**`ruff --fix` is safe by design — `--unsafe-fixes` is not.** `--fix` only applies rewrites `ruff` is confident preserve behavior. `--unsafe-fixes` applies rewrites that are usually right but can change meaning — and it does not ask before doing so. Real before/after on catalog pattern #1:
+
+```python
+# before
+def add_item(item: str, cart: list[str] = []) -> list[str]:
+    cart.append(item)
+    return cart
+```
+
+```bash
+ruff check --select B006 --fix --unsafe-fixes add_item.py
+```
+
+```python
+# after -- ruff's own unsafe rewrite
+def add_item(item: str, cart: list[str] = None) -> list[str]:
+    if cart is None:
+        cart = []
+    cart.append(item)
+    return cart
+```
+
+The rewrite does fix the runtime bug — but it left the parameter annotated `list[str]` while defaulting it to `None`, which is not the same fix a careful human would write (`list[str] | None = None`). Running `mypy --strict` on the *rewritten* file, unmodified:
+
+```text
+error: Incompatible default for parameter "cart" (default has type "None", parameter has type "list[str]")  [assignment]
+note: PEP 484 prohibits implicit Optional. Accordingly, mypy has changed its default to no_implicit_optional=True
+```
+
+`--unsafe-fixes` traded one real bug for one real type error, silently, in one automated pass. Always re-run your type checker (and read the diff) after `--unsafe-fixes` — never run it unattended in CI.
+
+## `mypy --strict` vs `pyright` — real agreement, and a real disagreement
+
+Both are static type checkers that read the same annotations, and they usually agree — but "usually" is not "always," and a reviewer who only runs one can be misled by the other's blind spot.
+
+**Real agreement**, on catalog pattern #17 (`Optional` not narrowed):
+
+```text
+mypy --strict:  error: Item "None" of "str | None" has no attribute "upper"  [union-attr]
+pyright:        error: "upper" is not a known attribute of "None" (reportOptionalMemberAccess)
+```
+
+**Real agreement**, on catalog pattern #18 (list invariance):
+
+```text
+mypy --strict:  error: Argument 1 to "add_a_cat" has incompatible type "list[Dog]"; expected "list[Animal]"  [arg-type]
+pyright:        error: Argument of type "list[Dog]" cannot be assigned to parameter "animals" of type "list[Animal]" (reportArgumentType)
+```
+
+**Real disagreement**, on a one-line status check that AI code writes constantly:
+
+```python
+def is_ready(status: int) -> bool:
+    return status == "ready"
+```
+
+```text
+mypy --strict:  error: Non-overlapping equality check (left operand type: "int", right operand type: "Literal['ready']")  [comparison-overlap]
+pyright:        0 errors, 0 warnings, 0 informations
+```
+
+`mypy --strict` bundles `--strict-equality`, which flags a comparison between two types that can never actually be equal — `status` is always an `int`, `"ready"` is always a `str`, so `status == "ready"` is always `False` and almost certainly a bug (comparing the wrong variable, or against the wrong literal). `pyright` has no equivalent check enabled by default and is completely silent on this exact file. Running only `pyright` in CI would ship this bug; running only `mypy --strict` would have caught it.
+
+**Real, complete silence — both tools, one file**, on catalog pattern #16 (`Any` plus a blanket `# type: ignore`):
+
+```text
+mypy --strict:  Success: no issues found in 1 source file
+pyright:        0 errors, 0 warnings, 0 informations
+```
+
+Neither tool has anything to say about a runtime `AttributeError` waiting on the very next line — `Any` is a deliberate escape hatch from both type systems, not a gap in either implementation.
+
+<Callout title="Run both, and read what neither one flags">
+`mypy --strict` and `pyright` disagree often enough (different default strictness knobs, different treatment of narrowing, different opt-in checks like `--strict-equality`) that running only one is a real coverage gap, not just redundant caution. Where they *both* stay silent — any `Any`, any `# type: ignore` — is exactly where the **[Review Checklist](/python/en/reading-python/review-checklist/)**'s typing section exists to catch what neither tool can.
+</Callout>
+
+## `python -X dev` / `-W error` — the only tools that watch the program run
+
+`python3.14 -X dev` enables Python's development mode: extra runtime assertions, `ResourceWarning`s for unclosed files, `asyncio` debug mode (slow-callback logging), and — critically for this catalog — the `RuntimeWarning: coroutine '...' was never awaited` message the moment an abandoned coroutine is garbage-collected. `-W error::RuntimeWarning` (used by this course's own verifier) additionally turns that warning into a raised exception wherever it is not already inside a `warnings.catch_warnings()` block.
+
+**Real output**, catalog pattern #9 (never-awaited coroutine):
+
+```text
+Exception ignored while finalizing coroutine <coroutine object greet at 0x...>:
+RuntimeWarning: coroutine 'greet' was never awaited
+```
+
+**Real output**, catalog pattern #19 (`datetime.utcnow()`):
+
+```text
+DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+```
+
+**Misses:** everything that requires the exact code path to actually execute during that run. A never-awaited coroutine that is never garbage-collected during a short script's lifetime, or a race condition that happens not to interleave badly on this particular run, produces no warning at all — `-X dev` proves the presence of a problem it observed, never the absence of one it didn't happen to trigger.
+
+## `pytest` + coverage — tells you what was never run, not what is broken
+
+```python
+def withdraw(balance: int, amount: int) -> int:
+    if amount > balance:
+        raise ValueError("insufficient funds")
+    return balance - amount
+```
+
+```python
+def test_withdraw_success():
+    assert withdraw(100, 30) == 70
+```
+
+**Real output**, `pytest --cov=account --cov-report=term-missing`:
+
+```text
+.                                                                        [100%]
+Name         Stmts   Miss  Cover   Missing
+------------------------------------------
+account.py       4      1    75%   3
+------------------------------------------
+TOTAL            4      1    75%
+1 passed in 0.01s
+```
+
+The one test passes, and coverage is 75% — the missing 25% is exactly line 3, the `raise ValueError` branch. Coverage did not find a bug in that line; it found that nobody had tested it at all, which is a different (and weaker) guarantee.
+
+**Misses:** correctness entirely. 100% coverage proves every line ran at least once during some test — it proves nothing about whether the assertions in that test were the right ones, or whether the specific input that triggers a bug (like the race in catalog pattern #12) was ever tried. See **[Worked Review 4](/python/en/reading-python/worked-review-4/)** for a full suite that passes at high coverage while several real bugs ship untouched.
+
+## `bandit` — security-focused static analysis, overlaps `ruff`'s `S` rules on purpose
+
+`bandit` predates `ruff`'s security rule port and remains useful as an independent second opinion, or where a project cannot yet adopt `ruff`. On this catalog it flags the same underlying issues `ruff`'s `S`-prefixed rules do, under its own `B`-numbered codes:
+
+```text
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+>> Issue: [B602:subprocess_popen_with_shell_equals_true] subprocess call with shell=True identified, security issue.
+>> Issue: [B404:blacklist] Consider possible security implications associated with the subprocess module.
+```
+
+**Misses:** anything outside its security-focused rule set — logic bugs, mutability bugs, and most of the async patterns in this catalog are entirely out of scope for `bandit` by design.
+
+## `pip-audit` (or `uv`'s equivalent) — known CVEs in your exact pinned versions
+
+```text
+requirements.txt:
+requests
+urllib3==1.26.4
+```
+
+**Real `pip-audit -r requirements.txt` output:**
+
+```text
+Found 18 known vulnerabilities in 1 package
+Name    Version ID              Fix Versions
+------- ------- --------------- -------------
+urllib3 1.26.4  PYSEC-2021-108  1.26.5
+urllib3 1.26.4  PYSEC-2023-192  1.26.17,2.0.6
+urllib3 1.26.4  PYSEC-2023-212  1.26.18,2.0.7
+...
+```
+
+**Misses:** your own code entirely. `pip-audit` answers one question only — "does a known, published vulnerability affect a package version I have pinned" — and has nothing to say about logic bugs, concurrency bugs, or API misuse, whether in your code or in a dependency's undiscovered (not-yet-published) vulnerabilities. It also cannot catch an *unpinned* requirement going stale in the other direction, or `sudo pip install` polluting a system Python — see catalog pattern #23.
+
+<SpotTheBug code={`# requirements.txt
+django>=4.0`}>
+
+Nothing here is syntactically wrong, and `pip-audit` may well report zero known vulnerabilities against whatever `>=4.0` happens to resolve to today. That is exactly the trap: an unpinned lower bound means the *same file* can resolve to a different, newer major version next month, with no vulnerability necessarily involved at all — just a behavior change nobody asked for at install time. `uv lock` (or `pip-compile`) turns this into an exact, reproducible pin; re-run the audit tool against every lockfile update, not just once.
+
+</SpotTheBug>
+
+## Running the whole ladder in one command
+
+Each tool covers a different, non-overlapping slice of this catalog. Chained with `&&`, the command stops at the first tool that finds something — real output, run against catalog pattern #17's file, stopping at `mypy`:
+
+```bash
+ruff check . && mypy --strict . && pyright . && bandit -q -r . && pytest --cov
+```
+
+```text
+All checks passed!
+file.py:2: error: Item "None" of "str | None" has no attribute "upper"  [union-attr]
+Found 1 error in 1 file (checked 1 source file)
+```
+
+`ruff` passed; `mypy --strict` caught the bug and the chain stopped there — exactly the fail-fast behavior you want in a pre-commit hook or CI gate. Add `pip-audit -r requirements.txt` as a separate, periodic step (dependency vulnerabilities change over time even when your code doesn't).
+
+## Mental Model
+
+```text
+                     Static (source only)              Dynamic (must run)
+                   ┌────────────────────────┐        ┌────────────────────────┐
+Mutability/errors/ │ ruff (B006, B023,      │        │                        │
+style bugs         │ TRY201, S101, RUF006,  │        │                        │
+                    │ ASYNC251, PLW1641,     │        │                        │
+                    │ RUF012, DTZ003, SIM115,│        │                        │
+                    │ S602, T201, F632*)     │        │                        │
+                    ├────────────────────────┤        ├────────────────────────┤
+Security-specific   │ bandit (overlaps ruff  │        │                        │
+                    │ S-rules independently) │        │                        │
+                    ├────────────────────────┤        ├────────────────────────┤
+Type mismatches     │ mypy --strict          │        │                        │
+                    │ pyright                │        │                        │
+                    │ (usually agree; can    │        │                        │
+                    │  disagree; both silent │        │                        │
+                    │  on bare Any)          │        │                        │
+                    ├────────────────────────┤        ├────────────────────────┤
+Runtime-only        │                        │        │ python -X dev / -W     │
+warnings            │                        │        │ error (never-awaited,  │
+                    │                        │        │ deprecated calls)      │
+                    ├────────────────────────┤        ├────────────────────────┤
+Known CVEs in       │ pip-audit / uv audit   │        │                        │
+pinned dependencies │                        │        │                        │
+                    ├────────────────────────┤        ├────────────────────────┤
+What ran vs. didn't │                        │        │ pytest --cov           │
+                    └────────────────────────┘        └────────────────────────┘
+* F632 only catches the direct-literal is-comparison shape, not variable-vs-variable.
+```
+
+<Callout title="Every tool here is a filter, not a verdict">
+A clean run across this entire page still leaves roughly a third of the **[AI Bug Catalog](/python/en/reading-python/ai-bug-catalog/)** unaddressed — aliasing, shared `[[...]]*n` rows, races across `await`, unguarded `Pool()` calls, wrong `mock.patch` targets, and more. Run every tool, then still work through the **[Review Checklist](/python/en/reading-python/review-checklist/)** by eye.
+</Callout>
+
+export const quizVerificationTools = [
+  {
+    q: "Running `ruff check --fix --unsafe-fixes` on the mutable-default-argument pattern rewrote `cart: list[str] = []` into `cart: list[str] = None`. What does this demonstrate?",
+    options: [
+      "unsafe-fixes always produces perfectly correct code, this is expected",
+      "The rewrite fixed the runtime aliasing bug but introduced a real mypy --strict error (assigning None to a list[str]-annotated parameter) -- unsafe fixes need a type-checker re-run and a human read, not blind trust",
+      "ruff never modifies type annotations",
+      "This proves --unsafe-fixes should never be used under any circumstances"
+    ],
+    answer: 1,
+    explain: "The fix genuinely repaired the shared-mutable-default bug, but left an inconsistent annotation that a subsequent mypy --strict run caught immediately -- exactly why --unsafe-fixes output needs review, not why it's useless."
+  },
+  {
+    q: "On `def is_ready(status: int) -> bool: return status == \"ready\"`, mypy --strict reports a comparison-overlap error and pyright reports zero errors. What does this tell a reviewer who only runs one tool?",
+    options: [
+      "pyright is broken and should be replaced",
+      "Running only pyright in CI would ship this exact bug; mypy --strict's --strict-equality check has no pyright equivalent enabled by default",
+      "mypy is wrong here because status could theoretically be compared to a string",
+      "Both tools would catch this if run with --strict"
+    ],
+    answer: 1,
+    explain: "mypy --strict bundles --strict-equality, flagging comparisons between types that can never be equal. pyright has no default equivalent, so a reviewer relying on pyright alone gets a false all-clear on a real always-False comparison."
+  },
+  {
+    q: "Both mypy --strict and pyright report zero issues on a function parameter typed `Any` that later causes a real AttributeError. What should a reviewer conclude?",
+    options: [
+      "The function is correct, since both strict checkers agree",
+      "Any is a deliberate escape hatch both type systems honor identically -- a clean report next to an Any-typed value proves nothing about how that value is actually used",
+      "This means both tools have the same bug",
+      "Any is not really supported by either checker"
+    ],
+    answer: 1,
+    explain: "Any disables type checking for everything it touches, in both mypy and pyright, by design -- not a coverage gap in either implementation. A clean strict-mode report is not evidence of correctness wherever Any appears in a signature."
+  },
+  {
+    q: "A test suite reports 75% coverage, with the missing 25% being the exact line that raises ValueError on invalid input. What does the coverage report actually tell you?",
+    options: [
+      "The ValueError line has a bug",
+      "That line was never executed by any test -- coverage measures what ran, not whether the code that ran (or didn't) is correct",
+      "The test suite is broken and needs to be rewritten",
+      "75% coverage means the code is 75% likely to be bug-free"
+    ],
+    answer: 1,
+    explain: "Coverage is purely a 'did this line execute during some test' measurement. An untested line could be perfectly correct or badly broken -- coverage cannot distinguish the two, it only flags that nobody looked."
+  },
+  {
+    q: "`pip-audit -r requirements.txt` reports 18 known vulnerabilities for a pinned `urllib3==1.26.4`. Would pip-audit have caught the same risk if the requirement had instead been an unpinned `urllib3` with no version?",
+    options: [
+      "Yes, identically -- pip-audit checks the package name regardless of version",
+      "Not the same way -- pip-audit audits the versions actually resolved/installed at the time it runs; an unpinned requirement can resolve to a different version on a different day, which is a reproducibility risk pip-audit doesn't directly flag on the requirements file alone",
+      "pip-audit refuses to run on files with unpinned requirements",
+      "Unpinned requirements are always safer because they get the newest version automatically"
+    ],
+    answer: 1,
+    explain: "pip-audit's CVE check operates on resolved/installed versions. An unpinned requirement sidesteps the specific-version question pip-audit is built to answer, and introduces a separate risk (non-reproducible installs) that no vulnerability scanner is designed to catch from the requirements file's text alone."
+  }
+];
+
+<Quiz client:visible id="reading-python/verification-tools" questions={quizVerificationTools} />
+
+<ProgressTracker client:visible id="reading-python/verification-tools" />

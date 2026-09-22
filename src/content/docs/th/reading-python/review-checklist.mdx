@@ -1,0 +1,148 @@
+---
+title: Review checklist
+description: 'checklist หนึ่งหน้า แบ่ง 6 หมวด สำหรับรีวิวโค้ด Python -- แต่ละบรรทัดลิงก์ไปบทที่อธิบายกฎเบื้องหลัง'
+sidebar:
+  order: 3
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+นี่คือ checklist ที่ควรไล่ดู — ด้วยตา บน diff ไหนก็ได้ ของคุณเองหรือของ AI — หลังจากเครื่องมือใน **[Verification Tools](/python/th/reading-python/verification-tools/)** รันแล้วสะอาด มันจงใจทำให้อยู่ในหนึ่งหน้ากระดาษพิมพ์: checklist ที่ไม่มีใครเปิดดูจริงตอนรีวิวไม่มีค่าอะไรเลย ทุกบรรทัดลิงก์ไปบทที่อธิบายว่า *ทำไม* และลิงก์ไปหมายเลข pattern ที่ตรงกันใน **[AI Bug Catalog](/python/th/reading-python/ai-bug-catalog/)** ที่มันช่วยป้องกัน
+
+## Mutability
+
+- default argument ใช้ mutable literal (`= []`, `= {}`, `= set()`) แทนที่จะเป็น `= None` หรือเปล่า? Catalog #1 ดู **[Functions](/python/th/basics/functions/)**
+- `lambda` หรือ nested function ใน loop close over ตัวแปร loop เอง แทนที่จะเป็นค่าของมันในแต่ละรอบหรือเปล่า? Catalog #2 ดู **[Closures](/python/th/functions-deep/closures/)**
+- function ที่ดูเหมือน read-only จริง ๆ mutate argument ที่เป็น `list`/`dict` ในที่เดิม (`.sort()`, `.append()`, `x[i] = ...`) โดยไม่บอกไว้เลยหรือเปล่า? Catalog #3 ดู **[Lists & Tuples](/python/th/data-structures/lists-tuples/)**
+- `[[...] * n] * m` (หรือ container ของ container ที่ทำซ้ำด้วย `*`) สร้าง inner object ที่แชร์กันตัวเดียว แทนที่จะเป็นตัวอิสระต่อกันหรือเปล่า? Catalog #4 ดู **[Lists & Tuples](/python/th/data-structures/lists-tuples/)**
+- class attribute ที่ประกาศระดับ class (ไม่ใช่ใน `__init__`) เป็น mutable object ที่ถูกแชร์ทุก instance หรือเปล่า? Catalog #15 ดู **[Classes](/python/th/oop-data-model/classes/)**
+
+## Errors
+
+- มีการใช้ `is` ในจุดที่ควรเป็น `==` — เทียบค่าแทนที่จะเช็ค singleton (`None`/`True`/`False`) หรือเปล่า? Catalog #5 ดู **[Variables & Types](/python/th/basics/variables-types/)**
+- มี bare `except:`, `except Exception: pass` หรือ (ใน async code) `except BaseException` คั่นอยู่ระหว่าง `await` กับ `.cancel()` ของ task หรือเปล่า? Catalog #6 ดู **[Exceptions](/python/th/typing-errors/exceptions/)**
+- มี `raise e` อยู่ใน `except ... as e:` ที่ตั้งใจใช้ bare `raise` หรือเปล่า? Catalog #7 ดู **[Exceptions](/python/th/typing-errors/exceptions/)**
+- `assert` validate external input (argument, user input, API response) แทนที่จะเป็น internal invariant หรือเปล่า? มันหายไปภายใต้ `-O` Catalog #8 ดู **[Exceptions](/python/th/typing-errors/exceptions/)**
+
+## Async & concurrency
+
+- ทุก call ที่คืน coroutine ถูก `await` จริงหรือถูกส่งให้ `asyncio.create_task`/`asyncio.gather` หรือเปล่า? Catalog #9 ดู **[asyncio basics](/python/th/async-concurrency/asyncio-basics/)**
+- ผลลัพธ์ของ `asyncio.create_task(...)` ทุกตัวถูกเก็บไว้ที่ไหนสักแห่งที่มี lifetime ยาวกว่า function ที่สร้างมันหรือเปล่า? Catalog #10 ดู **[Tasks & gather](/python/th/async-concurrency/async-await/)**
+- มี `async def` function ตัวไหนเรียก blocking function (`time.sleep`, synchronous HTTP client, blocking file I/O) แทนที่จะเป็นเวอร์ชัน `await`-based ของมันหรือเปล่า? Catalog #11 ดู **[GIL & threads](/python/th/async-concurrency/gil-threads/)**
+- shared mutable state ถูกอ่านแล้วเขียนคาบเกี่ยว `await` โดยไม่มี `asyncio.Lock` หรือเปล่า? Catalog #12 ดู **[Tasks & gather](/python/th/async-concurrency/async-await/)**
+- ทุกการเรียก `multiprocessing.Pool`/`Process` อยู่หลัง `if __name__ == "__main__":` หรือเปล่า? Catalog #13 ดู **[multiprocessing](/python/th/async-concurrency/multiprocessing/)**
+
+## Typing
+
+- class นิยาม `__eq__` โดยไม่นิยาม `__hash__` ด้วย (หรือยอมรับโดยตั้งใจว่า instance จะ unhashable) หรือเปล่า? Catalog #14 ดู **[Dunder methods](/python/th/oop-data-model/dunder-methods/)**
+- มีการใช้ `Any` ในจุดที่มี type จริงให้ใช้ได้ หรือมี `# type: ignore` ที่ไม่มี error code เฉพาะเจาะจงหรือเปล่า? Catalog #16 ดู **[Type hints](/python/th/typing-errors/type-hints/)**
+- parameter หรือ return value ที่เป็น `X | None` (หรือ `Optional[X]`) ถูกใช้โดยไม่มีการเช็ค `None` ก่อนหรือเปล่า? Catalog #17 ดู **[Type hints](/python/th/typing-errors/type-hints/)**
+- `list[Subtype]` ถูกส่งไปในจุดที่คาดหวัง `list[Supertype]` หรือเปล่า — และ `Sequence`/`Iterable` (covariant) ควรเป็น parameter type ที่ถูกต้องแทน `list` หรือเปล่า? Catalog #18 ดู **[Type hints](/python/th/typing-errors/type-hints/)**
+
+## Resources & security
+
+- โค้ดเรียก `datetime.utcnow()` (deprecated, naive) แทนที่จะเป็น `datetime.now(timezone.utc)` หรือเปล่า? Catalog #19 ดู **[stdlib tour](/python/th/stdlib-testing-tooling/stdlib-tour/)**
+- ทุกการเรียก `open()` อยู่ใน `with` block และส่ง `encoding=` อย่างชัดเจนหรือเปล่า? Catalog #20 ดู **[stdlib tour](/python/th/stdlib-testing-tooling/stdlib-tour/)**
+- มีการเรียก `subprocess` ตัวไหนใช้ `shell=True` กับ string ที่สร้างจาก external input หรือเปล่า? Catalog #21 ดู **[stdlib tour](/python/th/stdlib-testing-tooling/stdlib-tour/)**
+- ทุก `@patch("...")` target string ตรงกับที่โค้ดที่ถูกทดสอบ import ชื่อนั้นมาจริง ๆ หรือเปล่า — module ที่เรียกใช้ ไม่ใช่ module ที่นิยาม? Catalog #22 ดู **[pytest](/python/th/stdlib-testing-tooling/pytest/)**
+- ทุก dependency ถูก pin หรือเปล่า และ `pip-audit`/เครื่องมือ audit ของ `uv` ถูกรันกับ lockfile เมื่อไม่นานมานี้หรือเปล่า? มีการติดตั้งด้วย `sudo pip` ที่ไหนหรือเปล่า? Catalog #23 ดู **[venv, pip & uv](/python/th/stdlib-testing-tooling/venv-pip/)**
+
+## Tooling & style
+
+- โค้ดที่เป็น library เรียก `print()` ในจุดที่ควรเป็น `logging` — อะไรก็ตามที่ผู้เรียกต้อง filter, redirect หรือปิดเสียงได้ — หรือเปล่า? Catalog #24 ดู **[Logging](/python/th/stdlib-testing-tooling/index/)**
+
+<SpotTheBug code={`def get_config(overrides: dict | None = None) -> dict:
+    config = {"retries": 3, "timeout": 10}
+    if overrides:
+        config |= overrides
+    return config
+
+
+base = get_config()
+custom = get_config({"retries": 5})
+print(base)
+print(custom)`}>
+
+โค้ดนี้ถูกต้องอยู่แล้ว — มันอยู่ตรงนี้เพื่อทดสอบว่าคุณไล่ checklist แบบท่องจำหรืออ่านโค้ดจริง `overrides: dict | None = None` ใช้ `None` เป็น default ไม่ใช่ mutable literal ดังนั้น catalog #1 ไม่เกี่ยวข้อง: `config = {...}` เป็น dict ใหม่ที่ถูกสร้างข้างใน function body ทุกครั้งที่เรียก และ `config |= overrides` merge เข้าไปใน dict ใหม่นั้น ไม่ใช่เข้าไปในอะไรที่แชร์ข้าม call การไล่ checklist ควรบอกคุณว่า *ต้องดูตรงไหน* ไม่ใช่ยัด bug ที่ไม่มีจริงให้คุณ — `base` พิมพ์ `{'retries': 3, 'timeout': 10}` และ `custom` พิมพ์ `{'retries': 5, 'timeout': 10}` อย่างถูกต้อง แยกจากกัน
+
+</SpotTheBug>
+
+## เวอร์ชันสั้นแบบ copy-paste ได้
+
+```text
+Mutability:  mutable default arg? loop-var closure? mutates caller's list? shared [[...]]*n rows? shared class attr?
+Errors:      is vs ==? bare/broad except (incl. BaseException across await)? raise e vs raise? assert validating input?
+Async:       every coroutine awaited/tasked? task reference kept? blocking call inside async def? shared state without Lock? Pool guarded by __main__?
+Typing:      __eq__ without __hash__? bare Any / uncoded type: ignore? Optional narrowed before use? list invariance respected?
+Resources:   utcnow()/naive datetime? open() with encoding=? subprocess shell=True? patch target matches import site? deps pinned + audited?
+Tooling:     print() instead of logging in library code?
+```
+
+<Callout title="checklist ช่วยแคบขอบเขตค้นหา ไม่ได้แทนที่การค้นหา">
+ทุกบรรทัดข้างบน map ไปที่ 1 ใน 24 pattern ใน **[AI Bug Catalog](/python/th/reading-python/ai-bug-catalog/)** — หนึ่งในสามของมันไม่มีเครื่องมือไหนจับได้อัตโนมัติ ไล่ list นี้บนทุก diff ไม่ว่า `ruff`/`mypy`/`pyright` จะกลับมาสะอาดแค่ไหนก็ตาม
+</Callout>
+
+export const quizReviewChecklist = [
+  {
+    q: "'does every asyncio.create_task result get stored somewhere' อยู่กลุ่มไหน และทำไมถึงเป็นกลุ่มนั้นไม่ใช่ 'Typing'?",
+    options: [
+      "Typing — Task is a generic type",
+      "Async & concurrency — an unreferenced Task can be garbage-collected before it finishes, which is a lifetime problem, not a type-correctness problem",
+      "Mutability — Task objects are mutable",
+      "Tooling & style — it is a matter of code style, not correctness"
+    ],
+    answer: 1,
+    explain: "checklist จัดกลุ่มตามสิ่งที่พัง ไม่ใช่ตาม module ที่เกี่ยวข้อง: task reference ที่หายไปเป็นปัญหาเรื่อง lifetime/ownership เฉพาะ async code ต่างจากว่า type annotation บนมันถูกต้องหรือไม่"
+  },
+  {
+    q: "ทำไม checklist ถึงถามเจาะจงว่า '@patch target ตรงกับที่โค้ดที่ทดสอบ import ชื่อมาหรือเปล่า' แทนที่จะถามแค่ 'มี mock อยู่หรือเปล่า'?",
+    options: [
+      "unittest.mock.patch replaces an attribute on the object named in the string, which only affects the code under test if that code looks up the name through the same path — a from-import binds its own separate name",
+      "Mocks are always correct as long as one exists somewhere in the test file",
+      "patch() cannot be used with from-import style imports at all",
+      "There is no difference between patching the defining module and the importing module"
+    ],
+    answer: 0,
+    explain: "from-import copy reference เข้าไปใน namespace ของ module ที่ import เองตอน import time การ patch ตำแหน่งเดิมทีหลังไม่แตะชื่อที่ผูกแยกไว้แล้วนั้นเลย -- mock มีผลเป็นศูนย์แบบเงียบ ๆ ซึ่งการรีวิวเนื้อหาอย่างเดียวจะพลาด เว้นแต่จะเช็ค import style ให้ตรง"
+  },
+  {
+    q: "checklist บอกให้เช็คว่าการเรียก Pool/Process อยู่หลัง `if __name__ == \"__main__\":` หรือเปล่า ทำไมเรื่องนี้ถึงสำคัญกว่าบน platform บางตัว?",
+    options: [
+      "It doesn't -- this bug is identical on every platform",
+      "spawn/forkserver start methods (macOS, Windows, and non-macOS Unix since Python 3.14) re-import the launching module in each worker; fork (classic Linux default before 3.14) does not re-run module-level code",
+      "The guard only matters for threads, not processes",
+      "multiprocessing does not work at all without the guard"
+    ],
+    answer: 1,
+    explain: "fork copy memory ของ process ที่รันอยู่แล้ว ดังนั้นโค้ดระดับ module ไม่รันซ้ำใน child spawn/forkserver เริ่ม interpreter ใหม่ที่ re-import module ที่เริ่มมัน -- การเรียก Pool() ระดับ module ที่ไม่มี guard จะรันซ้ำทุกครั้งที่ re-import แบบนั้น"
+  },
+  {
+    q: "ทำไม 'มีการใช้ Any ในจุดที่มี type จริงให้ใช้ได้' ถึงอยู่ใน checklist นี้ ทั้งที่ mypy --strict และ pyright รายงาน zero error บนไฟล์ที่ใช้ Any แบบนี้เหมือนกันทั้งคู่?",
+    options: [
+      "It shouldn't be -- checklists should only contain things a tool can verify",
+      "A checklist is exactly for judgment calls no tool makes; Any deliberately turns off checking, so a clean strict-mode report next to it proves nothing",
+      "mypy and pyright will eventually be updated to catch this",
+      "Any is never actually used in real code, so this line is defensive only"
+    ],
+    answer: 1,
+    explain: "ประเด็นหลักของโมดูลนี้คือ pattern ส่วนหนึ่งที่มันครอบคลุมไม่มี automated check เลย -- Any คือกรณีที่ชัดที่สุด เพราะมันปิดการเช็คของเครื่องมือที่ควรจะจับความไม่ตรงกันได้พอดี checklist มีไว้เพื่อรับ judgment call ที่เครื่องมือทำไม่ได้"
+  },
+  {
+    q: "```python\ndef get_config(overrides=None):\n    config = {\"retries\": 3}\n    if overrides:\n        config |= overrides\n    return config\n```\ncatalog pattern #1 (mutable default argument) เกิดขึ้นที่นี่หรือเปล่า?",
+    options: [
+      "Yes -- config is a dict, and dicts are mutable",
+      "No -- the default is None, not a mutable literal, and config is a fresh dict created inside the function body on every call",
+      "Yes -- because |= mutates config in place",
+      "It depends on how many times the function is called"
+    ],
+    answer: 1,
+    explain: "pattern #1 พูดถึง DEFAULT ARGUMENT ที่เป็น mutable object ซึ่งถูก evaluate ครั้งเดียวตอน definition ที่นี่ default เป็น None (immutable ปลอดภัยที่จะแชร์) และ config เองถูกสร้างใหม่ข้างใน function body ทุกครั้งที่เรียก -- ไม่มีอะไรถูกแชร์ข้าม call ให้ mutate"
+  }
+];
+
+<Quiz client:visible id="reading-python/review-checklist" questions={quizReviewChecklist} />
+
+<ProgressTracker client:visible id="reading-python/review-checklist" />
