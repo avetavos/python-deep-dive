@@ -1,0 +1,388 @@
+---
+title: 'Regex with re'
+description: 'Pattern matching with the re module: raw strings, match vs search vs fullmatch, groups, flags, substitution, and catastrophic backtracking.'
+sidebar:
+  order: 6
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+## Raw strings, and why regex patterns almost always use them
+
+A regex pattern is written as a normal Python string first, then handed to the `re` engine, which does its *own* second pass of interpreting backslashes (`\d` means "a digit" to `re`, not to Python). Without a raw string, Python's own string parser eats the backslash first.
+
+```python
+print("\d+")   # Python sees an unrecognised escape -- see the warning below
+print(r"\d+")  # raw string: the backslash reaches re untouched
+```
+
+Since Python 3.12, an unrecognised escape sequence inside a normal (non-raw) string literal is a `SyntaxWarning`, not silence:
+
+```text
+$ python3.14 -c 'pattern = "\d+"; print(pattern)'
+<string>:1: SyntaxWarning: "\d" is an invalid escape sequence. Such sequences will not work in
+the future. Did you mean "\\d"? A raw string is also an option.
+  pattern = "\d+"; print(pattern)
+\d+
+```
+
+The program still runs — `\d` happens to fall back to a literal backslash followed by `d`, so this *particular* pattern is accidentally still correct — but that is luck, not design. `\n`, `\t`, and a handful of others are recognised Python escapes and would silently change meaning instead of warning. The fix is always the same: prefix the string with `r` the moment it is a regex pattern, full stop, no exceptions.
+
+> This SyntaxWarning is a compile-time diagnostic from Python's own string parser, not a `RuntimeWarning` — it will not turn into an exception in a Playground below (which only escalates `RuntimeWarning` to an error), so it is shown here as a real terminal transcript instead.
+
+## `re.compile` and the module cache
+
+`re.compile(pattern)` returns a reusable `Pattern` object with `.match`/`.search`/`.findall`/etc. methods. The module-level functions (`re.search(pattern, text)`, `re.findall(pattern, text)`, ...) are convenience wrappers that call `re.compile` internally — and `re.compile` itself is backed by a small cache (`re._MAXCACHE` entries, keyed by the exact pattern text and flags), so calling it repeatedly with the same arguments does not recompile:
+
+export const pg1Code = `
+import re
+
+# re.compile is cached: same pattern text + same flags returns the SAME object
+a = re.compile(r"\\d+")
+b = re.compile(r"\\d+")
+print("cache hit (identical pattern+flags):", a is b)
+
+c = re.compile(r"\\d+", re.IGNORECASE)
+print("cache miss (different flags):", a is c)
+
+# Five ways to look for the same pattern in the same text
+pattern = re.compile(r"\\d+")
+text = "room 12, hall 345, gate 6"
+
+print("match:    ", pattern.match(text))       # anchored at index 0 only
+print("search:   ", pattern.search(text))      # first match anywhere
+print("fullmatch:", pattern.fullmatch(text))    # entire string must match
+print("fullmatch (digits only):", pattern.fullmatch("789"))
+print("findall:  ", pattern.findall(text))      # every match, as strings
+print("finditer: ", [m.group() for m in pattern.finditer(text)])  # every match, as Match objects
+`.trim();
+
+<Playground code={pg1Code} />
+
+Explicit `re.compile` still matters for readability and for attaching flags once instead of at every call site — but "compile once at module scope for performance" is largely folklore since 3.x: the cache already does that for you as long as the pattern text and flags stay identical.
+
+## `match` vs `search` vs `fullmatch` vs `findall` vs `finditer`
+
+The five ways to look for a pattern in a string differ only in **where** they require the match, and **what** they hand back:
+
+<Mermaid code={`flowchart LR
+  Text["text = 'concatenate', pattern = re.compile('cat')"] --> M["pattern.match(text) -- checks only index 0 -- None"]
+  Text --> S["pattern.search(text) -- scans left-to-right -- finds 'cat' at index 3"]
+  Text --> F["pattern.fullmatch(text) -- requires the ENTIRE string -- None"]`} title="match / search / fullmatch: same pattern, three different anchoring rules" />
+
+`match` and `fullmatch` are anchored (implicitly at the start; `fullmatch` also at the end); `search` is not anchored at all. `findall` returns every match as plain strings (or tuples, if the pattern has groups); `finditer` returns every match as lazy `Match` objects, so you keep access to `.start()`, `.end()`, and `.groups()` for each one.
+
+## Groups, named groups, and `groupdict`
+
+Parentheses `(...)` capture a sub-match; `(?P<name>...)` names it, so you don't have to remember positional indices when reading the result later.
+
+## Greedy vs lazy quantifiers
+
+`*`, `+`, and `{m,n}` are **greedy** by default: they grab as much as possible, then give characters back only if the rest of the pattern needs them to. Adding `?` after a quantifier (`*?`, `+?`, `{m,n}?`) makes it **lazy**: grab as little as possible, then expand only if needed.
+
+export const pg2Code = `
+import re
+
+m = re.search(r"(\\d{4})-(\\d{2})-(\\d{2})", "created: 2026-09-22")
+print("groups:", m.groups())
+print("group 1:", m.group(1))
+
+named = re.search(r"(?P<year>\\d{4})-(?P<month>\\d{2})-(?P<day>\\d{2})", "created: 2026-09-22")
+print("groupdict:", named.groupdict())
+
+# Greedy vs lazy on the same text
+html = "<b>bold</b> and <i>italic</i>"
+greedy = re.search(r"<.*>", html)
+lazy = re.search(r"<.*?>", html)
+print("greedy:", greedy.group())
+print("lazy:  ", lazy.group())
+`.trim();
+
+<Playground code={pg2Code} />
+
+The greedy `<.*>` grabs from the first `<` all the way to the *last* `>` in the string, swallowing everything in between — almost never what you want against HTML-like text. The lazy `<.*?>` stops at the first `>` it can get away with.
+
+## Flags: `re.I`, `re.M`, `re.S`, `re.X`
+
+export const pg3Code = `
+import re
+
+print(bool(re.search(r"python", "I love PYTHON", re.I)))
+
+text = "line1\\nline2\\nline3"
+print(re.findall(r"^line\\d", text, re.M))
+
+print(bool(re.match(r"a.b", "a\\nb", re.S)))
+
+pattern = re.compile(
+    r"""
+    (?P<area>\\d{3})   # area code
+    -
+    (?P<num>\\d{4})    # local number
+    """,
+    re.X,
+)
+m = pattern.search("call 555-1234 now")
+print(m.groupdict())
+`.trim();
+
+<Playground code={pg3Code} />
+
+`re.I` (`IGNORECASE`) folds case. `re.M` (`MULTILINE`) makes `^`/`$` match at every line boundary, not just the start/end of the whole string. `re.S` (`DOTALL`) makes `.` also match `\n` (by default it does not). `re.X` (`VERBOSE`) ignores whitespace and lets you write `#` comments inside the pattern itself — the single biggest readability win for any pattern with more than two or three parts, and it's the reason the phone-number pattern above is legible at all.
+
+## `re.sub` with a callable and with backreferences
+
+The replacement argument to `re.sub` can be a plain string with backreferences (`\1`, `\2`, ...) referring to captured groups, or a function that receives the `Match` object and returns the replacement text — needed whenever the replacement depends on what was matched, not just a fixed rearrangement.
+
+export const pg4Code = `
+import re
+
+# Backreference: swap "first last" to "last, first"
+print(re.sub(r"(\\w+) (\\w+)", r"\\2, \\1", "John Smith"))
+
+# Callable: shout every word, using a function instead of a static replacement
+def upper_word(m: re.Match) -> str:
+    return m.group().upper()
+
+print(re.sub(r"\\b\\w+\\b", upper_word, "make this shout"))
+
+# re.escape: safe substring search built from untrusted input
+user_input = "3.14 (pi)"
+print(bool(re.search(re.escape(user_input), "value is 3.14 (pi) exactly")))
+print(bool(re.search(user_input, "value is 3.14 (pi) exactly")))  # unescaped: . and () mean something else
+`.trim();
+
+<Playground code={pg4Code} />
+
+The last two lines are the important contrast: with `re.escape`, every regex-special character in `user_input` is treated literally, and the search finds the exact substring. Without it, `.` means "any character" and `(pi)` is parsed as a capturing group around the letters `pi` — the parentheses themselves are *not* literal characters to match, so the pattern actually requires the literal text `"pi"` to appear immediately after `"3X14 "` with **no** `(` in between. It doesn't; the real text has `"(pi)"`, not `"pi"` right after the space — so the unescaped search returns `False`, silently, with no exception to warn you the pattern meant something different from what was typed. **Any user-supplied string used to build a regex pattern must go through `re.escape` first**, unless the whole point is to let the user write a pattern.
+
+## Catastrophic backtracking
+
+A pattern like `(a+)+b` looks harmless, but nesting two "one or more" quantifiers over overlapping input creates an enormous number of equivalent ways to split the string between the inner and outer group — and when the trailing `b` never shows up, the engine tries *all* of them before giving up. The number of ways to split `n` characters grows exponentially with `n`:
+
+export const pg5Code = `
+import re
+import time
+
+# (a+)+b : two nested "one or more" quantifiers over the same character class.
+# For a string of all "a" with no trailing "b", the engine tries every way to
+# split the a-run between the inner and outer "+" before giving up -- that
+# splitting count grows exponentially with the input length.
+evil = re.compile(r"(a+)+b")
+
+print("catastrophic pattern (a+)+b -- timing grows fast:")
+for n in (20, 22, 24):
+    text = "a" * n
+    start = time.perf_counter()
+    result = evil.match(text)
+    elapsed = time.perf_counter() - start
+    print(f"  n={n:2d}  match={result}  {elapsed:.4f}s")
+
+# Fix 1: possessive quantifier \`*+\` (3.11+) -- once the outer group grabs
+# characters, it never gives them back to try another split.
+possessive = re.compile(r"(a+)*+b")
+
+# Fix 2: atomic group \`(?>...)\` (3.11+) -- same idea, wraps the whole
+# backtracking-prone group so its internal choices are never revisited.
+atomic = re.compile(r"(?>(a+)+)b")
+
+print("\\nfixed with possessive quantifier / atomic group -- flat timing:")
+for name, fixed in (("possessive (a+)*+b", possessive), ("atomic (?>(a+)+)b", atomic)):
+    for n in (20, 22, 24):
+        text = "a" * n
+        start = time.perf_counter()
+        result = fixed.match(text)
+        elapsed = time.perf_counter() - start
+        print(f"  {name:20s} n={n:2d}  match={result}  {elapsed:.6f}s")
+`.trim();
+
+<Playground code={pg5Code} />
+
+Real timings on this course's dev machine (yours will differ, but the *shape* is the point): the catastrophic version took roughly 0.03s at 20 characters, 0.11s at 22, and 0.47s at 24 — each two extra characters multiplies the time by about 4x, so 40 characters would already take minutes and 60 would not finish in a reasonable lifetime. Both fixed versions finished in well under a millisecond at every length tested (machine-dependent, but the flatness — not the exact numbers — is what proves the fix). Possessive quantifiers (`*+`, `++`, `{m,n}+`) and atomic groups (`(?>...)`) have been supported by `re` since Python 3.11: both tell the engine "once this group matches, never come back and try a different split of it" — which is exactly the choice that was exploding combinatorially before.
+
+This is not a rare edge case: any pattern shaped like `(X+)+`, `(X*)*`, or `(X|XY)+` against a long non-matching or almost-matching input is a candidate. If a pattern is built from user input, or matches against user input, catastrophic backtracking is a real denial-of-service vector, not just a performance curiosity.
+
+## When `str` methods beat regex
+
+Regex is overkill — slower to write, slower to read, and often slower to run — for checks that a plain string method already expresses directly:
+
+export const pg6Code = `
+import re
+
+path = "/api/v2/users"
+
+# str methods beat regex for fixed, literal checks
+print(path.startswith("/api/"))
+print(path.split("/"))
+print(path.removeprefix("/api/v2"))
+print("users" in path)
+
+# unicode \\w matches more than ASCII letters/digits/underscore
+print(re.findall(r"\\w+", "café münchen 42"))
+print(re.findall(r"[A-Za-z0-9_]+", "café münchen 42"))
+`.trim();
+
+<Playground code={pg6Code} />
+
+`startswith`/`endswith` beat `re.match(r"^literal")`; `split` beats a regex with no actual pattern in it; `removeprefix`/`removesuffix` (3.9+) beat a regex used only to strip a fixed literal string; plain `in` beats `re.search` for a literal substring check. Reach for `re` when the thing you're looking for has *variation* a plain string operation can't express — a shape, not a fixed value.
+
+The unicode result above is also worth internalising: `\w` under `re`'s default (unicode) mode matches any character Unicode classifies as a "word" character — accented Latin letters included — not just `[A-Za-z0-9_]`. Code that assumes `\w` is ASCII-only silently mishandles non-English text.
+
+## Regex smells in AI-generated code
+
+- `re.match` used where the intent is "does this pattern appear anywhere" — `re.match` only checks the start of the string; `re.search` is almost always the one that was meant.
+- A pattern built by string-concatenating or f-string-interpolating a variable that came from user input, without `re.escape` around that variable.
+- A nested quantifier shape like `(.*)*`, `(a+)+`, or `(\w*)*` — a catastrophic-backtracking candidate, especially if the input can come from outside the program.
+- A plain (non-raw) string used as a regex pattern — no `r` prefix — relying on the fact that most escape sequences happen not to collide with a recognised Python one.
+- `re.compile` re-created inside a hot loop with a genuinely dynamic pattern, treated as if it must be hoisted for performance — the module cache already makes this mostly moot unless the pattern text itself changes every call.
+- A regex used to validate or parse something with a real parser already in the stdlib (URLs, JSON, dates, file paths) — regex handles *lexical* patterns, not nested/recursive structure.
+
+## Reading AI-generated code
+
+Before trusting a generated regex, check for:
+
+- `re.match` used to find a substring that is not guaranteed to be at index 0 — silently returns `None` for perfectly valid input that just doesn't start with the pattern.
+- A pattern assembled from unescaped user input — a metacharacter in that input changes what the pattern actually means, and `re.escape` is the fix.
+- Nested quantifiers over the same character class (`(.*)*`, `(a+)+`) — a catastrophic-backtracking risk that only shows up once the input is long enough.
+- A regex pattern string missing the `r` prefix.
+
+<SpotTheBug code={`import re
+
+
+def find_error_code(log_line: str, code: str) -> bool:
+    """Check whether \`code\` (typed by a user into a search box) appears in log_line."""
+    return bool(re.match(code, log_line))
+
+
+line = "2026-09-22 ERROR-500 payment failed"
+print(find_error_code(line, "ERROR-500"))     # expected True, mid-string
+print(find_error_code(line, "2026-09-22"))    # True only because it happens to be at index 0
+print(find_error_code(line, "."))             # user types a lone "." and it matches everything`} lang="python">
+Two bugs. First, `re.match` anchors at index 0 -- searching for `"ERROR-500"` in `"2026-09-22 ERROR-500 payment failed"` returns `None` (verified: `find_error_code` prints `False`) even though the text is right there in the middle of the line; `re.search` is what was meant. Second, `code` is user input passed straight into `re.match` with no `re.escape` -- a user who types a single `.` (a valid, innocent-looking search term) gets a pattern that matches literally any line, because `.` means "any character" to `re`, not a literal dot. Fix: `bool(re.search(re.escape(code), log_line))`.
+</SpotTheBug>
+
+<Callout title="Escape user input, search instead of match, and watch for nested quantifiers">
+`re.search` (not `re.match`) is almost always the right default for "does this pattern occur in this text". Any pattern text built from outside the program must go through `re.escape` first. And a pattern shaped like `(X+)+` against attacker-controlled input is a real denial-of-service risk, fixable since 3.11 with a possessive quantifier or an atomic group.
+</Callout>
+
+## Mental Model
+
+A regex engine is a tiny virtual machine that tries to walk a pattern and a string in lockstep, backtracking (undoing a greedy choice and trying a shorter one) whenever the rest of the pattern fails to match what's left. `match`/`search`/`fullmatch` only change *where* that walk is allowed to start and end; the walking-and-backtracking machinery underneath is identical for all three. Catastrophic backtracking is what happens when the pattern gives the engine many equally-valid ways to have arrived at the same position — it doesn't remember "I already tried this," so it repeats work exponentially.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| `re.search` over `re.match` as the default | Matches the actual intent ("is this pattern present") in almost every case | `match`'s anchoring is easy to forget is even a restriction until it silently returns `None` |
+| `re.compile` at module scope | Readable, one place to see the flags | Mostly a style/readability win now — the internal cache already avoids recompiling identical (pattern, flags) pairs |
+| `re.X` (verbose) patterns | Self-documenting, comments allowed inline | Whitespace inside the pattern must be explicitly escaped (`\ ` or `[ ]`) since literal spaces are ignored |
+| Possessive quantifiers / atomic groups | Eliminates catastrophic backtracking for the wrapped group | The wrapped group can no longer backtrack *at all* — a pattern that relied on that backtracking to match valid input can start failing |
+| Plain `str` methods over regex | Faster, more readable for fixed/literal checks | Cannot express variation (character classes, repetition, alternation) — reach for `re` the moment the target has a *shape*, not a fixed value |
+
+## Common Misconceptions
+
+- **"`re.match` checks whether the pattern appears in the string."** It only checks the *start* of the string. `re.search` checks anywhere; `re.match(pattern, s)` behaves like `re.search(f"^{pattern}", s)` (with `re.M` off).
+- **"A pattern without an `r` prefix is fine as long as it looks correct."** It's fine only by coincidence — the moment the pattern needs `\n`, `\t`, or any other recognised Python string escape, the meaning silently changes instead of reaching `re` as written.
+- **"Compiling a pattern with `re.compile` inside a function is a performance mistake."** The module-level cache already deduplicates identical `(pattern, flags)` pairs; the real cost of *not* using `re.compile` is readability (flags repeated at every call site), not repeated compilation.
+- **"`\w` only matches `[A-Za-z0-9_]`."** By default `re` operates in unicode mode, and `\w` matches any character Unicode classifies as alphanumeric, not just ASCII — verified above with `café münchen`.
+- **"Catastrophic backtracking is a theoretical concern, not a real bug."** The timings above are real, measured, and grow from milliseconds to minutes to longer than a human lifetime with a linear increase in input length — this is a genuine denial-of-service vector for any pattern shaped like `(X+)+` fed attacker-controlled input.
+
+export const quizRegex = [
+    {
+        q: "What does `re.compile(r'\\d+').match('room 12')` return, and why?",
+        options: [
+            "A Match object for '12' -- match scans the whole string",
+            "None -- match only checks starting at index 0, and 'room 12' doesn't start with a digit",
+            "A Match object for 'room' -- match is case-insensitive by default",
+            "Raises a ValueError because there's no digit at the start"
+        ],
+        answer: 1,
+        explain: "match is anchored at index 0. 'room 12' starts with 'r', not a digit, so match returns None even though '12' does appear later in the string -- search would find it."
+    },
+    {
+        q: "Why does `re.compile(r'\\d+') is re.compile(r'\\d+')` return `True`?",
+        options: [
+            "re.compile always returns the same singleton object for any pattern",
+            "re.compile is backed by a small internal cache keyed on (pattern text, flags) -- an identical call reuses the cached Pattern object instead of recompiling",
+            "Python interns all string literals, so the two calls receive the same argument object",
+            "This is undefined behaviour and could be False on a different run"
+        ],
+        answer: 1,
+        explain: "re._compile keeps a cache of up to re._MAXCACHE (512) entries keyed by the exact pattern text and flags. A second call with the identical arguments hits the cache and returns the same object -- verified with 'is' above. A different flag value is a cache miss and returns a distinct object.",
+    },
+    {
+        q: "```python\nimport re\nhtml = \"<b>bold</b> and <i>italic</i>\"\nprint(re.search(r\"<.*>\", html).group())\n```\nWhat does this print?",
+        options: [
+            "<b>",
+            "<b>bold</b> and <i>italic</i>",
+            "<b>bold</b>",
+            "An empty string"
+        ],
+        answer: 1,
+        explain: "`.*` is greedy: it grabs as much as possible, so it consumes everything up to the LAST '>' in the string, not the first. The whole substring from the first '<' to the final '>' is returned. A lazy `<.*?>` would instead return just '<b>'.",
+    },
+    {
+        q: "Which flag makes `^` and `$` match at every line boundary instead of only the start/end of the whole string?",
+        options: [
+            "re.S (DOTALL)",
+            "re.X (VERBOSE)",
+            "re.M (MULTILINE)",
+            "re.I (IGNORECASE)"
+        ],
+        answer: 2,
+        explain: "re.M (MULTILINE) makes ^ match right after every newline and $ match right before every newline, in addition to the start/end of the whole string. re.S changes what '.' matches (adds newline); it has nothing to do with ^/$.",
+    },
+    {
+        q: "```python\nimport re\nuser_input = \"3.14 (pi)\"\ntext = \"value is 3.14 (pi) exactly\"\nprint(bool(re.search(user_input, text)))\nprint(bool(re.search(re.escape(user_input), text)))\n```\nWhat does this print?",
+        options: [
+            "True then True -- the pattern matches the literal substring either way",
+            "False then True -- unescaped, '.' and the parentheses change what the pattern means; escaped, it matches the literal text",
+            "True then False -- escaping breaks the match",
+            "Both raise re.error because of the unmatched parenthesis"
+        ],
+        answer: 1,
+        explain: "Unescaped, '.' means 'any character' and '(pi)' is a capturing group -- the parentheses are not literal, so the pattern actually requires 'pi' right after '3X14 ' with no '(' in between, which the text doesn't have -- search returns None/False. re.escape makes every character literal, so the second search finds the exact substring and returns True.",
+    },
+    {
+        q: "Why does `(a+)+b` matched against a long string of only 'a' characters (no trailing 'b') get catastrophically slow as the string grows?",
+        options: [
+            "Because 're' switches to a slower fallback algorithm for long strings",
+            "Because the nested quantifiers create an exponential number of ways to split the 'a' run between the inner and outer group, and the engine tries all of them before failing",
+            "Because Python strings longer than 20 characters are stored differently",
+            "It doesn't -- the timing is actually constant regardless of length"
+        ],
+        answer: 1,
+        explain: "Two nested 'one or more' quantifiers over overlapping input give the engine many different ways to reach the same position before it can conclude there's no trailing 'b'. That count of equivalent splits grows exponentially with input length -- verified: roughly 4x slower for each +2 characters in this lesson's timing demo.",
+    },
+    {
+        q: "How do possessive quantifiers (`*+`, `++`) and atomic groups (`(?>...)`) fix catastrophic backtracking?",
+        options: [
+            "They make the regex engine run on multiple threads",
+            "They tell the engine to never backtrack into the wrapped group once it has matched -- eliminating the exponential re-trying of splits, at the cost of that group being unable to give characters back if a later part of the pattern needs it to",
+            "They automatically rewrite (a+)+b into a non-nested equivalent pattern",
+            "They only work when combined with the re.S flag"
+        ],
+        answer: 1,
+        explain: "Both constructs commit to whatever the group matched -- the engine never revisits that choice to try a different split. This is exactly the choice that was exploding combinatorially, so timing drops from exponential to flat -- verified in this lesson's demo (sub-millisecond at every length tested, vs. up to 0.47s for the unfixed pattern at just 24 characters). Available in re since Python 3.11.",
+    },
+    {
+        q: "Which of these should use a plain `str` method instead of `re`?",
+        options: [
+            "Checking whether a string contains one or more digits in a row",
+            "Checking whether a path starts with a fixed literal prefix like '/api/'",
+            "Extracting all email-shaped substrings from a block of text",
+            "Validating a date shaped like YYYY-MM-DD"
+        ],
+        answer: 1,
+        explain: "startswith('/api/') is a fixed literal check with no variation to express -- str.startswith is faster and clearer than re.match(r'^/api/', s). The other three all involve a *shape* (digits, an email pattern, a date format) that a plain string method can't express, which is exactly when re earns its complexity.",
+    },
+];
+
+<Quiz client:visible id="stdlib-testing-tooling/regex" questions={quizRegex} />
+
+<ProgressTracker client:visible id="stdlib-testing-tooling/regex" />

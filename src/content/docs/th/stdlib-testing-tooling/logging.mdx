@@ -1,0 +1,487 @@
+---
+title: 'Logging'
+description: 'module logging เชิงลึก: logger, hierarchy และ propagation, level, handler และ formatter, dictConfig, structured logging และ module warnings'
+sidebar:
+  order: 7
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+## ทำไม library ไม่ควรใช้ `print`
+
+`print` เขียนไปที่ stdout แบบไม่มีเงื่อนไข ไม่มี level ไม่มีการควบคุมปลายทาง และไม่มีทางให้ *ผู้เรียกใช้* library ตัดสินใจได้ว่าอยากเห็นมันไหม `logging` แยก **สิ่งที่โค้ดอยากบอก** ออกจาก **จะโชว์ไหม/ที่ไหน** ออกจากกัน: library เรียกแค่ `logger.info(...)`/`logger.warning(...)`/ฯลฯ ส่วนแอปพลิเคชันเป็นผู้ประกอบ handler, level และปลายทางจริง ๆ ที่ entry point ของตัวเอง library ที่ใช้ `print` สำหรับ diagnostic ไม่มีทางถูกปิดเสียง, redirect ไปไฟล์ หรือกรองตามความรุนแรงได้เลย — library ที่เรียก `logging.getLogger(__name__).info(...)` ได้ทั้งหมดนั้นฟรี ๆ โดยขึ้นกับผู้ import ล้วน ๆ
+
+## `getLogger(__name__)` และ logger hierarchy
+
+`logging.getLogger(name)` คืน `Logger` แบบ singleton สำหรับชื่อนั้น — เรียกด้วยชื่อเดียวกันสองครั้งจะได้ object *เดียวกัน* `__name__` (dotted path ของ module ที่ import เช่น `"myapp.db.pool"`) คือ argument ตามธรรมเนียม: มันทำให้ชื่อ logger ทุกตัวสะท้อนโครงสร้าง package และจุด (`.`) ในชื่อสร้าง parent/child hierarchy จริงที่ `logging` เข้าใจเอง — `"myapp.db.pool"` เป็น child ของ `"myapp.db"` ซึ่งเป็น child ของ `"myapp"` อีกที
+
+<Mermaid code={`flowchart BT
+  Pool["logger 'app.db.pool'"] -->|"propagates"| Db["logger 'app.db'"]
+  Db -->|"propagates"| App["logger 'app' -- has a StreamHandler"]
+  App -->|"propagates"| Root["root logger"]`} title="ชื่อ logger แบบมีจุดคือสาย parent/child; ข้อความจะ propagate ขึ้นไปหา handler ของทุก ancestor โดย default" />
+
+logger ลูกที่ไม่มี handler ของตัวเองไม่ได้แปลว่าข้อความหายไป — โดย default (`propagate = True`) ทุก log record จะเดินทางขึ้นไปหา ancestor แต่ละตัวและวิ่งผ่าน handler ของ*พวกเขา*ด้วย หยุดแค่ที่ ancestor ตัวแรกที่ `propagate = False` หรือเมื่อไปถึง root
+
+export const pg1Code = `
+import logging
+import sys
+
+logging.root.handlers.clear()
+for name in ("app", "app.db", "app.db.pool"):
+    logging.getLogger(name).handlers.clear()
+
+app = logging.getLogger("app")
+app.setLevel(logging.INFO)
+app_handler = logging.StreamHandler(sys.stdout)
+app_handler.setFormatter(logging.Formatter("%(name)s:%(levelname)s:%(message)s"))
+app.addHandler(app_handler)
+
+db = logging.getLogger("app.db")       # a child of "app" -- dotted name is the hierarchy
+pool = logging.getLogger("app.db.pool")  # a child of "app.db"
+
+print("db.level (own level, unset):", logging.getLevelName(db.level))
+print("db.getEffectiveLevel() (climbs to the nearest ancestor with a level):", logging.getLevelName(db.getEffectiveLevel()))
+
+db.info("a message from app.db")       # no handler on db itself -- propagates up to app's handler
+pool.warning("a message from app.db.pool")  # propagates through db, then app
+
+db.propagate = False
+print("with db.propagate = False:")
+db.info("this no longer reaches app's handler")
+`.trim();
+
+<Playground code={pg1Code} />
+
+`db.level` เป็น `NOTSET` (logger ที่ไม่ได้ตั้ง level ของตัวเอง); `db.getEffectiveLevel()` ไต่สายขึ้นไปจนเจอตัวที่มี level ตั้งไว้ ไปเจอที่ `INFO` ของ `app` `logging.getLogger()` แบบ**ไม่มี** argument คืน root logger โดยเฉพาะ — ancestor ตัวเดียวที่ logger ทุกตัวจะไปถึงในที่สุด และเป็นตัวที่ `basicConfig()` config
+
+## Level และ threshold default ที่เป็น `WARNING`
+
+level ที่มีในตัวเรียงจากต่ำไปสูงคือ `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` logger จะปล่อย record ก็ต่อเมื่อ level ที่*มีผลจริง*ของมันต่ำกว่าหรือเท่ากับ level ของ record นั้น — และ level default ของ root logger คือ `WARNING` ทำให้เรียก `debug()` กับ `info()` จะถูกดรอปแบบเงียบ ๆ จนกว่าจะมีอะไรมายก threshold ขึ้น
+
+## `basicConfig` เฉพาะที่ entry point และทำไมเรียกซ้ำถึงไม่มีผล
+
+`logging.basicConfig(...)` config root logger — แต่จะมีผลแค่ครั้ง**แรก**ที่มีอะไรมา attach handler เข้า root จริง ๆ ตรงนี้มีมุมคม: ฟังก์ชันสะดวกใช้ระดับ module (`logging.info(...)`, `logging.warning(...)`, ...) แต่ละตัวจะเรียก `basicConfig()` ให้เองแบบเงียบ ๆ *ก่อนเช็ค level ด้วยซ้ำ* ทันทีที่ root logger ยังไม่มี handler — แม้แต่ call ที่ข้อความจะถูกดรอปโดย level ก็ตาม นั่นแปลว่า `logging.info(...)` เดี่ยว ๆ ที่หลงอยู่ใน module ที่ import มา ซึ่งรันก่อน `basicConfig()` ของแอปพลิเคชันเอง จะล็อค config default ไว้ถาวรและทำให้ call ทีหลังของคุณกลายเป็น no-op
+
+export const pg2Code = `
+import logging
+import sys
+
+# Playgrounds in this course share one Python session, so start every logging
+# demo from a known-clean root logger. Handlers write to stdout explicitly so
+# every line below is visible in this course's output panel.
+logging.root.handlers.clear()
+logging.root.setLevel(logging.WARNING)
+
+print("root effective level:", logging.getLevelName(logging.getLogger().getEffectiveLevel()))
+
+logging.info("dropped -- WARNING is the default threshold, and no handler exists yet")
+print("root handlers after that logging.info() call:", logging.root.handlers)
+# The call above STILL silently attached a default handler (to stderr), even
+# though the message itself was dropped by level -- logging.<level>() always
+# runs "if not root.handlers: basicConfig()" before even checking whether the
+# level qualifies. This is the trap: any such call anywhere before your own
+# entry point runs pre-empts your real configuration below.
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s", stream=sys.stdout)
+print("root handlers after basicConfig():", logging.root.handlers)
+logging.info("still dropped -- basicConfig() above was a no-op, root already had a handler")
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s", stream=sys.stdout, force=True)
+print("root handlers after basicConfig(force=True):", logging.root.handlers)
+logging.info("this one shows -- force=True replaced the existing handler")
+`.trim();
+
+<Playground code={pg2Code} />
+
+verified ด้านบน: handler list ของ root ยังเป็น `[<StreamHandler <stderr> ...>]` เหมือนเดิมตลอดการเรียก `basicConfig()` ครั้งแรก — เพราะมันไม่ว่างอยู่แล้วตอนที่ call นั้นรัน ทำให้ `basicConfig()` ไม่ทำอะไรเลย (ไม่แม้แต่ apply `format=` ใหม่) มีแค่ `force=True` (ที่ลบ handler เดิมก่อน) เท่านั้นที่ reconfigure จริง ได้ handler `<stdout>` มา และในที่สุด `logging.info(...)` ก็พิมพ์ออกมา กฎที่ demo นี้พิสูจน์: เรียก `basicConfig()` (หรือ `dictConfig` ด้านล่าง) แค่ครั้งเดียว ที่ entry point จริงของแอป และห้ามเรียกตอน import module ใน library เด็ดขาด — พร้อมตรวจสอบว่ามี `logging.<level>(...)` หลงเหลืออยู่ระดับ top-level ใน library code ที่อาจไปทริกเกอร์ version implicit ก่อนหรือเปล่า
+
+## Argument แบบ lazy `%s` เทียบกับ f-string
+
+`logger.debug("value is %s", x)` กับ `logger.debug(f"value is {x}")` ดูเหมือนใช้แทนกันได้ แต่ไม่ใช่: แบบ `%s` จะ format `x` (เรียก `str()`) ก็ต่อเมื่อ record ถูกปล่อยออกมาจริง ๆ ส่วน f-string สร้าง string เต็ม ๆ *ทันที* ตั้งแต่ตอน evaluate argument ของการเรียกฟังก์ชัน ไม่ว่า logger จะใช้มันจริงหรือไม่
+
+export const pg3Code = `
+import logging
+import sys
+
+logging.root.handlers.clear()
+logging.basicConfig(level=logging.WARNING, stream=sys.stdout, force=True)
+
+logger = logging.getLogger("demo.lazy")
+logger.setLevel(logging.WARNING)  # DEBUG messages below are disabled
+
+
+class Expensive:
+    """Simulates an expensive computation whose __str__ does real work."""
+    def __str__(self) -> str:
+        print("  -- __str__ called: this expensive computation actually ran --")
+        return "expensive-result"
+
+
+print("f-string version (eager -- always formats, even if the log call is disabled):")
+logger.debug(f"value is {Expensive()}")   # f-string builds the string NOW, unconditionally
+
+print("lazy %s version (formats only if DEBUG is actually enabled):")
+logger.debug("value is %s", Expensive())  # arguments are only stringified if the record is emitted
+`.trim();
+
+<Playground code={pg3Code} />
+
+verified: marker `-- __str__ called --` พิมพ์ออกมาแค่ครั้งเดียว ในเวอร์ชัน f-string `logger` ถูกตั้งเป็น `WARNING` ทั้งสอง call ของ `debug()` จึงถูกปิด — แต่ f-string รัน `str(Expensive())` ไปแล้วตอน Python กำลังสร้าง message *ก่อน* ที่ `debug()` จะถูกเรียกด้วยซ้ำ งาน "แพง" นั้นเลยทำไปแล้วแบบเสียเปล่า เวอร์ชัน `%s` ไม่เรียก `str()` เลย เพราะ `Logger.debug` เช็ค `isEnabledFor(DEBUG)` ก่อน แล้ว return ทันทีโดยไม่แตะ argument เลย นี่คือเหตุผลทั้งหมดที่ API แบบ lazy `%`-style ของ `logging` มีอยู่ — f-string ทำลายมันทิ้งหมดเลย ทั้งที่ดู "ทันสมัย" กว่า
+
+## `logger.exception` เก็บ traceback ไว้; `logger.error(e)` ไม่เก็บ
+
+ใน `except` block `logger.exception(msg)` คือ `logger.error(msg, exc_info=True)` เป๊ะ ๆ — มันแนบ traceback เต็ม ๆ ของ exception *ปัจจุบัน* เข้ากับ log record `logger.error(e)` (หรือ `logger.error(str(e))`) log แค่ message ของ exception เท่านั้น ไม่มี traceback เลย
+
+export const pg4Code = `
+import logging
+import sys
+
+logging.root.handlers.clear()
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(message)s", stream=sys.stdout, force=True)
+logger = logging.getLogger("demo.exc")
+
+
+def divide(a: int, b: int) -> float:
+    return a / b
+
+
+print("--- logger.error(e): loses the traceback ---")
+try:
+    divide(1, 0)
+except ZeroDivisionError as e:
+    logger.error(e)
+
+print()
+print("--- logger.exception(...): keeps the traceback ---")
+try:
+    divide(1, 0)
+except ZeroDivisionError:
+    logger.exception("division failed")
+`.trim();
+
+<Playground code={pg4Code} />
+
+block แรกพิมพ์บรรทัดเดียว `ERROR:division by zero` — ข้อมูลเดียวที่เก็บไว้คือ string form ของ exception block ที่สองพิมพ์ `ERROR:division failed` ตามด้วยบล็อก `Traceback (most recent call last): ...` เต็ม ๆ ชี้ไปที่บรรทัด `a / b` ที่ raise จริง เวลา debug incident จริงในโปรดักชันหลายสัปดาห์ต่อมา แบบแรกบอกแค่ว่ามี exception เกิดขึ้น ส่วนแบบสองบอกตำแหน่งที่แน่นอนเลย
+
+## Handler และ Formatter
+
+`Logger` ตัดสินใจว่า record*ควรปล่อยออกมาไหม*; `Handler` ตัดสินใจว่า*ไปไหน*; `Formatter` ตัดสินใจว่า*หน้าตาเป็นยังไง* `StreamHandler` (ที่เห็นด้านบน เล็งไปที่ `stdout`/`stderr`) ง่ายที่สุด `FileHandler` เขียนลงไฟล์; `RotatingFileHandler` (จาก `logging.handlers`) ทำแบบเดียวกันแต่จำกัดขนาดไฟล์และเก็บจำนวน backup ที่หมุนเวียนไว้คงที่ ทำให้ log ของโปรเซสที่รันนานไม่โตไม่มีที่สิ้นสุด:
+
+```python
+import logging
+from logging.handlers import RotatingFileHandler
+
+logger = logging.getLogger("app")
+logger.setLevel(logging.INFO)
+
+console = logging.StreamHandler()
+console.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
+
+file_handler = RotatingFileHandler("app.log", maxBytes=1_000_000, backupCount=3)
+file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s:%(message)s"))
+
+logger.addHandler(console)
+logger.addHandler(file_handler)
+
+logger.info("written to both the console and app.log")
+```
+
+> โค้ดนี้เขียนไฟล์จริงลงดิสก์ — รันในเครื่อง handler แต่ละตัวมี formatter และ level filter ของตัวเองได้ แยกอิสระจาก level ของ logger และจาก handler อื่น ๆ ที่ attach ไว้
+
+## `dictConfig`, structured (JSON) logging และ `extra=`
+
+`logging.config.dictConfig` config logger, handler และ formatter ทั้งหมดพร้อมกันจาก dictionary ธรรมดา — รูปแบบที่ framework และ deployment tooling ส่วนใหญ่ใช้จริง แทนที่จะเรียก `basicConfig()`/`addHandler()` ต่อ ๆ กัน `Formatter` subclass ที่เขียนเองสามารถส่งออก structured output (เช่น JSON) แทน string ธรรมดาได้ — จำเป็นมากเมื่อ log ถูกส่งไปยังระบบที่ parse มันแทนที่จะให้คนอ่านผ่าน terminal `extra=` แนบ field เพิ่มเติมใด ๆ เข้ากับ log record เดียว อ่านได้จาก formatter ที่เขียนเองผ่าน `record.<field_name>`
+
+export const pg5Code = `
+import json
+import logging
+import logging.config
+import sys
+
+# --- dictConfig: configure everything from a plain dict, no basicConfig() ---
+CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "simple": {"format": "%(levelname)s:%(name)s:%(message)s"},
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+            "stream": "ext://sys.stdout",
+            "level": "INFO",
+        },
+    },
+    "loggers": {
+        "app": {"handlers": ["console"], "level": "INFO", "propagate": False},
+    },
+}
+logging.config.dictConfig(CONFIG)
+app_logger = logging.getLogger("app")
+app_logger.info("configured entirely from a dict")
+app_logger.debug("dropped -- app logger's own level is INFO")
+
+
+# --- structured/JSON logging with a small custom Formatter, plus extra= ---
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {"level": record.levelname, "logger": record.name, "message": record.getMessage()}
+        if hasattr(record, "request_id"):
+            payload["request_id"] = record.request_id
+        return json.dumps(payload, sort_keys=True)
+
+
+json_handler = logging.StreamHandler(sys.stdout)
+json_handler.setFormatter(JsonFormatter())
+json_logger = logging.getLogger("app.json")
+json_logger.handlers.clear()
+json_logger.addHandler(json_handler)
+json_logger.setLevel(logging.INFO)
+json_logger.propagate = False
+
+json_logger.info("plain message, no extra fields")
+json_logger.info("tagged with a request id", extra={"request_id": "req-42"})
+
+
+# --- LoggerAdapter: inject context (a request id) into every message ---
+class RequestAdapter(logging.LoggerAdapter):
+    def process(self, msg, kwargs):
+        return f"[request_id={self.extra['request_id']}] {msg}", kwargs
+
+
+base_logger = logging.getLogger("app.request")
+base_logger.handlers.clear()
+base_logger.addHandler(logging.StreamHandler(sys.stdout))
+base_logger.setLevel(logging.INFO)
+base_logger.propagate = False
+
+request_log = RequestAdapter(base_logger, {"request_id": "abc-123"})
+request_log.info("handling request")
+`.trim();
+
+<Playground code={pg5Code} />
+
+สามวิธีในการแนบ context เข้ากับบรรทัด log verified แล้วด้านบนทั้งหมด: `extra={"request_id": "req-42"}` แนบเข้ากับ call เดียวเจาะจง และ formatter ที่เช็ค `hasattr(record, "request_id")` จะหยิบมันมาใช้เมื่อมี ไม่มีก็ข้าม `LoggerAdapter` (หรือสำหรับโค้ด `asyncio` ก็ `contextvars.ContextVar` ที่อ่านใน `Filter` ที่เขียนเอง) แนบมันเข้ากับ*ทุก* call ที่ทำผ่าน adapter โดยไม่ต้องพิมพ์ `extra=` ซ้ำทุกจุดเรียก — ตัวเลือกที่ถูกต้องสำหรับอะไรแบบ request id ที่คงที่ตลอดอายุของ request handler ตัวหนึ่ง
+
+## module `warnings`
+
+`warnings.warn(message, category)` เล็งไปที่กลุ่มเป้าหมายต่างจาก `logging`: มันเล็งไปที่*นักพัฒนา*ที่เรียกโค้ดของคุณ ("คุณกำลังใช้ API ที่เลิกใช้แล้ว") ไม่ใช่ operator ที่กำลังดู log `DeprecationWarning` จะโชว์โดย default ก็ต่อเมื่อ `warnings.warn` ถูกเรียกตรง ๆ ใน `__main__` เท่านั้น — call เดียวกันเป๊ะจากใน library ที่ import มาจะเงียบโดย default ตั้งใจเพื่อไม่ให้ end user ที่แก้ dependency ไม่ได้โดนสแปมจากมัน ในขณะที่ script ระดับบนสุดของคุณเองยังเห็นของตัวเองอยู่
+
+export const pg6Code = `
+import logging
+import sys
+import warnings
+
+
+def old_api() -> int:
+    warnings.warn("old_api() is deprecated, use new_api()", DeprecationWarning, stacklevel=2)
+    return 42
+
+
+print("default filters (called at module level, i.e. __main__ -- Python shows it here):")
+print(old_api())
+
+print()
+print("simulating the same call from inside an imported library (ignored there by default):")
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    print(old_api())  # silent -- this is what happens for the identical call inside a real dependency
+
+print()
+print("logging.captureWarnings(True): route warnings.warn() through logging instead of stderr")
+logging.root.handlers.clear()
+logging.basicConfig(level=logging.WARNING, format="%(levelname)s:%(name)s:%(message)s", stream=sys.stdout, force=True)
+logging.captureWarnings(True)
+with warnings.catch_warnings():
+    warnings.simplefilter("always")
+    warnings.warn("captured as a log record now", UserWarning)
+`.trim();
+
+<Playground code={pg6Code} />
+
+`logging.captureWarnings(True)` เปลี่ยนทุกอย่างที่ `warnings.warn()` สร้างให้วิ่งผ่าน logger ชื่อ `"py.warnings"` แทนที่จะไป stderr ตรง ๆ — มีประโยชน์เมื่อแอปพลิเคชันรวม output ทั้งหมดผ่าน handler ของ `logging` แล้วและไม่อยากมีช่องทางที่สองแยกออกไป ใน CI `python -W error::DeprecationWarning` เปลี่ยน warning ประเภทที่เงียบโดย default แบบนี้ให้กลายเป็น failure จริงพร้อม traceback จริงและ exit code ที่ไม่ใช่ศูนย์ — กลไกเดียวกับที่บท `index` ของคอร์สนี้ใช้กับ `-W error::DeprecationWarning` กับ `datetime.utcnow()`:
+
+```text
+$ python3.14 -W error::DeprecationWarning old_api_demo.py
+Traceback (most recent call last):
+  File "old_api_demo.py", line 10, in <module>
+    print(old_api())
+          ~~~~~~~^^
+  File "old_api_demo.py", line 5, in old_api
+    warnings.warn("old_api() is deprecated, use new_api()", DeprecationWarning, stacklevel=2)
+DeprecationWarning: old_api() is deprecated, use new_api()
+```
+
+> transcript `-W` นี้ต้องใช้ CLI flag จริง ซึ่ง Playground ส่งให้ตัวเองไม่ได้ — รันในเครื่อง exit code จริงที่ verified แล้ว: `1`
+
+## สัญญาณ logging ที่ AI มักเขียนผิด
+
+- `logging.basicConfig(...)` ถูกเรียกระดับ module ใน library — ล็อค config ของ root logger ทั้งโปรเซสทันทีที่ module นั้นถูก import เงียบ ๆ ไปแทนที่สิ่งที่ entry point จริงของแอปพลิเคชันจะพยายาม config ทีหลัง
+- `except Exception as e: logger.error(f"...{e}")` (หรือ `logger.error(str(e))`) — ทิ้ง traceback ไปตรงจุดที่สำคัญที่สุด; `logger.exception(...)` (หรือ `exc_info=True`) แทบจะเป็นสิ่งที่ตั้งใจใช้จริงเสมอ
+- `print(...)` ถูกใช้กับอะไรก็ตามใน library code โดยเฉพาะ error — ไม่มี level ไม่มีการควบคุมปลายทาง และไม่มีทางให้ผู้เรียกปิดเสียงหรือ redirect
+- `logger.debug(f"...{expensive_call()}...")` — f-string รัน `expensive_call()` แบบไม่มีเงื่อนไขแม้ `DEBUG` จะถูกปิดอยู่; แบบ lazy `%s` คือทางแก้
+- `logging.getLogger()` (ไม่ใส่ชื่อ — root logger) ถูกใช้ทั่วทั้งแอปพลิเคชันแทนที่จะเป็น `logging.getLogger(__name__)` ต่อ module — ทำให้ hierarchy แบนราบและควบคุม level/handler ต่อ module ไม่ได้เลย
+- `dictConfig`/`basicConfig` ถูกเรียกซ้ำหลายที่ "เผื่อไว้" — call ที่สองอาจเป็น no-op เงียบ ๆ (ถ้าไม่มี `force=True`) หรือ reconfigure ทั้งหมดแบบไม่คาดคิด (ถ้ามี) ไม่มีอันไหนดูตั้งใจชัดเจนสำหรับคนอ่านทีหลัง
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อ logging setup ที่ AI สร้างให้ ให้ตรวจสอบ:
+
+- `logging.basicConfig(...)` อยู่ที่ไหนก็ตามใน module ที่ไม่ใช่ entry point จริงของแอปพลิเคชัน (`if __name__ == "__main__":` หรือฟังก์ชัน setup เฉพาะที่ถูกเรียกครั้งเดียวตอน startup)
+- `logger.error(f"{e}")` หรือ `logger.error(str(e))` ใน `except` block — traceback หายไปแบบเงียบ ๆ
+- `print` ถูกใช้แทน `logging` ในอะไรก็ตามที่ไม่ใช่ script ใช้ครั้งเดียว
+- f-string ที่สร้างจากการเรียกฟังก์ชันแล้วส่งเข้า `logger.debug(...)`/`logger.info(...)` — call นั้นรันเสมอ แม้ level นั้นจะถูกปิดอยู่
+
+<SpotTheBug code={`import logging
+
+# BUG 1: a library module calling basicConfig() at import time locks in this
+# config for the whole process -- the application's own basicConfig() later
+# becomes a silent no-op.
+logging.basicConfig(level=logging.WARNING, format="%(message)s")
+
+logger = logging.getLogger(__name__)
+
+
+def fetch_user(user_id: int) -> dict:
+    try:
+        return {"id": user_id}[user_id]  # deliberately wrong key -- raises KeyError
+    except KeyError as e:
+        # BUG 2: f-string loses the traceback -- only str(e) survives
+        logger.error(f"fetch_user failed: {e}")
+        raise
+
+
+try:
+    fetch_user(1)
+except KeyError:
+    pass`} lang="python">
+สอง bug ข้อแรก `logging.basicConfig(...)` อยู่ระดับ module ในสิ่งที่ดูเหมือน module ที่นำไปใช้ซ้ำได้ (มันนิยาม `fetch_user` ไม่ได้มี `__main__` guard) -- import module นี้ที่ไหนก็ตามจะ config root logger ของทั้งโปรเซสแบบเงียบ ๆ และ `basicConfig()` จริงของแอปพลิเคชันทีหลังจะกลายเป็น no-op (verified ใน demo `basicConfig` ของบทนี้ด้านบน) ข้อสอง `logger.error(f"fetch_user failed: {e}")` เก็บแค่ `str(e)` (ตรงนี้คือ `"1"` ตรง ๆ คือ key ที่หายไป) -- verified: รันแล้วพิมพ์ `fetch_user failed: 1` โดยไม่มี traceback เลย ทั้งที่เพิ่งเกิด `KeyError` จริงพร้อม call stack เต็ม ๆ แก้ด้วย: ย้าย `basicConfig()` ไปไว้ที่ entry point จริงของแอปพลิเคชัน และเปลี่ยน `except` block เป็น `logger.exception("fetch_user failed")`
+</SpotTheBug>
+
+<Callout title="Config ครั้งเดียวที่ entry point, log แบบ lazy, และอย่าทำ traceback หาย">
+`basicConfig`/`dictConfig` ควรอยู่ที่ entry point ของแอปพลิเคชันแค่ครั้งเดียว — ห้ามอยู่ใน library module เด็ดขาด เพราะแม้แต่ `logging.info(...)` ที่ถูกดรอปก็ยังแอบล็อค config ไว้ก่อนได้ ใช้แบบ lazy `%s` (หรือ guard) สำหรับอะไรที่แพง และหันไปใช้ `logger.exception(...)` ใน `except` block เสมอแทนการแปลง exception เป็น string เอง
+</Callout>
+
+## Mental Model
+
+ทุก call ของ `Logger` วิ่งผ่าน pipeline เดียวกัน: level นี้เปิดอยู่ไหม (เช็คกับ level *ที่มีผลจริง* ของ logger ไต่ ancestor ถ้าจำเป็น) → สร้าง `LogRecord` → ส่งให้ทุก `Handler` ที่ attach ไว้ และ (เว้นแต่ `propagate = False`) ส่งให้ handler ของทุก ancestor ด้วย → แต่ละ `Handler` กรอง level ของตัวเอง แล้วใช้ `Formatter` ของตัวเอง แล้วเขียนไปที่ปลายทาง `basicConfig()`/`dictConfig()` เป็นแค่วิธีสะดวกในการเดินสายไม่กี่ชิ้นแรกของ pipeline นั้น (level และ handler หนึ่งตัวขึ้นไป) บน root logger ในการเรียกครั้งเดียว — มันตั้งค่า *state* ครั้งเดียว และทุก call ถัดไปที่เจอ state ตั้งไว้แล้วจะกลายเป็น no-op เว้นแต่คุณจะ force มันตรง ๆ
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| `logging` แทน `print` | level, handler และปลายทางที่ผู้เรียกควบคุมได้ ปิดเสียงได้ | ตั้งค่ามากกว่า `print(...)` เปล่า ๆ สำหรับ script ใช้ครั้งเดียว |
+| `logging.getLogger(__name__)` ต่อ module | ควบคุม level/handler ต่อ module ได้ ชื่อสะท้อนโครงสร้าง package | root logger หยิบมาใช้ผิดโดยไม่ตั้งใจง่าย (`getLogger()` ไม่ใส่ชื่อ) แล้วทำให้ข้อดีข้างต้นแบนราบหมด |
+| `basicConfig`/`dictConfig` ครั้งเดียวที่ entry point | config รวมศูนย์ คาดเดาได้ | `logging.<level>(...)` หลงเหลืออยู่ก่อนหน้านั้นที่ไหนก็ได้จะแอบล็อค default ไว้ก่อนแบบเงียบ ๆ |
+| argument แบบ lazy `%s` แทน f-string | ต้นทุนเป็นศูนย์เมื่อ level ถูกปิด | อ่านยากกว่า f-string เล็กน้อย ลืมง่ายแล้วกลับไปใช้ f-string จากความเคยชิน |
+| `logger.exception(...)` ใน `except` block | เก็บ traceback เต็ม ๆ ไว้ debug ทีหลัง | output ต่อบรรทัด log เยอะขึ้นเล็กน้อย (traceback หลายบรรทัด) เทียบกับ message เดียว |
+| Structured (JSON) logging | machine อ่านได้ ส่งเข้า log aggregator ได้สะอาด | อ่านด้วยตาใน terminal ดิบ ๆ ไม่ได้ถ้าไม่มี formatter/pretty-printer |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"เรียก `basicConfig()` ซ้ำด้วย argument ใหม่จะอัปเดต config"** มันเป็น no-op ทันทีที่ root logger มี handler อยู่แล้ว — verified ด้านบน: มีแค่ `force=True` เท่านั้นที่ reconfigure จริง
+- **"f-string ใน log call ก็แค่การเขียนแบบทันสมัยที่เทียบเท่าแบบ `%s`"** ไม่จริง: f-string ถูกสร้างแบบ eager ทุกครั้ง แม้ log call นั้นจะถูกปิดโดย level ก็ตาม — verified ด้านบนด้วย `__str__` ที่รันจริงให้เห็นภายใต้ f-string และไม่รันเลยภายใต้แบบ lazy `%s`
+- **"`logger.error(e)` กับ `logger.exception(...)` ใช้แทนกันได้สำหรับ log exception"** มีแค่ `logger.exception(...)` (หรือ `exc_info=True`) เท่านั้นที่แนบ traceback — `logger.error(e)` เก็บแค่ message ของ exception verified ด้านบนด้วย `ZeroDivisionError` จริง
+- **"`DeprecationWarning` ถูกซ่อนโดย default เสมอ ไม่มีข้อยกเว้น"** มันถูกซ่อนโดย default แค่ตอนที่ trigger จากโค้ดที่ไม่ใช่ `__main__` — `warnings.warn(..., DeprecationWarning)` เดียวกันเป๊ะจะโชว์โดย default เมื่อเกิดขึ้นตรง ๆ ใน entry-point script ของคุณ verified ด้านบน
+- **"`logging.getLogger()` กับ `logging.getLogger(__name__)` โดยพื้นฐานคือสิ่งเดียวกัน"** ตัวแรกคืน *root* logger เสมอ ใช้ร่วมกันทั้งโปรเซส ตัวที่สองคืน logger คนละตัวต่อ module จัดตำแหน่งใน hierarchy ตาม dotted name ของมัน — สลับกันใช้แปลว่าเสียการควบคุมต่อ module ไปหมด
+
+export const quizLogging = [
+    {
+        q: "ทำไม library module ที่เรียก `logging.getLogger(__name__)` แล้ว log ผ่านมัน แทนที่จะใช้ `print` ถึงสำคัญกับแอปพลิเคชันที่ import มันไปใช้?",
+        options: [
+            "It doesn't -- print and logging produce identical behavior",
+            "logging lets the importing application decide the level, destination, and formatting at its own entry point, without the library needing to know or care",
+            "logging is always faster than print",
+            "print cannot be used inside a function, only logging can"
+        ],
+        answer: 1,
+        explain: "print เขียนแบบไม่มีเงื่อนไข ไม่มีทางให้ผู้เรียกปิดเสียง redirect หรือกรองตามความรุนแรง library ที่เรียกแค่ logger.info/.warning/ฯลฯ ทำให้แอปพลิเคชัน config ทุกอย่าง (handler, level, formatter) รวมศูนย์ที่ entry point ของตัวเองได้"
+    },
+    {
+        q: "```python\nimport logging\nlogging.root.handlers.clear()\nlogging.info(\"dropped -- WARNING is the default threshold\")\nprint(logging.root.handlers)\n```\nlist handler ที่พิมพ์ออกมาแสดงอะไร ในเมื่อข้อความข้างบนถูกดรอปไปแล้ว?",
+        options: [
+            "An empty list -- nothing happened since the message was dropped",
+            "A list containing one StreamHandler -- logging.info() calls basicConfig() internally the moment root has no handlers, before even checking the level",
+            "A ValueError is raised because logging.info was called before basicConfig",
+            "The list contains one FileHandler by default"
+        ],
+        answer: 1,
+        explain: "ฟังก์ชันสะดวกใช้ระดับ module ทุกตัว (logging.debug/info/warning/...) รัน 'if not root.handlers: basicConfig()' แบบไม่มีเงื่อนไขก่อนเช็ค level ด้วยซ้ำ ดังนั้นแม้แต่ call ที่ข้อความถูกดรอปโดย level ก็ยัง attach handler default อยู่ดี -- verified ใน demo basicConfig ของบทนี้"
+    },
+    {
+        q: "จาก pipeline ด้านบน จะเกิดอะไรขึ้นเมื่อเรียก `logging.basicConfig(level=logging.INFO, ...)` เป็นครั้งที่สอง หลังจาก root logger มี handler อยู่แล้วจากการเรียก `logging.info(...)` ก่อนหน้า?",
+        options: [
+            "It raises an exception since basicConfig can only be called once",
+            "It silently does nothing -- basicConfig only configures the root logger the first time it has no handlers, unless force=True is passed",
+            "It appends a second handler, so log lines are duplicated",
+            "It replaces the level but keeps the old handler's format"
+        ],
+        answer: 1,
+        explain: "verified ด้านบน: handler list ของ root ไม่เปลี่ยนหลังเรียก basicConfig() เปล่า ๆ อีกครั้งเมื่อมี handler อยู่แล้ว -- ไม่แม้แต่ format= ใหม่จะถูก apply มีแค่ basicConfig(..., force=True) เท่านั้นที่ลบ handler เดิมก่อนแล้ว reconfigure จริง"
+    },
+    {
+        q: "```python\nclass Expensive:\n    def __str__(self):\n        print(\"ran\")\n        return \"x\"\n\nlogger.setLevel(logging.WARNING)\nlogger.debug(f\"value is {Expensive()}\")\nlogger.debug(\"value is %s\", Expensive())\n```\n\"ran\" พิมพ์ออกมากี่ครั้ง และทำไม?",
+        options: [
+            "Zero times -- both calls are disabled at DEBUG level so neither ever touches Expensive()",
+            "Once -- the f-string builds its string eagerly as part of evaluating the debug() call's arguments, before logging even checks the level; the %s form only stringifies if the record is actually emitted",
+            "Twice -- both forms always call str() on their arguments",
+            "It depends on the Python version"
+        ],
+        answer: 1,
+        explain: "verified ด้านบน: เวอร์ชัน f-string พิมพ์ marker เพราะ f\"...{Expensive()}\" เรียก str(Expensive()) ทันทีตอน Python สร้าง message string แบบไม่มีเงื่อนไข -- logger.debug ไม่ทันได้เช็ค level ด้วยซ้ำ เวอร์ชัน %s ส่ง object Expensive() เป็น argument เฉย ๆ Logger.debug เช็ค isEnabledFor(DEBUG) ก่อนแล้ว return ทันทีโดยไม่ format มันเลย __str__ จึงไม่ถูกเรียกเลย"
+    },
+    {
+        q: "ใน `except ZeroDivisionError: logger.exception(\"division failed\")` `logger.exception` ทำอะไรต่างจาก `logger.error(\"division failed\")`?",
+        options: [
+            "Nothing -- they produce identical output",
+            "logger.exception additionally attaches the current exception's full traceback to the log record (it's error() with exc_info=True baked in)",
+            "logger.exception raises the exception again after logging it",
+            "logger.exception only works outside of an except block"
+        ],
+        answer: 1,
+        explain: "logger.exception(msg) คือ logger.error(msg, exc_info=True) เป๊ะ ๆ -- verified ด้านบน: มันพิมพ์บล็อก 'Traceback (most recent call last): ...' เต็ม ๆ ชี้ไปที่บรรทัดที่ fail จริง ในขณะที่ logger.error(e) ธรรมดาที่อื่นใน demo เดียวกันพิมพ์แค่ string form ของ exception โดยไม่มี traceback เลย"
+    },
+    {
+        q: "ทำไม `DeprecationWarning` จาก `warnings.warn(msg, DeprecationWarning)` ถึงโชว์โดย default เมื่อ trigger ตรง ๆ ใน script ที่รันเป็น `__main__` แต่เงียบโดย default เมื่อ call เดียวกันเป๊ะเกิดขึ้นใน library module ที่ import มา?",
+        options: [
+            "It's a bug in Python that will eventually be fixed",
+            "Python's default warning filters have a special rule: DeprecationWarning is shown when the triggering code's module is __main__, and ignored otherwise -- so a dependency's own deprecated usage doesn't spam end users who can't fix it",
+            "DeprecationWarning is always shown, regardless of which module triggers it",
+            "It depends on whether the warning was raised inside a try/except block"
+        ],
+        answer: 1,
+        explain: "verified ด้านบน: call old_api() เดียวกันเป๊ะพิมพ์ DeprecationWarning ตอนรันเป็น script ระดับบนสุด แต่ไม่พิมพ์อะไรเลยเมื่อ call เดียวกันถูกครอบด้วย warnings.simplefilter('ignore', DeprecationWarning) -- จำลองสิ่งที่เกิดขึ้นโดย default กับ call เดียวกันใน dependency จริง"
+    },
+    {
+        q: "`logging.captureWarnings(True)` เปลี่ยนอะไรกับ `warnings.warn(...)`?",
+        options: [
+            "It suppresses all warnings permanently",
+            "It routes everything warnings.warn() produces through a logger named 'py.warnings' instead of writing straight to stderr, so it flows through the same handlers as the rest of the application's logging",
+            "It converts every warning into a raised exception, like -W error",
+            "It has no effect unless combined with basicConfig()"
+        ],
+        answer: 1,
+        explain: "verified ด้านบน: หลัง logging.captureWarnings(True) call warnings.warn(...) สร้างบรรทัดผ่าน StreamHandler ที่ config ไว้ในรูปแบบ 'WARNING:py.warnings:...' ไม่ใช่รูปแบบ warning ดิบของ stderr ตามปกติ -- มีประโยชน์เมื่อแอปพลิเคชันรวม output ผ่าน handler ของ logging เองแล้ว"
+    },
+    {
+        q: "ความต่างในทางปฏิบัติระหว่าง `logging.getLogger()` กับ `logging.getLogger(__name__)` คืออะไร?",
+        options: [
+            "There is no difference -- both return the same object",
+            "getLogger() with no argument always returns the shared root logger; getLogger(__name__) returns a distinct logger positioned in the hierarchy by the calling module's dotted name",
+            "getLogger(__name__) is deprecated in favor of getLogger()",
+            "getLogger() only works inside __main__"
+        ],
+        answer: 1,
+        explain: "getLogger() (ไม่ใส่ชื่อ) คือ root logger โดยเฉพาะ ตัวที่ basicConfig() config และ logger ตัวอื่นทุกตัวจะ propagate ไปหาในที่สุด getLogger(__name__) คืน logger ที่ตั้งชื่อตาม module ที่เรียก ให้แต่ละ module มีที่ของตัวเองใน hierarchy เพื่อควบคุม level/handler แยกอิสระ -- verified ใน demo hierarchy ของบทนี้ ที่ app/app.db/app.db.pool เป็น logger object คนละตัวกันสามตัว"
+    },
+];
+
+<Quiz client:visible id="stdlib-testing-tooling/logging" questions={quizLogging} />
+
+<ProgressTracker client:visible id="stdlib-testing-tooling/logging" />
