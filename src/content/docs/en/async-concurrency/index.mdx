@@ -1,6 +1,6 @@
 ---
 title: 'Async & Concurrency'
-description: 'The concurrency landscape in Python: asyncio for I/O-bound work, threads limited by the GIL, and multiprocessing for CPU-bound parallelism.'
+description: 'The concurrency landscape in Python: asyncio for I/O-bound work, threads limited by the GIL, and multiprocessing or free-threading for CPU-bound parallelism.'
 sidebar:
   order: 1
 ---
@@ -8,6 +8,7 @@ sidebar:
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Three tools, three problems
 
@@ -89,14 +90,48 @@ if __name__ == "__main__":        # required on every platform
 
 > Run this locally only — there are no real processes in the browser sandbox. Always include the `if __name__ == "__main__":` guard, on every platform: without it, macOS/Windows (`spawn`) will re-import this module in every child process and spawn processes forever. See the Multiprocessing lesson for the full guard/start-method guide.
 
+## Decision table: which tool for which job
+
+| Workload | First choice | Also consider | Wrong tool |
+|---|---|---|---|
+| I/O-bound, async-native library available (`httpx`, `asyncpg`) | `asyncio` | — | `threading` (works, but more overhead per connection) |
+| I/O-bound, only a blocking/synchronous library exists (`requests`, `boto3`, `psycopg2`) | `threading` or `asyncio.to_thread` | — | Calling the blocking library directly inside a coroutine |
+| CPU-bound, dependencies support free-threading | Free-threaded `python3.14t` with `threading` | `multiprocessing` | Default-build `threading` (no speedup) |
+| CPU-bound, dependencies are GIL-only (most of the ecosystem today) | `multiprocessing` / `ProcessPoolExecutor` | `concurrent.interpreters` (3.14, cheaper startup) | `threading` (no speedup) |
+| Many short-lived CPU tasks where process startup dominates | `concurrent.interpreters` (3.14) | `ProcessPoolExecutor` with a long-lived pool | A fresh `Pool()` per task |
+| Mixed: some I/O, some CPU | `asyncio` + `run_in_executor`/`to_thread` for blocking parts, `ProcessPoolExecutor` for CPU parts | — | Picking one tool and forcing everything through it |
+
+The single question that decides the first three rows: **does this workload spend most of its time
+waiting, or most of its time computing?** Waiting (network, disk, a database round trip) means the
+GIL is irrelevant — grab `asyncio` if the library supports it, `threading` otherwise. Computing
+(parsing, number crunching, image processing) means the GIL is the bottleneck — reach for
+`multiprocessing`, `concurrent.interpreters`, or a free-threaded build.
+
+## `-X dev` surfaces bugs that a normal run hides
+
+Every async/threading/multiprocessing bug pattern in this module — a never-awaited coroutine, a
+`ResourceWarning` from an unclosed resource, a thread exception that would otherwise vanish — shares
+one property: it fails **silently** under a normal `python3.14 script.py` run. `-X dev` mode turns
+many of these into visible warnings without changing your code at all:
+
+```bash
+python3.14 -X dev script.py
+```
+
+This is why every playground in this module is verified with `python3.14 -X dev -W error::RuntimeWarning`
+rather than a plain `python3.14` — `-W error::RuntimeWarning` goes one step further than `-X dev` and
+turns the "coroutine was never awaited" warning into an actual exception, which is exactly the
+behavior you want in a test suite or CI pipeline: a forgotten `await` should fail the build, not
+print a warning that scrolls past in a log nobody reads.
+
 ## What this module covers
 
 | Lesson | Core concept |
 |---|---|
-| **asyncio Basics** | Event loop, `async def`, `await`, `asyncio.run`, `asyncio.gather` |
-| **Async / Await** | Tasks, `create_task`, sequential vs concurrent execution |
-| **GIL & Threads** | The GIL, `threading`, `ThreadPoolExecutor`, I/O vs CPU-bound |
-| **Multiprocessing** | Processes vs threads, `ProcessPoolExecutor`, `Pool.map` |
+| **asyncio Basics** | Event loop, `async def`, `await`, `asyncio.run`, `asyncio.gather`, `async with`/`async for` |
+| **Async / Await** | `TaskGroup` vs `gather`, `Semaphore`, `Queue`, `Lock` races, retry/rate-limit/shutdown patterns |
+| **GIL & Threads** | What the GIL protects (and does not), `ThreadPoolExecutor`, daemon threads, free-threaded 3.14t |
+| **Multiprocessing** | Processes vs threads, `ProcessPoolExecutor`, picklability, subinterpreters |
 
 Each lesson is self-contained. Start with asyncio if you are building network services; jump to multiprocessing if you need to parallelize CPU-bound computation.
 
@@ -112,6 +147,86 @@ async with asyncio.TaskGroup() as tg:
 ```
 </Callout>
 
+## Mental Model
+
+Think of the three models as three different ways to staff a job: `asyncio` is one very well
+organized worker who never sits idle — while waiting on one thing, they immediately pick up the next
+ready task, and switch back the instant the first one is ready. `threading` is several workers
+sharing one desk with one exclusive-use tool (the GIL) — only one can touch the tool at a time, so
+they only get ahead of a single worker when they spend most of their time doing something that does
+not need the tool (waiting on I/O). `multiprocessing` is several workers with entirely separate
+desks and no shared tools at all — genuinely parallel, but everything they hand each other has to go
+through the mail (`pickle`), which costs time and forbids anything that cannot be addressed by name.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| `asyncio` | Thousands of concurrent I/O waits on one thread, minimal memory | Every library in the call chain must be async-native, or you are back to blocking the loop |
+| `threading` | Drop-in for existing synchronous/blocking libraries | No CPU speedup on the default build; needs `Lock` for shared state |
+| `multiprocessing` | Real CPU parallelism, crash isolation between workers | Full process startup cost; only picklable data and callables cross the boundary |
+| Free-threaded 3.14t | Real CPU parallelism with shared-memory simplicity of threads | Separate binary; C-extension ecosystem support still catching up |
+| Picking one tool for everything | Simpler codebase, one mental model | Forces I/O-bound and CPU-bound work through whichever tool fits neither well |
+
+## Common Misconceptions
+
+- **"asyncio is always the fastest option."** It is the best option for I/O-bound work with
+  async-native libraries. For CPU-bound work it does nothing at all — a tight loop inside a coroutine
+  still blocks the entire event loop just as it would block a thread.
+- **"Threads and processes are interchangeable ways to get parallelism."** Threads share memory and
+  are limited by the GIL for CPU-bound work; processes bypass the GIL but do not share memory, so
+  every argument and result travels as pickled data.
+  Free-threaded Python narrows this gap for pure-Python workloads, but only on `python3.14t`.
+- **"If I'm not sure, `asyncio` is a safe default."** It is only safe if every library on the call
+  path is async-native or explicitly offloaded (`to_thread`, `run_in_executor`). Adding one
+  synchronous, blocking call inside a coroutine silently freezes every other coroutine on the loop.
+- **"A silent bug in a threading/asyncio program means the tool doesn't work."** Almost always the
+  opposite: `-X dev` and `-W error::RuntimeWarning` exist precisely because these bugs (never-awaited
+  coroutines, unclosed resources, swallowed exceptions in threads) are real and common — turn them on
+  in every test suite rather than debugging them by trial and error in production.
+
+## Reading AI-generated code
+
+Before trusting generated concurrency code of any kind in this module, ask:
+
+- Is the chosen tool (`asyncio`/`threading`/`multiprocessing`) actually matched to whether the
+  workload is I/O-bound or CPU-bound? Generated code frequently defaults to `asyncio` regardless.
+- Does a coroutine ever call a synchronous, blocking function (`requests.get`, `time.sleep`, heavy
+  computation) directly, instead of through `to_thread`/`run_in_executor`/a process pool?
+- Does the code run — or does its test suite run — under `-X dev` / `-W error::RuntimeWarning`? Most
+  of the bug patterns across this module (never-awaited coroutines, swallowed `CancelledError`, lost
+  updates on shared state) produce no visible symptom under a plain, unflagged run.
+- Is a `lambda` or local closure ever handed to `multiprocessing`/`ProcessPoolExecutor`? It fails with
+  a real `PicklingError` the first time it actually runs on a worker, not at the point it was written.
+
+<SpotTheBug code={`import asyncio
+import time
+
+async def fetch_user(user_id: int) -> dict:
+    time.sleep(0.2)  # "quick" call to a synchronous ORM
+    return {"id": user_id, "name": f"user-{user_id}"}
+
+async def fetch_all_users(ids: list[int]) -> list[dict]:
+    return await asyncio.gather(*[fetch_user(i) for i in ids])
+`} lang="python">
+This looks like idiomatic asyncio — `async def`, `await`, `gather` for concurrency — and it does
+return the right list of user dicts. But `fetch_user` calls `time.sleep`, a genuinely blocking call,
+directly inside a coroutine instead of an async-native ORM call or `asyncio.to_thread`. Because
+`time.sleep` does not yield control back to the event loop, `gather` provides zero actual
+concurrency here: every "concurrent" fetch still runs one after another on the single event-loop
+thread, taking `0.2 * len(ids)` seconds total instead of roughly `0.2` seconds. The bug produces no
+exception and no warning — only a runtime that silently does not scale, which is exactly why
+profiling for "which coroutine actually released control" matters more than reading the `async`/
+`await` keywords and assuming concurrency is happening.
+</SpotTheBug>
+
+<Callout title="Match the tool to where the time actually goes">
+Before reaching for asyncio, threading, or multiprocessing, profile or reason about where a
+workload's time is spent. Time spent waiting (I/O) wants asyncio or threading; time spent computing
+(CPU) wants multiprocessing or a free-threaded build. Guessing wrong produces code that looks
+concurrent but is not, with no error to point you at the mistake.
+</Callout>
+
 export const quizIndex = [
   {
     q: "Which Python concurrency model is best suited for CPU-bound tasks like numerical computation?",
@@ -121,7 +236,8 @@ export const quizIndex = [
       "multiprocessing — separate processes bypass the GIL",
       "They are all equivalent for CPU-bound work"
     ],
-    answer: 2
+    answer: 2,
+    explain: "multiprocessing spawns separate OS processes, each with its own interpreter and GIL, so CPU-bound work genuinely runs in parallel across cores. asyncio never helps CPU-bound work (single thread), and threading provides no speedup on the default GIL build."
   },
   {
     q: "Why does asyncio handle thousands of concurrent I/O waits efficiently in a single thread?",
@@ -131,7 +247,8 @@ export const quizIndex = [
       "It uses the GIL to time-slice between coroutines",
       "Each coroutine runs in its own subprocess"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Whenever a coroutine hits an await on I/O, it suspends and the event loop immediately runs another ready coroutine. No new OS threads or processes are created -- the switching happens entirely inside one thread's event loop."
   },
   {
     q: "What is the Global Interpreter Lock (GIL)?",
@@ -141,7 +258,8 @@ export const quizIndex = [
       "A global variable that tracks the number of running threads",
       "A C extension that speeds up I/O-bound Python code"
     ],
-    answer: 0
+    answer: 0,
+    explain: "The GIL is a mutex inside CPython that only one thread can hold at a time; holding it is required to execute Python bytecode. This is why CPU-bound threads do not run in parallel on the default build, while I/O-bound threads still benefit because I/O releases the GIL."
   },
   {
     q: "Which statement about threading and CPU-bound Python work is correct?",
@@ -151,7 +269,41 @@ export const quizIndex = [
       "Adding threads to a CPU-bound loop provides near-zero speedup due to the GIL",
       "The GIL only applies to I/O operations, not computation"
     ],
-    answer: 2
+    answer: 2,
+    explain: "Since only one thread can hold the GIL and execute Python bytecode at a time, splitting a CPU-bound loop across multiple threads on the default build does not add parallel compute capacity -- measured benchmarks in the GIL & Threads lesson show roughly 1.0x, not a speedup."
+  },
+  {
+    q: "```python\nasync def fetch_user(uid):\n    time.sleep(0.2)\n    return {\"id\": uid}\n\nasync def fetch_all(ids):\n    return await asyncio.gather(*[fetch_user(i) for i in ids])\n```\nFor 5 IDs, roughly how long does `fetch_all` take, and why?",
+    options: [
+      "~0.2s -- gather runs everything concurrently as intended",
+      "~1.0s (5 x 0.2s) -- time.sleep blocks the event loop, so gather provides no real concurrency here",
+      "~0.04s -- asyncio parallelizes across CPU cores",
+      "It raises a RuntimeError because time.sleep is not awaited"
+    ],
+    answer: 1,
+    explain: "time.sleep is a genuinely blocking call that does not yield control back to the event loop the way asyncio.sleep does. Even though the code is wrapped in async def and gather, each fetch_user call still fully blocks the single event-loop thread in turn, so the total time is the sum of all the delays, not the maximum."
+  },
+  {
+    q: "```python\nasync def greet(name):\n    return f\"Hello, {name}!\"\n\ncoro = greet(\"Python\")\ndel coro\n```\nRun as-is with plain `python3.14 script.py`, nothing is printed. What changes if it is instead run as `python3.14 -X dev script.py`?",
+    options: [
+      "The script runs faster by skipping bytecode verification",
+      "A RuntimeWarning: coroutine 'greet' was never awaited is surfaced when the coroutine is garbage-collected, which a plain run stays silent about",
+      "It raises a SyntaxError because coroutines require await",
+      "It automatically calls asyncio.run on any unused coroutine it finds"
+    ],
+    answer: 1,
+    explain: "-X dev enables extra runtime checks (never-awaited coroutines, certain resource warnings, and more) without requiring any code change. Combined with -W error::RuntimeWarning in a test suite, it turns a class of silent async bugs -- like this dropped coroutine -- into hard failures instead of easy-to-miss log lines."
+  },
+  {
+    q: "A workload spends 95% of its wall-clock time waiting on network responses from an async-native HTTP client. Which tool from the decision table fits best?",
+    options: [
+      "multiprocessing, since parallelism always helps",
+      "asyncio, since the work is I/O-bound and an async-native library is available",
+      "Free-threaded python3.14t, since it removes the GIL",
+      "threading, since it is the simplest option"
+    ],
+    answer: 1,
+    explain: "The decision table's first question is whether a workload spends its time waiting or computing. Waiting on network I/O with an async-native library available is the textbook case for asyncio -- it handles many concurrent waits on a single thread with the least overhead of the three models."
   }
 ];
 

@@ -1,13 +1,16 @@
 ---
 title: 'Async / Await and Tasks'
-description: 'asyncio.create_task, sequential vs concurrent execution with gather, and asyncio.sleep in Python 3.14.'
+description: 'asyncio.create_task, TaskGroup vs gather, Semaphore, Queue, Lock races, and practical patterns like retry, rate limiting, and graceful shutdown in Python 3.14.'
 sidebar:
   order: 3
 ---
 
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Sequential vs concurrent awaiting
 
@@ -88,92 +91,109 @@ asyncio.run(main())
 Observe that "B: done" appears before "A: done" even though we `await task_a` first —
 the tasks run concurrently and B finishes sooner.
 
-## Task cancellation
+## The fire-and-forget trap: keep a reference to your tasks
 
-A running `Task` can be cancelled. Cancellation injects `asyncio.CancelledError` into the coroutine
-at the next `await` point.
+Calling `asyncio.create_task(coro)` without storing the result compiles and often even runs fine in
+a small demo — which is exactly what makes it dangerous. The official docs are explicit about the
+risk: *"the event loop only keeps weak references to tasks. A task that isn't referenced elsewhere
+may get garbage collected at any time, even before it's done."* Nothing in the language forces you
+to keep a reference, so nothing warns you when you forget:
 
 ```python
 import asyncio
 
-async def long_running() -> None:
-    try:
-        print("working...")
-        await asyncio.sleep(10)
-        print("done")
-    except asyncio.CancelledError:
-        print("cancelled — cleaning up")
-        raise    # always re-raise CancelledError
+async def background_job(label: str) -> None:
+    await asyncio.sleep(0.05)
+    print(f"{label}: finished")
 
-async def main() -> None:
-    task = asyncio.create_task(long_running())
-    await asyncio.sleep(0.05)   # let it start
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        print("task is cancelled")
-
-asyncio.run(main())
-# working...
-# cancelled — cleaning up
-# task is cancelled
+async def fire_and_forget() -> None:
+    asyncio.create_task(background_job("leaked"))   # no variable holds the Task
+    await asyncio.sleep(0.1)   # only works because the loop's own scheduling keeps it alive here
 ```
 
-Always re-raise `CancelledError` after cleanup. Swallowing it breaks structured cancellation.
-
-## `asyncio.sleep` as a cooperative yield
-
-`await asyncio.sleep(0)` is the minimal yield — it suspends the current coroutine for zero seconds,
-letting other ready tasks run. Use it to avoid starving the event loop in compute-heavy async code.
+The fix costs nothing and has no downside — keep the task in a set, and let a done-callback clean the
+set up when it finishes:
 
 ```python
 import asyncio
 
-async def progress_bar(total: int) -> None:
-    for i in range(total):
-        print(f"\r[{'#' * (i + 1)}{' ' * (total - i - 1)}]", end="", flush=True)
-        await asyncio.sleep(0)   # yield between steps
-    print()
+background_tasks: set[asyncio.Task] = set()
 
-asyncio.run(progress_bar(20))
+async def background_job(label: str) -> None:
+    await asyncio.sleep(0.05)
+    print(f"{label}: finished")
+
+def spawn(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+    return task
 ```
 
-## Python 3.11+: `asyncio.TaskGroup`
+Or, if the fire-and-forget tasks share a lifetime with a block of code, prefer `TaskGroup` over
+manual bookkeeping entirely — it makes "wait for everything I started" the default instead of
+something you have to remember.
 
-`asyncio.TaskGroup` is the structured-concurrency primitive introduced in Python 3.11.
-It automatically cancels all sibling tasks if any one raises an exception.
+## `TaskGroup` cancellation vs `gather(return_exceptions=True)`
+
+Both `TaskGroup` and `gather(return_exceptions=True)` let you run several coroutines and see every
+result even if some fail — but they disagree about what happens to the *survivors*:
 
 ```python
 import asyncio
 
-async def step(label: str, delay: float) -> str:
+async def worker(label: str, delay: float, fail: bool) -> str:
     await asyncio.sleep(delay)
-    return f"{label} complete"
+    if fail:
+        raise ValueError(f"{label} failed")
+    return f"{label} ok"
 
 async def main() -> None:
-    async with asyncio.TaskGroup() as tg:
-        task_a = tg.create_task(step("A", 0.2))
-        task_b = tg.create_task(step("B", 0.1))
-        task_c = tg.create_task(step("C", 0.3))
-    # All three tasks complete (or the group raises ExceptionGroup)
-    print(task_a.result())
-    print(task_b.result())
-    print(task_c.result())
+    results = await asyncio.gather(
+        worker("A", 0.05, False),
+        worker("B", 0.02, True),
+        worker("C", 0.08, False),
+        return_exceptions=True,
+    )
+    print(results)
+    # ['A ok', ValueError('B failed'), 'C ok'] — C still ran to completion
 
 asyncio.run(main())
-# A complete
-# B complete
-# C complete
 ```
 
-Prefer `TaskGroup` over `gather` in Python 3.11+ — it enforces structured lifetimes and propagates
-errors cleanly via `ExceptionGroup`.
+```python
+import asyncio
 
-## Timeouts with `asyncio.wait_for`
+async def worker(label: str, delay: float, fail: bool) -> str:
+    await asyncio.sleep(delay)
+    if fail:
+        raise ValueError(f"{label} failed")
+    return f"{label} ok"
 
-`asyncio.wait_for(coro, timeout)` cancels the coroutine if it does not complete within the given
-number of seconds.
+async def main() -> None:
+    try:
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(worker("A", 0.05, False))
+            tg.create_task(worker("B", 0.02, True))
+            tg.create_task(worker("C", 0.08, False))
+    except* ValueError as eg:
+        print([str(e) for e in eg.exceptions])
+        # ['B failed'] — B's failure cancelled C before its 0.08s sleep finished
+
+asyncio.run(main())
+```
+
+`gather(return_exceptions=True)` never cancels anything — every coroutine you passed in runs to
+completion regardless of the others' outcomes, and you sort out successes from exceptions yourself.
+`TaskGroup` treats one failure as a reason to cancel the whole group: it is the right default when
+the tasks are working toward one goal together (a request fan-out where a partial result is
+useless), and the wrong one when you genuinely want every result independent of the others'
+failures (a batch job reporting per-item status).
+
+## Timeouts: `asyncio.timeout()` and `wait_for`
+
+`asyncio.timeout()` (3.11+) is a context manager: everything inside is cancelled if the block does
+not finish within the given number of seconds, raising `TimeoutError`.
 
 ```python
 import asyncio
@@ -184,18 +204,616 @@ async def slow_op() -> str:
 
 async def main() -> None:
     try:
-        result = await asyncio.wait_for(slow_op(), timeout=0.1)
-    except asyncio.TimeoutError:
+        async with asyncio.timeout(0.1):
+            await slow_op()
+    except TimeoutError:
         print("operation timed out")
 
 asyncio.run(main())
 # operation timed out
 ```
 
-<Callout title="Run these examples locally">
-This lesson has no in-browser runner — run the examples locally with `python3.14`. All of them use
-`asyncio.run(main())`: paste any snippet into a `.py` file and run with `python3 async_await.py` to
-see the output.
+`asyncio.wait_for(coro, timeout)` is the older, coroutine-shaped equivalent — it wraps a single
+awaitable instead of a block, which matters if you need to bound several statements at once (only
+`timeout()` can wrap more than one line). Both cancel the same way and both raise `TimeoutError`
+(as of 3.11, `asyncio.TimeoutError` is an alias for the builtin). `asyncio.shield(coro)` is the
+opposite tool: it protects an awaitable from being cancelled *by its caller* — useful when a cleanup
+step must finish even if the surrounding operation is cancelled — but it does not protect against a
+`timeout()`/`wait_for` that wraps the shielded call itself timing out; the coroutine inside a
+`shield` can still be cancelled independently.
+
+## Blocking calls freeze the loop — `time.sleep` vs `asyncio.sleep`
+
+`time.sleep()` blocks the entire OS thread the event loop runs on. Called from inside a coroutine,
+it does not "pause that task" the way `asyncio.sleep()` does — it stops *everything*, because there
+is only one thread running the loop:
+
+```python
+import asyncio
+
+async def heartbeat(n: int) -> None:
+    for i in range(n):
+        await asyncio.sleep(0.03)
+        print(f"heartbeat {i}")
+
+def blocking_sleep(seconds: float) -> str:
+    import time
+    time.sleep(seconds)      # blocks the WHOLE event loop thread
+    return "worker done"
+
+async def main() -> None:
+    hb = asyncio.create_task(heartbeat(2))
+    result = await asyncio.to_thread(blocking_sleep, 0.08)  # runs off the event loop's thread
+    print(result)
+    await hb
+
+asyncio.run(main())
+# heartbeat 0
+# heartbeat 1
+# worker done
+```
+
+`asyncio.to_thread(fn, *args)` (3.9+) is the fix: it runs a genuinely blocking call — `time.sleep`,
+a synchronous DB driver, CPU-light file I/O — in a thread pool, so the event loop keeps serving
+other coroutines while it waits. It is a thin wrapper over
+`loop.run_in_executor(None, functools.partial(fn, *args))`, covered in the GIL & Threads lesson.
+
+## `Semaphore` — bounding concurrency
+
+`asyncio.Semaphore(n)` lets at most `n` coroutines hold it at once — the standard way to cap
+concurrent requests to a rate-limited API or a connection pool:
+
+```python
+import asyncio
+
+async def limited_call(sem: asyncio.Semaphore, label: str, active: list) -> None:
+    async with sem:
+        active.append(label)
+        print(f"{label}: running, concurrent={len(active)}")
+        await asyncio.sleep(0.05)
+        active.remove(label)
+
+async def main() -> None:
+    sem = asyncio.Semaphore(2)
+    active: list = []
+    await asyncio.gather(*[limited_call(sem, f"job-{i}", active) for i in range(4)])
+
+asyncio.run(main())
+# never more than 2 "running" lines are concurrent
+```
+
+## `Queue` — producer/consumer
+
+`asyncio.Queue` is the async-native equivalent of `queue.Queue`: `put`/`get` are coroutines, so a
+full queue suspends the producer (instead of blocking a thread) until the consumer drains it.
+
+```python
+import asyncio
+
+async def producer(q: asyncio.Queue, n: int) -> None:
+    for i in range(n):
+        await q.put(i)
+    await q.put(None)   # sentinel signals "no more items"
+
+async def consumer(q: asyncio.Queue, out: list) -> None:
+    while True:
+        item = await q.get()
+        if item is None:
+            break
+        out.append(item)
+
+async def main() -> None:
+    q: asyncio.Queue = asyncio.Queue(maxsize=2)   # bounded — producer waits if it fills up
+    out: list = []
+    await asyncio.gather(producer(q, 4), consumer(q, out))
+    print(out)   # [0, 1, 2, 3]
+
+asyncio.run(main())
+```
+
+## `Lock` — check-then-act is still a race across an `await`
+
+A single-threaded event loop means no two coroutines run Python bytecode at the same *instant* — but
+that does **not** mean shared state is safe. Any `await` between a check and the action it guards is
+a window where another coroutine can run and change that state first:
+
+```python
+import asyncio
+
+class Account:
+    def __init__(self, balance: int) -> None:
+        self.balance = balance
+
+async def withdraw_unsafe(acct: Account, amount: int) -> None:
+    if acct.balance >= amount:   # check
+        await asyncio.sleep(0)   # <-- another coroutine can run right here
+        acct.balance -= amount   # act -- based on a now-stale read
+
+async def main() -> None:
+    acct = Account(balance=100)
+    await asyncio.gather(withdraw_unsafe(acct, 80), withdraw_unsafe(acct, 80))
+    print(acct.balance)   # -60 -- both checks passed before either write happened
+
+asyncio.run(main())
+```
+
+`asyncio.Lock` closes the window by serializing the check-and-act as one unit:
+
+```python
+import asyncio
+
+class Account:
+    def __init__(self, balance: int) -> None:
+        self.balance = balance
+        self.lock = asyncio.Lock()
+
+async def withdraw_safe(acct: Account, amount: int) -> None:
+    async with acct.lock:
+        if acct.balance >= amount:
+            await asyncio.sleep(0)
+            acct.balance -= amount
+
+async def main() -> None:
+    acct = Account(balance=100)
+    await asyncio.gather(withdraw_safe(acct, 80), withdraw_safe(acct, 80))
+    print(acct.balance)   # 20 -- the second withdrawal correctly sees the updated balance
+
+asyncio.run(main())
+```
+
+This is the async-world version of a truth that also holds for threads: **no data races (undefined
+behavior) does not mean no race conditions.** A single-threaded event loop guarantees you will never
+corrupt memory from two coroutines writing at once — but it makes zero guarantees about the *logical*
+correctness of a check-then-act sequence that spans an `await`. `asyncio.Event` is the matching
+primitive for the opposite direction — not "only one at a time," but "everyone wait until I say go":
+`await event.wait()` suspends until another coroutine calls `event.set()`.
+
+## Practical patterns: retry, rate limiting, and graceful shutdown
+
+**Retry with exponential backoff and jitter** — retrying immediately after a transient failure
+often just repeats the failure (or hits a server that is already overloaded); backoff spaces
+retries out, and jitter (randomizing the delay) prevents many clients from retrying in lockstep:
+
+```python
+import asyncio
+import random
+
+class FlakyError(Exception):
+    pass
+
+async def retry_with_backoff(coro_fn, *, max_attempts: int = 5, base: float = 0.01) -> object:
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await coro_fn()
+        except FlakyError:
+            if attempt == max_attempts:
+                raise
+            delay = base * (2 ** (attempt - 1)) + random.uniform(0, base)
+            await asyncio.sleep(delay)
+```
+
+**Rate limiting** — a token bucket caps how often an action may happen, independent of how many
+callers are waiting:
+
+```python
+import asyncio
+
+class RateLimiter:
+    def __init__(self, rate: int, period: float) -> None:
+        self.rate = rate
+        self.period = period
+        self.tokens = float(rate)
+
+    async def acquire(self) -> None:
+        while self.tokens < 1:
+            await asyncio.sleep(self.period / self.rate)
+            self.tokens += 1
+        self.tokens -= 1
+```
+
+**Graceful shutdown** — a long-running service should stop accepting new work and let in-flight
+work finish (or cancel it deliberately) when asked to stop, rather than being killed mid-request. The
+usual shape is a shutdown `asyncio.Event` set from a signal handler, with worker loops checking it:
+
+```python
+import asyncio
+import signal
+
+async def worker(shutdown: asyncio.Event) -> None:
+    while not shutdown.is_set():
+        await asyncio.sleep(0.1)   # do one unit of work per iteration in a real service
+    print("worker exiting cleanly")
+
+async def main() -> None:
+    shutdown = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(signal.SIGTERM, shutdown.set)   # Unix only; not testable on Pyodide
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(worker(shutdown))
+        # ... other tasks ...
+```
+
+`loop.add_signal_handler` is Unix-only and needs a real OS signal to demonstrate, so it is not part
+of the runnable demo below — the pattern (an `Event`, workers polling it, a `TaskGroup` so shutdown
+waits for every worker) is identical whether the trigger is a signal or, as in the demo, another
+coroutine calling `shutdown.set()`.
+
+### Structured concurrency
+
+`TaskGroup`'s core thesis — every task you spawn has a clear owner, and that owner cannot exit
+until all its children have finished or been cancelled — is called **structured concurrency**. It
+rules out an entire class of bugs that `create_task`-and-forget code invites: a task outliving the
+scope that logically owns it, an exception in a child that nobody ever observes, a program exiting
+while background work is still in flight. `gather` and bare `create_task` do not enforce this;
+`TaskGroup` does.
+
+### Beyond the standard library
+
+`asyncio` is CPython's only built-in async framework, but two third-party libraries are worth
+knowing about even though they cannot run in this course's Pyodide sandbox: **anyio** provides a
+single API that runs on top of either `asyncio` or `trio`'s event loop, useful for library code that
+should not force a choice on its caller; **trio** pioneered the structured-concurrency model that
+`TaskGroup` later brought into `asyncio` itself. For HTTP specifically, `httpx.AsyncClient` is the
+async-native counterpart to `requests` — a synchronous `requests.get()` call inside a coroutine
+blocks the loop exactly like `time.sleep` above.
+
+## Nested `asyncio.run` raises `RuntimeError`
+
+Calling `asyncio.run` twice, one after the other, at the top level is fine (see the asyncio Basics
+lesson). Calling it **from inside** a coroutine that is already running on a loop is not — there is
+already a loop running in this thread, and `asyncio.run` refuses to start a second one:
+
+```python
+import asyncio
+
+async def inner() -> None:
+    print("inner")
+
+async def main() -> None:
+    asyncio.run(inner())   # calling asyncio.run() from inside a running event loop
+
+try:
+    asyncio.run(main())
+except RuntimeError as e:
+    print(f"RuntimeError: {e}")
+    # RuntimeError: asyncio.run() cannot be called from a running event loop
+```
+
+This is also the classic Jupyter-notebook surprise: a notebook cell already runs inside an event
+loop, so a top-level `asyncio.run(...)` in a cell raises the same error — `await` the coroutine
+directly instead.
+
+<Callout title="This example is verified on CPython only">
+Run locally, `asyncio.run(inner())` above reliably raises `RuntimeError: asyncio.run() cannot be
+called from a running event loop` on `python3.14`. Testing the same code in this course's Pyodide
+sandbox showed no such error — Pyodide's event loop integration does not reject the nested call the
+same way CPython's does. Because the two runtimes disagree here, this example is intentionally left
+out of the Depth demo Playground below; treat it as a CPython-verified fact, not a browser-verified
+one.
+</Callout>
+
+## Depth demo: everything above, running
+
+export const asyncAwaitDepthCode = `
+import asyncio
+import random
+
+# --- create_task fire-and-forget: keep a reference, or use TaskGroup ---
+async def background_job(label: str) -> None:
+    await asyncio.sleep(0.02)
+    print(f"  {label}: finished")
+
+async def demo_create_task_safety() -> None:
+    background_tasks: set[asyncio.Task] = set()
+    task = asyncio.create_task(background_job("tracked"))
+    background_tasks.add(task)               # keep a strong reference
+    task.add_done_callback(background_tasks.discard)
+    await asyncio.sleep(0.05)
+    print(f"  background_tasks now empty: {len(background_tasks) == 0}")
+
+# --- TaskGroup cancellation vs gather(return_exceptions=True) ---
+async def worker(label: str, delay: float, fail: bool) -> str:
+    await asyncio.sleep(delay)
+    if fail:
+        raise ValueError(f"{label} failed")
+    return f"{label} ok"
+
+async def demo_gather_vs_taskgroup() -> None:
+    results = await asyncio.gather(
+        worker("A", 0.05, False), worker("B", 0.02, True), worker("C", 0.08, False),
+        return_exceptions=True,
+    )
+    print(f"  gather(return_exceptions=True): {results} -- all three ran")
+
+    try:
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(worker("A", 0.05, False))
+            tg.create_task(worker("B", 0.02, True))
+            tg.create_task(worker("C", 0.08, False))
+    except* ValueError as eg:
+        print(f"  TaskGroup: {[str(e) for e in eg.exceptions]} -- B's failure cancelled C early")
+
+# --- asyncio.timeout() ---
+async def demo_timeout() -> None:
+    try:
+        async with asyncio.timeout(0.05):
+            await asyncio.sleep(5)
+    except TimeoutError:
+        print("  asyncio.timeout() cancelled the block")
+
+# --- time.sleep would block the loop; asyncio.to_thread does not ---
+def blocking_sleep(seconds: float) -> str:
+    import time
+    time.sleep(seconds)
+    return "worker done"
+
+async def heartbeat(n: int) -> None:
+    for i in range(n):
+        await asyncio.sleep(0.03)
+        print(f"  heartbeat {i}")
+
+async def demo_to_thread() -> None:
+    hb = asyncio.create_task(heartbeat(2))
+    result = await asyncio.to_thread(blocking_sleep, 0.08)
+    print(f"  {result}")
+    await hb
+    print("  heartbeat kept ticking through the blocking call")
+
+# --- Semaphore bounds concurrency ---
+async def limited(sem: asyncio.Semaphore, label: str, active: list, peak: list) -> None:
+    async with sem:
+        active.append(label)
+        peak[0] = max(peak[0], len(active))
+        await asyncio.sleep(0.03)
+        active.remove(label)
+
+async def demo_semaphore() -> None:
+    sem = asyncio.Semaphore(2)
+    active: list = []
+    peak = [0]
+    await asyncio.gather(*[limited(sem, f"job-{i}", active, peak) for i in range(4)])
+    print(f"  peak concurrent workers: {peak[0]} (bounded by Semaphore(2))")
+
+# --- Queue producer/consumer ---
+async def demo_queue() -> None:
+    q: asyncio.Queue = asyncio.Queue(maxsize=2)
+
+    async def producer() -> None:
+        for i in range(4):
+            await q.put(i)
+        await q.put(None)
+
+    async def consumer(out: list) -> None:
+        while True:
+            item = await q.get()
+            if item is None:
+                break
+            out.append(item)
+
+    out: list = []
+    await asyncio.gather(producer(), consumer(out))
+    print(f"  consumed: {out}")
+
+# --- Lock: check-then-act across an await is still a race ---
+class Account:
+    def __init__(self, balance: int) -> None:
+        self.balance = balance
+        self.lock = asyncio.Lock()
+
+async def withdraw_unsafe(acct: Account, amount: int) -> None:
+    if acct.balance >= amount:
+        await asyncio.sleep(0)
+        acct.balance -= amount
+
+async def withdraw_safe(acct: Account, amount: int) -> None:
+    async with acct.lock:
+        if acct.balance >= amount:
+            await asyncio.sleep(0)
+            acct.balance -= amount
+
+async def demo_lock() -> None:
+    unsafe_acct = Account(100)
+    await asyncio.gather(withdraw_unsafe(unsafe_acct, 80), withdraw_unsafe(unsafe_acct, 80))
+    print(f"  unsafe balance: {unsafe_acct.balance} (went negative -- lost update)")
+
+    safe_acct = Account(100)
+    await asyncio.gather(withdraw_safe(safe_acct, 80), withdraw_safe(safe_acct, 80))
+    print(f"  safe balance:   {safe_acct.balance} (Lock serialized the two withdrawals)")
+
+# --- retry with backoff + jitter ---
+class FlakyError(Exception):
+    pass
+
+async def flaky_call(attempts: list) -> str:
+    attempts[0] += 1
+    if attempts[0] < 3:
+        raise FlakyError(f"attempt {attempts[0]} failed")
+    return "success"
+
+async def retry_with_backoff(coro_fn, *, max_attempts: int = 5, base: float = 0.01) -> str:
+    rng = random.Random(0)   # seeded for a reproducible demo
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await coro_fn()
+        except FlakyError:
+            if attempt == max_attempts:
+                raise
+            delay = base * (2 ** (attempt - 1)) + rng.uniform(0, base)
+            await asyncio.sleep(delay)
+    raise AssertionError("unreachable")
+
+async def demo_retry() -> None:
+    attempts = [0]
+    result = await retry_with_backoff(lambda: flaky_call(attempts))
+    print(f"  {result} after {attempts[0]} attempts")
+
+# --- rate limiting (token bucket) ---
+class RateLimiter:
+    def __init__(self, rate: int, period: float) -> None:
+        self.rate = rate
+        self.period = period
+        self.tokens = float(rate)
+
+    async def acquire(self) -> None:
+        while self.tokens < 1:
+            await asyncio.sleep(self.period / self.rate)
+            self.tokens += 1
+        self.tokens -= 1
+
+async def demo_rate_limit() -> None:
+    limiter = RateLimiter(rate=2, period=0.06)
+    log: list = []
+
+    async def call(label: str) -> None:
+        await limiter.acquire()
+        log.append(label)
+
+    await asyncio.gather(*[call(f"req-{i}") for i in range(4)])
+    print(f"  completed {len(log)} calls, throttled to 2 per 0.06s")
+
+# --- graceful shutdown: cancel + let tasks observe a shutdown signal ---
+async def demo_graceful_shutdown() -> None:
+    shutdown = asyncio.Event()
+
+    async def worker_loop() -> None:
+        ticks = 0
+        while not shutdown.is_set():
+            ticks += 1
+            await asyncio.sleep(0.02)
+        print(f"  worker saw shutdown and exited cleanly (ticks: {ticks}, timing-dependent)")
+
+    async def trigger() -> None:
+        await asyncio.sleep(0.05)
+        shutdown.set()
+
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(worker_loop())
+        tg.create_task(trigger())
+
+async def main() -> None:
+    print("=== create_task: keep a reference, don't fire-and-forget ===")
+    await demo_create_task_safety()
+    print("=== TaskGroup vs gather(return_exceptions=True) ===")
+    await demo_gather_vs_taskgroup()
+    print("=== asyncio.timeout() ===")
+    await demo_timeout()
+    print("=== to_thread keeps the loop responsive ===")
+    await demo_to_thread()
+    print("=== Semaphore bounds concurrency ===")
+    await demo_semaphore()
+    print("=== Queue producer/consumer ===")
+    await demo_queue()
+    print("=== Lock across an await point ===")
+    await demo_lock()
+    print("=== retry with backoff + jitter ===")
+    await demo_retry()
+    print("=== rate limiting ===")
+    await demo_rate_limit()
+    print("=== graceful shutdown ===")
+    await demo_graceful_shutdown()
+
+asyncio.run(main())
+`.trim();
+
+<Playground code={asyncAwaitDepthCode} />
+
+<Callout title="Run the walkthrough snippets locally">
+The prose examples above use bare `\`\`\`python` fences and are meant to be pasted into a `.py` file and
+run with `python3.14`. The Depth demo Playground above runs the same ideas live in your browser via
+Pyodide.
+</Callout>
+
+## Mental Model
+
+Think of `TaskGroup` as a project manager who will not go home until every task they assigned is
+either done or explicitly cancelled — and who cancels the rest of the team the moment one task
+fails, because continuing toward a goal that is already broken wastes everyone's time. `gather` is
+a manager with no such instinct: they collect whatever each worker produces, success or failure,
+and leave the sorting to you. Neither manager makes the workers themselves safe from each other —
+that is still the job of a `Lock`, `Semaphore`, or `Queue` you add yourself.
+
+<Mermaid code={`sequenceDiagram
+  participant TG as TaskGroup
+  participant A as Task A
+  participant B as Task B (fails)
+  participant C as Task C
+  TG->>A: create_task
+  TG->>B: create_task
+  TG->>C: create_task
+  B-->>TG: raises ValueError
+  TG->>C: cancel()
+  TG-->>TG: raise ExceptionGroup([ValueError])`} title="One task failing inside a TaskGroup cancels its siblings before they finish" />
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| `create_task` (bare) | Fire off work immediately, minimal ceremony | Nothing enforces you keep a reference — silently collectible |
+| `TaskGroup` | Structured lifetime, one failure cancels the rest | All-or-nothing; a batch that wants partial success needs `gather` instead |
+| `gather(return_exceptions=True)` | Every task runs to completion regardless of others' failures | You must inspect each result for `isinstance(r, Exception)` yourself |
+| `Semaphore` / rate limiting | Protects a downstream service or pool from overload | Adds latency to callers once the limit is hit |
+| `asyncio.to_thread` | Blocking calls stop freezing the loop | Thread-pool overhead; still subject to the GIL for pure-Python work |
+| Retry with backoff + jitter | Survives transient failures without hammering a struggling server | Masks a permanently broken dependency for `max_attempts` tries first |
+
+## Common Misconceptions
+
+- **"`create_task` and `await coro` are interchangeable."** `create_task` schedules immediately and
+  returns control right away; a bare `await coro` runs (and blocks on) that one coroutine before
+  moving on. Mixing them up is exactly how a "concurrent" fan-out silently becomes sequential.
+- **"A task with no variable pointing at it is definitely garbage collected."** Usually the loop's
+  own internal scheduling keeps it alive long enough to finish in a short-lived demo — which is what
+  makes this bug so easy to miss in code review and so unreliable to reproduce on demand. The
+  official recommendation to keep a reference exists regardless of whether any particular run shows
+  a problem.
+- **"`gather(return_exceptions=True)` and `TaskGroup` are just two spellings of the same thing."**
+  They differ on purpose: `gather` never cancels a sibling; `TaskGroup` always does on first failure.
+- **"A single-threaded event loop means shared state never needs a lock."** No two coroutines run
+  bytecode at the same instant, but a check-then-act sequence spanning an `await` is still a race —
+  the check can be stale by the time the action runs.
+- **"`asyncio.shield` makes a coroutine uncancellable."** It only protects against cancellation
+  *propagating in from the caller's cancellation*; the shielded coroutine can still be cancelled on
+  its own, and a `timeout()`/`wait_for` wrapping the shield still applies.
+
+## Reading AI-generated code
+
+Before trusting generated task/concurrency code, check for these:
+
+- Does every `asyncio.create_task(...)` call assign its result to something that outlives the
+  current statement (a variable, a set, a `TaskGroup`)? A bare `asyncio.create_task(coro())` on its
+  own line is a fire-and-forget task with nothing tracking it.
+- Is `gather` used where the tasks are actually working toward one shared goal (should one failure
+  cancel the rest — i.e., should this really be a `TaskGroup`)?
+- Does a shared object get read, then mutated, with an `await` in between, and no `Lock` around the
+  whole sequence?
+- Is a genuinely blocking call (`time.sleep`, a synchronous `requests.get`, heavy CPU work) sitting
+  directly inside an `async def` instead of behind `asyncio.to_thread` or `run_in_executor`?
+- Does a retry loop retry forever with no `max_attempts`, or retry with a fixed delay that could
+  synchronize many clients into hammering a struggling server at the same instant (no jitter)?
+
+<SpotTheBug code={`async def fetch(session, url: str) -> str:
+    async with session.get(url) as resp:
+        return await resp.text()
+
+async def fetch_all(session, urls: list[str]) -> list[str]:
+    results = []
+    for url in urls:
+        results.append(await fetch(session, url))
+    return results
+`} lang="python">
+This reads as "fetch all the URLs" and it does produce the right list of results — so it is easy to
+approve in review. But the `for` loop `await`s one URL at a time: fetching 10 URLs at 200ms each
+takes roughly 2 seconds total instead of roughly 200ms. The function is `async def` and it does use
+`await`, which makes the sequential bottleneck easy to miss without measuring. The fix is to
+schedule every fetch first and wait on all of them together:
+`results = await asyncio.gather(*[fetch(session, u) for u in urls])`, or a `TaskGroup` if a failed
+fetch should cancel the rest.
+</SpotTheBug>
+
+<Callout title="Scheduling vs waiting are two different actions">
+`create_task`/`TaskGroup.create_task` *schedule* a coroutine to start running now. `await` *waits*
+for something to finish. A `for` loop full of `await` calls only ever does the second thing, one at
+a time — concurrency requires the first thing to happen for more than one coroutine before you wait
+on any of them.
 </Callout>
 
 export const quizAsyncAwait = [
@@ -207,7 +825,8 @@ export const quizAsyncAwait = [
       "Approximately 0.5 s — both delays are incurred",
       "Approximately 0.0 s — asyncio is instantaneous"
     ],
-    answer: 2
+    answer: 2,
+    explain: "Sequential awaiting adds the delays together: 0.3s then 0.2s is roughly 0.5s total. asyncio.gather would run them concurrently instead, bringing the total down to roughly the slower of the two (0.3s)."
   },
   {
     q: "What does `asyncio.create_task(coro)` do that plain `await coro` does not?",
@@ -217,27 +836,63 @@ export const quizAsyncAwait = [
       "It creates a new OS thread for the coroutine",
       "It disables cancellation for that coroutine"
     ],
-    answer: 1
+    answer: 1,
+    explain: "create_task wraps the coroutine in a Task and schedules it right away -- the calling coroutine can continue past that line while the task runs in the background, which is what makes concurrent fan-out possible."
   },
   {
-    q: "What happens if you swallow `asyncio.CancelledError` instead of re-raising it?",
+    q: "Why is `asyncio.create_task(coro())` on its own line, with no variable capturing the result, a real bug risk even if a short demo of it happens to work?",
     options: [
-      "The task runs to completion normally",
-      "The event loop raises RuntimeError on the next await",
-      "Structured cancellation breaks — parent tasks may hang waiting for the task to finish",
-      "Nothing; asyncio retries the cancellation automatically"
+      "It is a SyntaxError in Python 3.11+",
+      "The event loop only keeps a weak reference to the task, so nothing you control guarantees it survives to completion",
+      "create_task always raises if its result is discarded",
+      "It silently converts the task into a synchronous call"
     ],
-    answer: 2
+    answer: 1,
+    explain: "The official asyncio documentation warns that a task with no other reference may be garbage collected at any time, even before it finishes. A short demo often survives because the loop's internal scheduling happens to keep it alive, but that is an implementation detail, not a guarantee -- always keep a reference (a set, a variable, or a TaskGroup)."
   },
   {
-    q: "Which Python 3.11+ feature provides structured concurrency with automatic sibling-task cancellation on failure?",
+    q: "```python\nasync def worker(label, delay, fail):\n    await asyncio.sleep(delay)\n    if fail:\n        raise ValueError(label)\n    return label\n\nasync def main():\n    async with asyncio.TaskGroup() as tg:\n        tg.create_task(worker(\"A\", 0.05, False))\n        tg.create_task(worker(\"B\", 0.01, True))\n        tg.create_task(worker(\"C\", 0.2, False))\n```\nWhat happens to task C when B raises?",
     options: [
-      "asyncio.gather with return_exceptions=True",
-      "asyncio.TaskGroup",
-      "asyncio.shield",
-      "asyncio.wait"
+      "C keeps running to completion regardless of B's failure",
+      "TaskGroup cancels C as soon as B's exception is observed, before C's full delay elapses",
+      "C's exception is silently ignored",
+      "The whole program crashes immediately with no way to catch the error"
     ],
-    answer: 1
+    answer: 1,
+    explain: "TaskGroup's structured-concurrency contract is that one task failing cancels every sibling still running. C, which has a longer 0.2s delay, gets cancelled before it finishes. gather(return_exceptions=True) is the tool to reach for when every task should run to completion regardless of the others."
+  },
+  {
+    q: "What is wrong with `time.sleep(2)` inside an `async def` coroutine that also has other coroutines running concurrently?",
+    options: [
+      "Nothing -- asyncio automatically converts it to asyncio.sleep",
+      "It raises a SyntaxError because sleep is not awaited",
+      "It blocks the entire event loop thread for 2 seconds, freezing every other coroutine too",
+      "It only affects the coroutine that called it"
+    ],
+    answer: 2,
+    explain: "time.sleep is a genuinely blocking call -- it does not yield control back to the event loop the way asyncio.sleep does. Since the event loop runs on one thread, that thread is now unavailable to run any other coroutine for the full duration. asyncio.to_thread (or run_in_executor) is the fix for blocking calls that cannot be replaced with an async equivalent."
+  },
+  {
+    q: "```python\nclass Account:\n    def __init__(self, balance):\n        self.balance = balance\n\nasync def withdraw(acct, amount):\n    if acct.balance >= amount:\n        await asyncio.sleep(0)\n        acct.balance -= amount\n\nasync def main():\n    acct = Account(100)\n    await asyncio.gather(withdraw(acct, 80), withdraw(acct, 80))\n    print(acct.balance)\n```\nWhat does this print, and why?",
+    options: [
+      "20 -- the second withdrawal correctly sees the reduced balance",
+      "-60 -- both coroutines read balance=100 before either one wrote the new value",
+      "Raises an exception because balance would go negative",
+      "100 -- neither withdrawal is applied"
+    ],
+    answer: 1,
+    explain: "Even on a single-threaded event loop, the await asyncio.sleep(0) between the check and the write gives the other coroutine a chance to run its own check against the still-unmodified balance. Both checks pass, both withdrawals apply, and the balance ends up negative -- a lock (async with acct.lock:) around the whole check-then-act sequence is the fix."
+  },
+  {
+    q: "A CLI script calls `asyncio.run(main())`. Inside `main()`, a helper function calls `asyncio.run(fetch_config())`. What happens?",
+    options: [
+      "It works fine -- nested calls just create a nested event loop",
+      "RuntimeError: asyncio.run() cannot be called from a running event loop",
+      "fetch_config() silently never runs",
+      "It raises a DeprecationWarning but still works"
+    ],
+    answer: 1,
+    explain: "asyncio.run() refuses to start a second event loop while one is already running in the same thread -- calling it from inside a coroutine that is itself running on a loop always raises RuntimeError. The fix is to await fetch_config() directly instead of wrapping it in another asyncio.run call."
   }
 ];
 

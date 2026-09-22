@@ -8,6 +8,8 @@ sidebar:
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Why processes, not threads?
 
@@ -128,6 +130,39 @@ process startup, pickling the arguments/results, and scheduling across a mix of 
 efficiency cores all eat into the theoretical maximum. Numbers here are machine-dependent — measure
 on your own hardware before quoting a specific multiplier.
 
+## Picklability: why a `lambda` breaks `ProcessPoolExecutor`
+
+Every argument, and the callable itself, has to travel from the parent process to a worker process
+as bytes — `multiprocessing` and `ProcessPoolExecutor` both do this with `pickle`. A `lambda`, or any
+function defined locally inside another function, cannot be pickled, because pickling a function
+stores a reference to it *by name* (module and qualified name) for the worker to re-import — and a
+`lambda`'s name is literally `<lambda>`, not something importable:
+
+```python
+from concurrent.futures import ProcessPoolExecutor
+
+def main() -> None:
+    with ProcessPoolExecutor(max_workers=2) as pool:
+        fut = pool.submit(lambda x: x * x, 5)   # lambdas cannot be pickled
+        try:
+            print(fut.result())
+        except Exception as e:
+            print(f"{type(e).__name__}: {e}")
+
+if __name__ == "__main__":
+    main()
+```
+
+```
+PicklingError: Can't pickle local object <function main.<locals>.<lambda> at 0x...>
+```
+
+The same problem hits a plain `def` nested inside another function — "local object" in the error
+covers both. The fix is always the same: define the callable at module level (or as a `staticmethod`
+on a class defined at module level) so its qualified name resolves to something the worker process
+can import on its own. A `functools.partial` wrapping a module-level function *is* picklable, so it
+is the usual way to pass extra fixed arguments without writing a `lambda`.
+
 ## Inter-process communication
 
 Processes do not share memory. To exchange data between them, use `multiprocessing.Queue` or
@@ -223,6 +258,93 @@ Remember the `if __name__ == "__main__"` guard — without it the script loops f
 Windows (`spawn`); see the guard/start-method section above for how this changed in Python 3.14.
 </Callout>
 
+## Mental Model
+
+A `Pool` is a small factory with its own separate buildings (processes), not extra workstations in
+your building (threads). Nothing walks between buildings except what you deliberately mail —
+`pickle` is the mail service, and it can only ship things with a return address someone else's
+building can look up (a module-level name). A `lambda` has no such address; a `Queue` or `Pipe` is
+how you actually mail data back and forth once the buildings are up and running.
+
+<Mermaid code={`flowchart LR
+  P["Parent process"] -->|"pickle(fn, args)"| W1["Worker process 1"]
+  P -->|"pickle(fn, args)"| W2["Worker process 2"]
+  W1 -->|"pickle(result)"| P
+  W2 -->|"pickle(result)"| P
+  L["lambda / local def"] -.->|"PicklingError — no importable name"| P`} title="Every argument, callable, and result crosses the process boundary as pickled bytes" />
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Separate process per worker | True parallelism, own GIL, immune to one worker crashing the rest | Full interpreter startup cost per process; no shared memory by default |
+| `pickle`-based argument passing | Works transparently for most data | Callables must be importable by name — no `lambda`, no local closures |
+| `shared_memory` | Skips serialization for large arrays | Manual lifecycle management (`close()`/`unlink()`); no automatic safety net |
+| Subinterpreters (3.14) | Cheaper startup than a full process | Still no shared objects across the boundary — same serialization cost as data crosses |
+| `forkserver` default (non-macOS Unix, 3.14+) | More predictable than `fork` around threads/locks held at fork time | Still needs the `__main__` guard, unlike old-style `fork` |
+
+## Common Misconceptions
+
+- **"multiprocessing shares memory like threading does."** It does not, by default — every argument
+  and result is pickled and sent across a pipe. `shared_memory` and `Manager` exist specifically
+  because plain multiprocessing does not share state.
+- **"Any function works with `Pool.map` or `ProcessPoolExecutor.submit`."** Only functions the
+  worker process can *import by name* work — module-level functions and picklable callables. A
+  `lambda` or a function defined inside another function fails immediately with `PicklingError`.
+  Nothing about a lambda's *logic* is the problem; it is purely that it has no importable name.
+  Passing extra arguments to a module-level function is the usual reason someone reaches for a
+  `lambda` here — `functools.partial` does the same job and is picklable.
+- **"The `if __name__` guard only matters on Windows."** As of Python 3.14, non-macOS Unix also
+  defaults to `forkserver`, which re-imports the module too — the guard is needed on every platform
+  now, not just Windows/macOS.
+- **"More processes always means more speed."** Beyond the number of CPU cores, extra processes add
+  scheduling and memory overhead without additional parallel compute capacity; for small or
+  I/O-heavy workloads, process startup cost alone can erase any benefit — see the measured pool
+  startup vs. workload trade-off above.
+
+## Reading AI-generated code
+
+Before trusting generated multiprocessing code, check for these:
+
+- Does `Pool(...)`, `Process(...)`, or `ProcessPoolExecutor(...)` construction happen at module
+  level, outside an `if __name__ == "__main__":` guard? On `spawn`/`forkserver` platforms this
+  re-imports the module in every worker.
+- Is a `lambda`, or a function defined inside another function, passed to `pool.map`, `pool.submit`,
+  or as a `Process` target? It will fail with `PicklingError` the moment it actually runs in a
+  worker — not at the point it was written.
+- Is the workload actually CPU-bound? Reaching for `multiprocessing` for an I/O-bound task adds
+  serialization and process-startup overhead for no parallelism benefit `asyncio`/`threading`
+  wouldn't already give more cheaply.
+- Does code assume child processes share module-level mutable state with the parent (a shared
+  cache, a counter) without `Manager`, `shared_memory`, or a `Queue`? Each process has its own copy.
+
+<SpotTheBug code={`from concurrent.futures import ProcessPoolExecutor
+
+def main() -> None:
+    multiplier = 3
+    with ProcessPoolExecutor() as pool:
+        results = list(pool.map(lambda x: x * multiplier, range(5)))
+    print(results)
+
+if __name__ == "__main__":
+    main()
+`} lang="python">
+This has the `if __name__ == "__main__":` guard in place, which fixes the most commonly taught
+multiprocessing bug — so it is easy to assume the rest is fine. But the `lambda` closing over
+`multiplier` fails immediately with `PicklingError: Can't pickle local object <function main.<locals>.<lambda> at 0x...>`
+the moment `pool.map` tries to send it to a worker process, guard or no guard. The fix is a
+module-level function plus `functools.partial` to bind `multiplier`:
+`from functools import partial` then `pool.map(partial(multiply, multiplier), range(5))` with
+`def multiply(m: int, x: int) -> int: return x * m` defined at module scope.
+</SpotTheBug>
+
+<Callout title="If a worker process needs it, it must have a name">
+Anything crossing into a `multiprocessing` worker — the callable, its arguments, its return value —
+travels as pickled bytes and must be reconstructible by name on the other side. Module-level
+functions and simple data qualify; `lambda`s, local closures, and open file handles or sockets do
+not.
+</Callout>
+
 export const quizMultiprocessing = [
   {
     q: "Why does `multiprocessing` achieve true CPU parallelism while `threading` does not in CPython?",
@@ -232,17 +354,19 @@ export const quizMultiprocessing = [
       "multiprocessing bypasses the OS scheduler that throttles threads",
       "multiprocessing uses C extensions which release the GIL automatically"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Each worker process gets its own fully independent Python interpreter, including its own GIL. Since each GIL only limits threads within its own process, separate processes genuinely run Python bytecode in parallel on separate cores."
   },
   {
-    q: "Why must you include `if __name__ == '__main__':` when using multiprocessing on macOS/Windows?",
+    q: "```python\nfrom multiprocessing import Pool\n\ndef square(x):\n    return x * x\n\nwith Pool(processes=4) as pool:\n    results = pool.map(square, range(10))\nprint(results)\n```\nThis is missing the `if __name__ == '__main__':` guard. What happens when run on macOS or Windows?",
     options: [
-      "It is a Python style guideline with no functional effect",
-      "Without it, the Pool cannot determine how many workers to create",
-      "The spawn start method re-imports the module in child processes — without the guard this causes infinite process spawning",
-      "It prevents import errors in the child processes"
+      "It is a Python style guideline with no functional effect -- the code runs fine",
+      "Without it, the Pool cannot determine how many workers to create, so it raises a TypeError",
+      "The spawn start method re-imports the module in every child process, which re-runs the Pool(...) call and spawns processes without end",
+      "It prints results correctly but leaks memory"
     ],
-    answer: 2
+    answer: 2,
+    explain: "On the spawn start method, each child process imports the launching script from scratch. Without the guard, module-level code that creates a Pool runs again in every child, which itself spawns more children -- an infinite loop of process creation, not a clean error."
   },
   {
     q: "Which method distributes an iterable over a process pool and returns results in input order?",
@@ -252,7 +376,8 @@ export const quizMultiprocessing = [
       "Pool.run()",
       "Pool.scatter()"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Pool.map(fn, iterable) is the direct process-pool equivalent of the builtin map(): it distributes items to workers and returns results in the same order as the input, blocking until every item is processed."
   },
   {
     q: "What mechanism should you use to share large NumPy arrays between processes without serialization overhead?",
@@ -262,7 +387,30 @@ export const quizMultiprocessing = [
       "multiprocessing.shared_memory.SharedMemory",
       "pickle.dumps across a Pipe"
     ],
-    answer: 2
+    answer: 2,
+    explain: "shared_memory.SharedMemory exposes a raw memory block that multiple processes can map directly, avoiding the pickle/unpickle cost that Queue and Pipe both pay for every message -- the right tool specifically when the data volume makes that serialization overhead expensive."
+  },
+  {
+    q: "```python\nfrom concurrent.futures import ProcessPoolExecutor\n\ndef main():\n    with ProcessPoolExecutor() as pool:\n        fut = pool.submit(lambda x: x * x, 5)\n        print(fut.result())\n\nif __name__ == \"__main__\":\n    main()\n```\nWhat happens when this runs?",
+    options: [
+      "Prints 25 -- the guard fixes the only real issue here",
+      "PicklingError -- lambdas have no importable name, so they cannot be sent to a worker process",
+      "Runs correctly but slower than a module-level function",
+      "Raises NameError inside the worker process"
+    ],
+    answer: 1,
+    explain: "The __main__ guard prevents the infinite-spawn bug, but it does not fix picklability. A lambda's qualified name is '<lambda>', which the worker process cannot import to reconstruct the callable -- ProcessPoolExecutor raises PicklingError (\"Can't pickle local object\") as soon as it tries to send the lambda to a worker."
+  },
+  {
+    q: "A CPU-bound benchmark using 8 `ProcessPoolExecutor` workers on an 11-core machine measures a 3.3x speedup, not 8x. What is the most likely honest explanation?",
+    options: [
+      "The measurement is wrong -- 8 processes should always give exactly 8x",
+      "Process startup cost, argument/result pickling, and scheduling across a mix of core types all eat into the theoretical maximum",
+      "ProcessPoolExecutor silently falls back to threads after the first few workers",
+      "Python caps process-based speedup at 4x regardless of core count"
+    ],
+    answer: 1,
+    explain: "A clean Nx speedup for N processes is a theoretical ceiling that real workloads rarely reach: spawning fresh interpreter processes has real startup cost, every argument and result must be pickled across the process boundary, and modern CPUs mixing performance and efficiency cores do not schedule identically to N interchangeable cores. Reporting the measured number with these caveats is more honest than assuming the ideal number."
   }
 ];
 

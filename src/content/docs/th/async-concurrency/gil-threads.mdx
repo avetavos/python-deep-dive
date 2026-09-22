@@ -1,36 +1,167 @@
 ---
 title: 'GIL และ Threading'
-description: 'Global Interpreter Lock, threading สำหรับงาน I/O-bound, ThreadPoolExecutor และเหตุใด threads ไม่เร่งความเร็วงาน CPU-bound ใน Python'
+description: 'Global Interpreter Lock ปกป้องอะไรและไม่ปกป้องอะไร, ThreadPoolExecutor, daemon threads และ free-threaded build ใน Python 3.14'
 sidebar:
   order: 4
 ---
 
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Global Interpreter Lock
 
-CPython (Python interpreter มาตรฐาน) มี mutex ที่เรียกว่า **Global Interpreter Lock** (GIL)
-GIL รับประกันว่า **มีเพียง thread เดียวที่รัน Python bytecode ได้ในช่วงเวลาใดๆ** — แม้บนเครื่องที่มี CPU cores หลายตัว
+CPython (interpreter มาตรฐานของ Python) มี mutex ตัวหนึ่งเรียกว่า **Global Interpreter Lock** (GIL)
+GIL รับประกันว่า **มีแค่เธรดเดียวที่รัน Python bytecode ในเวลาใดเวลาหนึ่ง** — แม้บนเครื่องที่มีหลาย CPU core
 
-GIL มีอยู่เพราะเหตุผลเชิงปฏิบัติ: memory management ของ CPython (reference counting) ไม่ใช่ thread-safe
-แทนที่จะเพิ่ม fine-grained locks ให้ทุก object, CPython developers เลือกวิธีที่ง่ายกว่าคือ single global lock
+GIL มีเหตุผลเชิงปฏิบัติ: การจัดการหน่วยความจำของ CPython (reference counting) ไม่ thread-safe
+แทนที่จะใส่ lock ละเอียดในทุก object นักพัฒนา CPython เลือกวิธีง่ายกว่าคือ lock กลางตัวเดียว
 
 **ผลที่ตามมา:**
 
-- โค้ด Python แบบ CPU-bound ที่รันใน threads หลายตัวไม่รันแบบ parallel — threads สลับกัน
-- I/O-bound threads *ได้ประโยชน์* จาก threading เพราะ GIL ถูกปล่อยขณะรอ OS I/O call
+- โค้ด Python ที่เป็น CPU-bound ที่รันในหลายเธรดไม่ได้รันแบบ parallel — threads ผลัดกันทำงาน
+- เธรดที่เป็น I/O-bound *ได้ประโยชน์* จาก threading เพราะ GIL ถูกปล่อยขณะเธรดรอ OS I/O call ให้เสร็จ
 
-<Callout title="Free-threaded Python เป็นทางการแล้วใน 3.14">
-free-threaded build (no-GIL) เคยเป็น experimental ใน 3.13 และ **รองรับอย่างเป็นทางการ** ตั้งแต่ Python 3.14 (PEP 779)
-มันมาเป็น interpreter แยกตัว — `python3.14t` — เพราะ build ปกติยังมี GIL อยู่
-thread ในนั้นรัน Python bytecode ขนานกันได้ทุก core และตอนนี้ต้นทุนฝั่ง single-thread เหลือราว 5–10%
-ตรวจตอน runtime ได้ด้วย `sys._is_gil_enabled()` ส่วน C extension ต้อง opt in เอง ก่อนย้ายโปรเจกต์จริงจึงควรเช็ก
-ว่า dependency ของคุณรองรับแล้ว
+เช็คว่า interpreter ที่คุณรันมี GIL หรือไม่ด้วย `sys._is_gil_enabled()`:
+
+```python
+import sys
+
+print(sys._is_gil_enabled())   # True on the default python3.14 build
+```
+
+<Callout title="Free-threaded Python เป็นทางการใน 3.14">
+GIL-free build เป็นแบบทดลองใน 3.13 และได้รับการ**สนับสนุนอย่างเป็นทางการ**ตั้งแต่ Python 3.14 (PEP 779)
+มันมาเป็น interpreter แยกต่างหาก — `python3.14t` — เพราะ default build ยังมี GIL อยู่
+ติดตั้งด้วย `uv python install 3.14t`; รันสคริปต์บนมันด้วย `uv run --python 3.14t python
+script.py` เธรดที่นั่นรัน Python bytecode แบบ parallel บนทุก core ได้จริง C extensions ต้อง opt in เอง
+ดังนั้นตรวจสอบว่า dependency ของคุณรองรับก่อนเปลี่ยนโปรเจกต์จริง ดู benchmark ที่วัดจริงด้านล่าง
 </Callout>
 
-## CPU-bound threads: ไม่มีความเร็วเพิ่มขึ้น
+## GIL ปกป้องอะไรและไม่ปกป้องอะไร
+
+GIL รับประกัน **ความปลอดภัยของหน่วยความจำ**: ไม่มีสองเธรดที่ทำให้โครงสร้าง internal object ของ CPython เสียหายจากการเขียนพร้อมกันในเสี้ยววินาทีเดียว มัน**ไม่**รับประกันว่าลำดับของ Python statement จะรันเป็นหน่วยเดียวแบบ atomic statement อย่าง `counter += 1` compile เป็น bytecode หลายตัว ไม่ใช่ตัวเดียว:
+
+```python
+import dis
+
+def bump():
+    global counter
+    counter += 1
+
+dis.dis(bump)
+```
+
+```
+  6           RESUME                   0
+
+  8           LOAD_GLOBAL              0 (counter)
+              LOAD_SMALL_INT           1
+              BINARY_OP               13 (+=)
+              STORE_GLOBAL             0 (counter)
+              LOAD_CONST               1 (None)
+              RETURN_VALUE
+```
+
+สี่ opcode: อ่าน `counter`, push `1`, บวก, เขียน `counter` กลับ ในทางทฤษฎี GIL สลับไปเธรดอื่นระหว่างสองตัวไหนก็ได้ ซึ่งเป็นเหตุผลตำราเรียนบอกว่า `+=` บน shared state "ไม่ atomic" และ "ต้องใช้ lock" สิ่งที่เกิดขึ้นจริงบน 3.14 น่าสนใจกว่านั้น — วัดไว้ด้านล่าง
+
+### วัด race ของ `+=` อย่างซื่อสัตย์
+
+Demo แบบตำราคือ 8 เธรดแต่ละตัวทำ `counter += 1` สองล้านครั้งโดยไม่มี lock คาดว่าค่าสุดท้ายจะต่ำกว่าที่ควร ลองทดลองตามนั้นเป๊ะๆ บน `python3.14` รวมถึงบีบ switch interval ของ GIL ให้ต่ำสุดเพื่อบังคับให้ context switch บ่อยกว่า default มาก:
+
+```python
+import sys
+import threading
+
+sys.setswitchinterval(0.0000001)   # force much more frequent GIL switches than the 5ms default
+
+counter = 0
+
+def increment(n: int) -> None:
+    global counter
+    for _ in range(n):
+        counter += 1
+
+N_PER_THREAD = 500_000
+NUM_THREADS = 8
+threads = [threading.Thread(target=increment, args=(N_PER_THREAD,)) for _ in range(NUM_THREADS)]
+for t in threads: t.start()
+for t in threads: t.join()
+
+print(f"expected: {N_PER_THREAD * NUM_THREADS}")
+print(f"actual:   {counter}")
+```
+
+```
+expected: 4000000
+actual:   4000000
+```
+
+ไม่มี update ที่หายไปเลย — แม้จะบีบ switch interval แบบสุดโต่ง เหตุผลคือ "eval breaker" ของ CPython (ตัวเช็คว่า "ควรให้เธรดอื่นรันตอนนี้ไหม") ทำงานเฉพาะจุด safe point เฉพาะใน bytecode dispatch loop — หลักๆ คือ loop back-edge และ call — ไม่ใช่ระหว่างทุก instruction `counter += 1` เปล่าๆ ใน `for` loop ไม่มี safe point แบบนั้น*ระหว่าง*สี่ opcode ของมัน มีแค่ตอนขึ้น iteration ถัดไป ดังนั้น pattern นี้จึงเป็น atomic โดยพฤตินัยใน CPython วันนี้ ล้วนๆ จากรายละเอียด implementation ว่า interpreter เช็คจุดสลับตรงไหน — ไม่ใช่เพราะภาษารับประกันไว้
+
+ความต่างนี้สำคัญ: เปลี่ยน pattern ให้มีจุดหยุดจริงๆ อยู่ระหว่างการอ่านกับการเขียน — เช่น blocking call — race จะกลับมาทันที:
+
+```python
+import threading
+import time
+
+class Account:
+    def __init__(self, balance: int) -> None:
+        self.balance = balance
+
+def withdraw_unsafe(acct: Account, amount: int) -> None:
+    balance = acct.balance          # read
+    time.sleep(0.01)                # GIL released here — another thread can run
+    acct.balance = balance - amount # write, based on a now-stale read
+
+acct = Account(balance=100)
+threads = [threading.Thread(target=withdraw_unsafe, args=(acct, 80)) for _ in range(2)]
+for t in threads: t.start()
+for t in threads: t.join()
+
+print(acct.balance)
+```
+
+```
+20
+```
+
+ทั้งสองเธรดอ่าน `balance=100` ก่อนที่ตัวใดตัวหนึ่งจะเขียน — lost update ที่ reproduce ได้เสมอ เพราะ `time.sleep` ปล่อย GIL จริงๆ กลางลำดับ **บทเรียนไม่ใช่ "`+=` ปลอดภัย"** แต่คือ: GIL ป้องกัน memory corruption ไม่ใช่ logical race — และลำดับ check-then-act เฉพาะเจาะจงจะ race จริงหรือไม่ในทางปฏิบัติขึ้นกับว่ามีอะไรระหว่าง check กับ act ที่ปล่อย GIL ได้หรือไม่ ซึ่งเป็นรายละเอียด implementation ที่ไม่ควรพึ่งพาเลย ป้องกัน read-modify-write จริงๆ ด้วย `Lock` เสมอ อย่าเชื่อ demo ที่ "ไม่มี update หายไป" ว่าเป็นหลักฐานว่า pattern นั้นปลอดภัย
+
+## C extension ปล่อย GIL ได้เองอย่างชัดเจน
+
+โค้ดที่ implement ด้วย C (ส่วนใหญ่ของ standard library ที่ performance-sensitive บวก compiled third-party library ส่วนใหญ่) สามารถปล่อย GIL อย่างชัดเจนรอบ operation ที่ทำงานนานและไม่แตะ Python object — `hashlib`, `zlib`, และ array operation ของ NumPy ทำแบบนี้ทั้งหมด นั่นหมายความว่าเธรดที่เรียกฟังก์ชันเหล่านี้ *รันแบบ parallel จริงได้* ต่างจาก pure-Python loop:
+
+```python
+import hashlib
+import threading
+import time
+
+DATA = b"x" * 50_000_000
+
+def hash_chunk() -> None:
+    hashlib.sha256(DATA).hexdigest()   # implemented in C; releases the GIL during the hashing loop
+
+start = time.perf_counter()
+hash_chunk(); hash_chunk()
+single = time.perf_counter() - start
+
+start = time.perf_counter()
+threads = [threading.Thread(target=hash_chunk) for _ in range(2)]
+for t in threads: t.start()
+for t in threads: t.join()
+threaded = time.perf_counter() - start
+
+print(f"one thread, two calls:  {single:.2f}s")
+print(f"two threads, one each:  {threaded:.2f}s")
+```
+
+วัดบนเครื่องนี้: `0.04s` สำหรับสอง call แบบ sequential เทียบกับ `0.02s` เมื่อรันบนสองเธรด — ประมาณ 2 เท่า เพราะ `hashlib.sha256` ปล่อย GIL ขณะทำงาน loop เดียวกันที่เขียนด้วย pure Python (เช่นตัวอย่าง `count_down` ด้านบน) จะไม่มี speedup แบบนี้เลย
+
+## CPU-bound threads: ไม่เร็วขึ้น
 
 ```python
 import threading
@@ -63,10 +194,30 @@ print(f"Two threads:   {threaded:.2f}s")
 # overhead. Numbers are machine-dependent.
 ```
 
+## Free-threaded build วัดผลจริง
+
+คำกล่าวอ้าง "free-threaded Python ทำให้เธรดที่เป็น CPU-bound รันแบบ parallel ได้" พูดง่ายแต่ผิดในรายละเอียดได้ง่าย ดังนั้นนี่คือ benchmark `count_down` เดียวกันเป๊ะที่รันทั้งบน default GIL build และ `python3.14t` ติดกันบนเครื่องเดียว:
+
+```bash
+$ python3.14 cpu_bench.py               # default build, GIL enabled
+gil_enabled=True
+single thread: 0.43s
+two threads:   0.41s
+speedup:       1.04x
+
+$ uv run --python 3.14t python cpu_bench.py   # free-threaded build
+gil_enabled=False
+single thread: 0.42s
+two threads:   0.21s
+speedup:       1.96x
+```
+
+บน default build สองเธรดแทบไม่เร็วขึ้นเลย (1.04x — ระดับ noise ตรงกับผล "สองเธรดไม่เร็วขึ้น" ด้านบน) บน free-threaded build `sys._is_gil_enabled()` รายงาน `False` ถูกต้อง และสองเธรดเข้าใกล้ 2x ในอุดมคติสำหรับ workload แบบ embarrassingly parallel นี้ ประสิทธิภาพ single-thread แยกไม่ออกทางสถิติระหว่างสอง build จากการวัดนี้ (0.43s เทียบกับ 0.42s) — "5-10% single-thread overhead" ที่มักถูกอ้างถึงสำหรับ free-threaded build ไม่ปรากฏในการวัดนี้ วัด workload ของคุณเองก่อนสรุปไปทางใดทางหนึ่ง และเช็คว่า C-extension dependency ของคุณ opt in free-threading support หรือยังก่อนเปลี่ยนโปรเจกต์จริง
+
 ## I/O-bound threads: concurrency จริง
 
-เมื่อ threads บล็อกบน I/O, GIL ถูกปล่อย ทำให้ threads อื่นรัน Python code ได้
-นี่คือเหตุผลที่ threading ยังมีประโยชน์สำหรับงาน I/O-bound เช่น HTTP requests หรือการอ่านไฟล์
+เมื่อเธรด block บน I/O, GIL ถูกปล่อย ทำให้เธรดอื่นรัน Python code ได้
+นี่คือเหตุผลที่ threading ยังมีประโยชน์สำหรับงาน I/O-bound เช่น HTTP request หรือ file read
 
 ```python
 import threading
@@ -102,13 +253,34 @@ t.join()   # wait for the thread to finish
 print("background thread done")
 ```
 
-`t.join()` บล็อก calling thread จนกว่า `t` จะเสร็จสิ้น
-หากไม่มี `join()`, main thread อาจออกขณะที่ background thread ยังรันอยู่
+`t.join()` block เธรดที่เรียกจนกว่า `t` จะเสร็จ
+ถ้าไม่มี `join()` main thread อาจ exit ทั้งที่ background thread ยังรันอยู่
+
+## Daemon threads
+
+**Daemon thread** ไม่ทำให้ process มีชีวิตอยู่ต่อ — เมื่อทุกเธรดที่ไม่ใช่ daemon (รวม `main`) เสร็จแล้ว Python จะ exit ฆ่า daemon thread ที่กำลังรันอยู่กลางคันโดยไม่รัน `finally` block ใช้ daemon thread สำหรับงาน background ที่ยอมรับได้ถ้าจะหายไป (heartbeat, cache-warming loop); อย่าใช้กับอะไรที่ต้อง cleanup ตัวเอง:
+
+```python
+import threading
+import time
+
+def background_ticker(stop: threading.Event) -> None:
+    while not stop.is_set():
+        time.sleep(0.01)
+
+stop = threading.Event()
+t = threading.Thread(target=background_ticker, args=(stop,), daemon=True)
+t.start()
+print(f"daemon thread running: {t.is_alive()}, daemon={t.daemon}")
+# no t.join() here -- a daemon thread is killed automatically when the main
+# thread exits; a non-daemon thread in its place would keep the process alive
+# forever, since background_ticker only stops when `stop` is set
+stop.set()
+```
 
 ## Thread safety ด้วย `threading.Lock`
 
-Shared mutable state ต้องการ synchronization ที่ชัดเจน
-`threading.Lock` รับประกันว่ามีเพียง thread เดียวที่แก้ไข shared data ได้ในช่วงเวลาเดียว
+Shared mutable state ต้องการ synchronization อย่างชัดเจนเมื่อมีจุดหยุดจริง (I/O, blocking call, หรือ section ที่ยาวพอให้ OS scheduler preempt ได้) แทรกอยู่ระหว่างการอ่านกับการเขียนที่ขึ้นกับมัน `threading.Lock` รับประกันว่ามีแค่เธรดเดียวรัน section ที่ lock ในเวลาใดเวลาหนึ่ง:
 
 ```python
 import threading
@@ -129,33 +301,82 @@ for t in threads: t.join()
 print(counter)   # reliably 500_000
 ```
 
-หากไม่มี lock, `counter += 1` คือสาม bytecode operations (LOAD, ADD, STORE) และสอง threads อาจสลับกันระหว่างนั้น ทำให้ยอดรวมต่ำกว่าที่ควร (**race condition**)
+ใช้ `Lock` เมื่อไหร่ก็ตามที่ **race condition** เป็นไปได้ในทางทฤษฎี — check-then-act, read-modify-write ที่คร่อม call ใดๆ ที่อาจ block — แทนที่จะพึ่งว่า run ครั้งใดครั้งหนึ่งบังเอิญไม่แสดง corruption อย่างที่วัดไว้ด้านบน การไม่มี data race ใน run หนึ่งไม่ใช่หลักฐานความถูกต้อง
+
+## `queue.Queue` เทียบกับ list ธรรมดาสำหรับข้อมูลข้ามเธรด
+
+`list` ธรรมดาไม่ปลอดภัยที่จะแชร์ระหว่างเธรดสำหรับอะไรที่เกินกว่าที่ GIL บังเอิญทำให้ atomic (`append`/`pop` บน list แต่ละตัวปลอดภัย แต่ check-then-act แบบ "ถ้าไม่ว่าง pop" ไม่ปลอดภัย) `queue.Queue` ถูกออกแบบมาสำหรับส่งต่อข้ามเธรดโดยเฉพาะ: `put`/`get` มี lock ภายในให้ และ `get` block จนกว่าจะมี item ซึ่ง `pop(0)` ของ list ทำไม่ได้เลยถ้าไม่เขียน sleep-and-retry loop เอง:
+
+```python
+import queue
+import threading
+
+q: queue.Queue = queue.Queue()
+
+def producer() -> None:
+    for i in range(5):
+        q.put(i)
+    q.put(None)   # sentinel
+
+def consumer(out: list) -> None:
+    while True:
+        item = q.get()   # blocks until an item is available -- no busy-waiting
+        if item is None:
+            break
+        out.append(item)
+
+out: list = []
+p = threading.Thread(target=producer)
+c = threading.Thread(target=consumer, args=(out,))
+p.start(); c.start()
+p.join(); c.join()
+print(out)   # [0, 1, 2, 3, 4]
+```
 
 ## `ThreadPoolExecutor` — high-level API
 
-`concurrent.futures.ThreadPoolExecutor` จัดการ thread pool และคืน `Future` objects
-และ integrate ได้ดีกับ `asyncio` ผ่าน `loop.run_in_executor`
+`concurrent.futures.ThreadPoolExecutor` จัดการ pool ของเธรดและคืน `Future` objects
+`map` กับ `submit`/`as_completed` ต่างกันในจุดสำคัญ: `map` คืนผลลัพธ์ตาม**ลำดับ input**เสมอ ในขณะที่ `as_completed` คืนตาม**ลำดับ completion**:
+
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+
+def work(label: str, delay: float) -> str:
+    time.sleep(delay)
+    return f"{label} done"
+
+with ThreadPoolExecutor(max_workers=4) as pool:
+    print(list(pool.map(work, ["A", "B", "C"], [0.06, 0.02, 0.04])))
+    # ['A done', 'B done', 'C done'] -- input order, even though B and C finish first
+
+with ThreadPoolExecutor(max_workers=4) as pool:
+    futures = {pool.submit(work, label, delay): label
+               for label, delay in [("A", 0.06), ("B", 0.02), ("C", 0.04)]}
+    print([f.result() for f in as_completed(futures)])
+    # ['B done', 'C done', 'A done'] -- completion order
+```
+
+`future.result()` re-raise exception ที่ worker function raise ไว้ ที่จุดเรียก — เหมือนกับเรียกฟังก์ชันตรงๆ ลบไปหนึ่ง traceback frame:
 
 ```python
 from concurrent.futures import ThreadPoolExecutor
-import time
 
-def blocking_io(label: str) -> str:
-    time.sleep(0.1)    # simulates a blocking library call
-    return f"{label} done"
+def boom() -> int:
+    raise ValueError("worker failed")
 
-with ThreadPoolExecutor(max_workers=4) as executor:
-    futures = [executor.submit(blocking_io, f"job-{i}") for i in range(8)]
-    results = [f.result() for f in futures]
-
-print(results)
+with ThreadPoolExecutor(max_workers=1) as pool:
+    fut = pool.submit(boom)
+    try:
+        fut.result()
+    except ValueError as e:
+        print(f"re-raised: {e!r}")
+        # re-raised: ValueError('worker failed')
 ```
 
-`executor.map(fn, iterable)` เป็น shorthand ที่สะดวกเมื่อทุก call ใช้ function เดียวกันและต้องการผลลัพธ์ตามลำดับ input
+## เชื่อม threads กับ asyncio: `run_in_executor`
 
-## การเชื่อมต่อ threads กับ asyncio: `run_in_executor`
-
-เมื่อต้องเรียกไลบรารีแบบ blocking จาก async context โดยไม่บล็อก event loop:
+เมื่อต้องเรียก blocking library จาก async context โดยไม่ block event loop:
 
 ```python
 import asyncio
@@ -177,64 +398,226 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-<Callout title="รันตัวอย่างเหล่านี้ในเครื่องของคุณ">
-บทนี้ไม่มี in-browser runner และ browser sandbox ก็ไม่มี OS thread จริงอยู่แล้ว รันตัวอย่างด้านบนบนเครื่องของคุณ:
+`asyncio.to_thread` ที่อยู่ในบท Async / Await เป็น wrapper บางๆ ของการเรียกแบบนี้เป๊ะโดยใช้ executor default
 
-```bash
-python3 gil_threads.py
-```
+## Depth demo: ThreadPoolExecutor, daemon threads และ Queue
+
+คำกล่าวอ้างเชิงเวลา (speedup ของ CPU-bound, benchmark ของ free-threaded) ต้องการเธรดระดับ OS แบบ parallel จริง จึงเชื่อไม่ได้ใน browser sandbox ดังนั้นส่วนนั้นยังคงเป็นตัวอย่างแบบ fence ด้านบนให้รันในเครื่อง ส่วน demo ที่เน้นความถูกต้องด้านล่าง — ลำดับของ `map` เทียบ `submit`/`as_completed`, `future.result()` re-raise, flag ของ daemon thread, และการส่งต่อของ `queue.Queue` — ไม่ต้องพึ่ง parallelism จริง จึงรันเหมือนกันทั้งใน Pyodide และในเครื่อง:
+
+export const gilThreadsPlaygroundCode = `
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import queue
+import threading
+import time
+
+def work(label: str, delay: float) -> str:
+    time.sleep(delay)
+    return f"{label} done"
+
+with ThreadPoolExecutor(max_workers=4) as pool:
+    print("map (input order):", list(pool.map(work, ["A", "B", "C"], [0.06, 0.02, 0.04])))
+
+with ThreadPoolExecutor(max_workers=4) as pool:
+    futures = {pool.submit(work, label, delay): label
+               for label, delay in [("A", 0.06), ("B", 0.02), ("C", 0.04)]}
+    order = [fut.result() for fut in as_completed(futures)]
+    print("submit + as_completed (completion order):", order)
+
+def boom() -> int:
+    raise ValueError("worker failed")
+
+with ThreadPoolExecutor(max_workers=1) as pool:
+    fut = pool.submit(boom)
+    try:
+        fut.result()
+    except ValueError as e:
+        print(f"future.result() re-raises: {e!r}")
+
+stop = threading.Event()
+t = threading.Thread(target=lambda: stop.wait(), daemon=True)
+t.start()
+print(f"daemon thread: alive={t.is_alive()}, daemon={t.daemon}")
+
+q: queue.Queue = queue.Queue()
+
+def producer() -> None:
+    for i in range(5):
+        q.put(i)
+    q.put(None)
+
+def consumer(out: list) -> None:
+    while True:
+        item = q.get()
+        if item is None:
+            break
+        out.append(item)
+
+out: list = []
+p = threading.Thread(target=producer)
+c = threading.Thread(target=consumer, args=(out,))
+p.start(); c.start()
+p.join(); c.join()
+print(f"queue.Queue producer/consumer result: {out}")
+stop.set()
+`.trim();
+
+<Playground code={gilThreadsPlaygroundCode} />
+
+<Callout title="คำกล่าวอ้างเชิงเวลา: รันในเครื่อง">
+บทนี้ไม่มี in-browser runner สำหรับส่วนที่เน้นเวลา (การสืบสวน race ของ `+=`, การปล่อย GIL ของ C extension, และ benchmark ของ free-threaded) — browser sandbox ไม่มี OS parallelism จริงให้วัด รันส่วนนั้นด้วย `python3.14` ในเครื่อง และ `uv run --python 3.14t python
+cpu_bench.py` สำหรับเปรียบเทียบ free-threaded
 </Callout>
 
-## เมื่อใดควรใช้ threads vs asyncio
+## เมื่อไหร่ควรใช้ threads เทียบกับ asyncio
 
 | เกณฑ์ | ใช้ `asyncio` | ใช้ `threading` |
 |---|---|---|
 | I/O-bound, async-native libs | ใช่ | ไม่ |
 | I/O-bound, blocking libs (boto3, psycopg2) | `run_in_executor` | ใช่ |
-| งาน CPU-bound | ไม่ | ไม่ — ใช้ `multiprocessing` |
+| งาน CPU-bound | ไม่ | ไม่ — ใช้ `multiprocessing` หรือ free-threaded 3.14t |
 | ต้องการ structured cancellation | ใช่ (TaskGroup) | ยากกว่า |
-| codebase แบบ synchronous เดิม | ไม่ | ใช่ |
+| Legacy codebase แบบ synchronous | ไม่ | ใช่ |
+
+## Mental Model
+
+ลองนึกภาพ GIL เป็นไม้ผลัดในการวิ่งผลัดหนึ่งอันในห้องที่เต็มไปด้วยนักวิ่ง (เธรด) เฉพาะคนที่ถือไม้ผลัดเท่านั้นที่แตะ Python object ที่แชร์บนโต๊ะได้ นักวิ่งวางไม้ผลัดโดยสมัครใจเมื่อเรียกอะไรที่ต้องรอ — I/O, `time.sleep`, ฟังก์ชัน C ที่ปล่อยมัน — และ CPython ยังบังคับส่งต่อเป็นระยะๆ เพื่อไม่ให้เธรดใดถือไม้ผลัดตลอดไปขณะคำนวณล้วนๆ ไม้ผลัดเองป้องกันแค่ไม่ให้นักวิ่งสองคนคว้า object เดียวกันพร้อมกัน (ความปลอดภัยของหน่วยความจำ) มันไม่ได้บอกอะไรเลยว่า*ลำดับ*การเคลื่อนไหวที่นักวิ่งคนหนึ่งทำขณะถือไม้ผลัด ข้ามหลายการส่งต่อ ยังรวมกันเป็นผลลัพธ์ที่ถูกต้องหรือไม่
+
+<Mermaid code={`flowchart LR
+  T1["Thread 1 holds GIL"] -->|"time.sleep() releases it"| T2["Thread 2 acquires GIL"]
+  T2 -->|"finishes I/O wait, re-acquires"| T1b["Thread 1 resumes"]
+  T2 -.->|"pure computation: no release until eval-breaker checkpoint"| T2`} title="GIL เปลี่ยนมือตอน blocking call และ checkpoint เป็นระยะ — ไม่ใช่ระหว่างทุก bytecode" />
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| GIL | reference counting ง่ายและปลอดภัย ไม่ต้อง lock รายตัว object | เธรดที่เป็น CPU-bound ไม่เคยรัน Python bytecode แบบ parallel |
+| `threading` สำหรับ I/O | shared-memory model ง่าย ไม่ต้อง serialize | ยังต้องใช้ `Lock` รอบ check-then-act ใดๆ ที่คร่อม blocking call |
+| Free-threaded 3.14t | speedup แบบ parallel จริงสำหรับเธรด pure-Python ที่เป็น CPU-bound | binary แยกต่างหาก; ระบบนิเวศ C extension ยังตามไม่ทันทั้งหมด |
+| `ThreadPoolExecutor` | API ระดับสูงที่สะอาด เชื่อมกับ `asyncio` ได้ | `map` กับ `submit`/`as_completed` รับประกันลำดับต่างกัน — สับสนง่าย |
+| Daemon threads | process exit ได้ทันที ไม่มี background loop ค้าง | ไม่รับประกัน cleanup — `finally` block ถูกข้ามได้เลย |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"`+=` บน shared state race เสมอถ้าไม่มี lock"** วัดไว้ด้านบนแล้ว: tight loop ของ `counter += 1` ไม่มี update หายไปเลยแม้จะบีบ switch interval แบบสุดโต่ง เพราะ eval-breaker ของ CPython เช็คแค่ตรง loop/call boundary นั่นไม่ได้ทำให้มันปลอดภัย — มันหมายความว่าการไม่พบ race ไม่ใช่หลักฐานความถูกต้อง read-modify-write ใดๆ ที่มีจุดหยุดจริงคั่นกลาง (blocking call, I/O) จะ race ได้เสมอ
+- **"GIL ทำให้ Python code ปลอดภัยแบบ single-threaded โดยอัตโนมัติ"** มันป้องกัน memory corruption ไม่ใช่ logic error ลำดับ check-then-act ยังเป็น race ถ้ามีอะไรระหว่าง check กับ act ที่ปล่อยการควบคุมได้
+- **"Free-threaded Python เป็นแค่ compiler flag"** มันคือ build แยกต่างหากของ interpreter (`python3.14t`) ที่มี ABI ต่างกัน C extensions ต้องประกาศรองรับมันอย่างชัดเจน
+- **"`ThreadPoolExecutor.map` กับ `as_completed` ทำงานเหมือนกัน"** `map` รักษาลำดับ input เสมอไม่ว่า call ไหนจะเสร็จก่อน; `as_completed` คืน future ที่เสร็จก่อนก่อน ซึ่งต่างจากลำดับ submission ได้
+- **"daemon thread เป็นแค่เธรดธรรมดาที่มี boolean flag เพื่อความสวยงาม"** มันเปลี่ยนพฤติกรรมจริง: process จะไม่รอมัน และมันถูกฆ่ากลาง statement โดยไม่มี cleanup ตอน process exit
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อโค้ด threading ที่ AI สร้าง ตรวจสิ่งเหล่านี้:
+
+- มี shared counter หรือ accumulator ที่ถูกอัปเดตด้วย `+=` (หรือ read-modify-write ใดๆ) จากหลายเธรดโดย**ไม่มี** `Lock` โดยอ้างว่า "มันแค่ integer" หรือไม่? ความปลอดภัยของสิ่งนั้นขึ้นกับรายละเอียด implementation ที่เปลี่ยนได้ `Lock` แทบไม่มีต้นทุนตรงนี้
+- มี check-then-act (`if queue: item = queue.pop(0)`, `if not path.exists(): create(path)`) ที่แชร์ข้ามเธรดโดยมี blocking call คั่นกลางหรือไม่?
+- มี background thread ที่สร้างด้วย `daemon=True` ทั้งที่จริงๆ ต้องทำ cleanup ให้เสร็จก่อน process exit หรือไม่?
+- โค้ดเรียก `ThreadPoolExecutor.submit` ใน loop แล้ว `.result()` แต่ละ future ทันทีตามลำดับ submission หรือไม่ — ซึ่งทำลายจุดประสงค์ทั้งหมดของการ submit แบบ concurrent และเทียบเท่ากับการเรียก `map` เฉยๆ?
+- `multiprocessing`/`ProcessPoolExecutor` ถูกป้อนด้วย `lambda` หรือ closure ที่ประกาศในเครื่องหรือไม่? ดูบท Multiprocessing — สิ่งนี้ fail ด้วย pickling error จริง ไม่ใช่แค่ warning
+
+<SpotTheBug code={`class Account:
+    def __init__(self, balance: int) -> None:
+        self.balance = balance
+
+def withdraw(acct: Account, amount: int) -> None:
+    if acct.balance >= amount:
+        time.sleep(0.01)  # e.g. a "logging" or "audit" call before committing
+        acct.balance -= amount
+
+acct = Account(balance=100)
+threads = [threading.Thread(target=withdraw, args=(acct, 80)) for _ in range(2)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+
+print(acct.balance)
+`} lang="python">
+โค้ดนี้ดูเหมือนการเช็ค balance ก่อนถอนเงินตรงไปตรงมา และการอ่านผ่านๆ อาจคิดว่า GIL ทำให้ปลอดภัยเพราะ "มีแค่เธรดเดียวรัน Python ในเวลาหนึ่ง" แต่ `time.sleep` ระหว่าง check กับ write ปล่อย GIL ให้เธรดที่สองรัน `if acct.balance >=
+amount` กับ balance ที่ยังไม่ถูกแก้ ทั้งสอง check ผ่าน ทั้งสองการถอนถูกใช้ และ `acct.balance` จบที่ `20` แทนที่จะเป็นการปฏิเสธที่ถูกต้อง (`-60`) หรือผลลัพธ์แบบ serialize (`20`/reject) — ไม่ว่าทางไหน ทั้งสองเธรดเชื่อว่าตัวเองมีสิทธิ์ถอนจาก 100 เดียวกัน ทางแก้คือ `threading.Lock` ที่ครอบทั้งลำดับ check-then-act ไม่ใช่แค่การลบตอนสุดท้าย
+</SpotTheBug>
+
+<Callout title="GIL คือการรับประกันความปลอดภัยของหน่วยความจำ ไม่ใช่ความถูกต้อง">
+GIL ป้องกันไม่ให้สองเธรดทำโครงสร้าง C struct ภายในของ object เสียหายจากการเขียนพร้อมกัน มันไม่ได้สัญญาอะไรเลยว่า operation หลายขั้นตอนที่คุณเขียน — check แล้ว act, อ่านแล้วเขียน — จะเสร็จเป็นหน่วยตรรกะเดียวหรือไม่ ใช้ `Lock` สำหรับอะไรก็ตามที่ต้องเป็นแบบนั้น
+</Callout>
 
 export const quizGilThreads = [
   {
-    q: "เหตุใดการเพิ่ม threads จึงไม่เร่งความเร็วโค้ด Python แบบ CPU-bound ใน CPython?",
+    q: "ทำไมการเพิ่มเธรดถึงไม่เร่งความเร็วโค้ด Python ที่เป็น CPU-bound ใน CPython?",
     options: [
-      "Python threads ถูก emulate ใน software และไม่ใช้ OS threads",
-      "GIL อนุญาตให้มีเพียง thread เดียวที่รัน Python bytecode ได้ในช่วงเวลาเดียว",
+      "Python threads ถูกจำลองด้วยซอฟต์แวร์และไม่ใช้ OS threads",
+      "GIL อนุญาตให้แค่เธรดเดียวรัน Python bytecode ในเวลาใดเวลาหนึ่ง",
       "Python threads แชร์ stack เดียวกันและรัน parallel ไม่ได้",
-      "OS scheduler ป้องกัน Python threads จากการรันบน multiple cores"
+      "OS scheduler ป้องกันไม่ให้ Python threads รันบนหลาย core"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Global Interpreter Lock อนุญาตให้เธรดเดียวเท่านั้นรัน Python bytecode ในเสี้ยววินาทีใดๆ ไม่ว่าจะมี CPU core กี่ตัว เธรดผลัดกันแทนที่จะรัน parallel สำหรับการคำนวณ Python ล้วนๆ"
   },
   {
-    q: "Python thread ปล่อย GIL เมื่อใด?",
+    q: "Python thread ปล่อย GIL เมื่อไหร่?",
     options: [
-      "เฉพาะเมื่อ thread เรียก `threading.release()`",
-      "เฉพาะระหว่าง garbage collection",
-      "ขณะรอ OS I/O call เสร็จสิ้น",
-      "ไม่เคย — GIL ถูกถือตลอดอายุการใช้งานของ thread"
+      "เฉพาะเมื่อเธรดเรียก `threading.release()`",
+      "เฉพาะตอน garbage collection",
+      "ขณะรอ OS I/O call, ที่ checkpoint ของ eval-breaker เป็นระยะ, และในโค้ด C ที่ปล่อยมันอย่างชัดเจน",
+      "ไม่เคยเลย — GIL ถูกถือไว้ตลอด lifetime ของเธรด"
     ],
-    answer: 2
+    answer: 2,
+    explain: "GIL ถูกปล่อยขณะ blocking I/O, เป็นระยะๆ ที่ safe point ใน bytecode dispatch loop (หลักๆ คือ loop back-edge และ call) เพื่อไม่ให้เธรดใดอดตาย และถูกปล่อยอย่างชัดเจนโดย C extension อย่าง hashlib หรือ NumPy รอบ operation ที่ไม่ใช่ Python ที่ใช้เวลานาน"
   },
   {
-    q: "จุดประสงค์ของ `threading.Lock` เมื่อ shared mutable state ถูกเข้าถึงจาก threads หลายตัวคืออะไร?",
+    q: "```python\nimport threading\n\ncounter = 0\n\ndef increment(n):\n    global counter\n    for _ in range(n):\n        counter += 1\n\nthreads = [threading.Thread(target=increment, args=(2_000_000,)) for _ in range(8)]\nfor t in threads: t.start()\nfor t in threads: t.join()\n\nprint(counter)\n```\nรันบน `python3.14` (มี GIL) แม้บีบ switch interval ของ GIL ให้ต่ำมาก วัดผลได้อะไรจริง?",
     options: [
-      "เร่งความเร็วการเข้าถึง shared state โดย caching",
-      "ป้องกันไม่ให้สอง threads แก้ไข shared state พร้อมกัน หลีกเลี่ยง race conditions",
-      "คัดลอก shared state เข้าสู่ private memory ของแต่ละ thread",
-      "serialize threads ทั้งหมดเป็น single thread เพื่อความปลอดภัย"
+      "ตัวเลขที่ต่ำกว่า 16000000 อย่างเห็นได้ชัด ตามที่คาดจาก race condition แบบตำรา",
+      "16000000 พอดี -- eval-breaker เช็คจุดสลับแค่ที่ loop/call boundary ไม่ใช่ระหว่างสี่ opcode ของ statement += เดียว",
+      "โปรแกรม crash ด้วย SegFault",
+      "GIL ใส่ lock รอบ statement += ให้อัตโนมัติ"
     ],
-    answer: 1
+    answer: 1,
+    explain: "นี่คือผลที่วัดจริง ไม่ใช่การรับประกัน: checkpoint ของ eval-breaker ใน CPython เกิดที่ safe point เฉพาะ (loop back-edge, call) และ counter += 1 เปล่าๆ ใน tight loop ไม่มี checkpoint แบบนั้นระหว่างลำดับ LOAD_GLOBAL/BINARY_OP/STORE_GLOBAL การเปลี่ยน pattern ให้มีจุดหยุดจริง (เช่น time.sleep) ระหว่างการอ่านกับการเขียน จะ reproduce lost update ได้เสมอ -- การไม่มี race ในกรณี tight-loop เป็นรายละเอียด implementation ไม่ใช่การรับประกันความปลอดภัย"
   },
   {
-    q: "วิธีเรียกฟังก์ชัน synchronous แบบ blocking จากภายใน `async def` coroutine โดยไม่บล็อก event loop คือ?",
+    q: "```python\nclass Account:\n    def __init__(self, balance):\n        self.balance = balance\n\ndef withdraw(acct, amount):\n    balance = acct.balance\n    time.sleep(0.01)\n    acct.balance = balance - amount\n\nacct = Account(balance=100)\nthreads = [threading.Thread(target=withdraw, args=(acct, 80)) for _ in range(2)]\nfor t in threads: t.start()\nfor t in threads: t.join()\n\nprint(acct.balance)\n```\nโค้ดนี้พิมพ์อะไร และเพราะอะไร -- ในเมื่อ tight loop ของ `+=` ด้านบนไม่มี update หายไปเลย?",
     options: [
-      "เรียกโดยตรง — asyncio จัดการ blocking calls โดยอัตโนมัติ",
-      "ห่อไว้ใน `threading.Thread` แล้ว await thread",
-      "ใช้ `loop.run_in_executor(pool, blocking_fn, *args)` เพื่อโอนไปยัง thread pool",
-      "ใช้ `asyncio.sleep(0)` ก่อนการเรียก"
+      "-60 -- การถอนทั้งสองครั้งใช้ผลได้ถูกต้องตามลำดับเสมอ",
+      "20 -- ทั้งสองเธรดอ่าน balance=100 ก่อนที่ตัวใดตัวหนึ่งจะเขียน เพราะ time.sleep ปล่อย GIL จริงๆ ระหว่างการอ่านกับการเขียน",
+      "100 -- ไม่มีการถอนไหนถูกใช้ผลเลย",
+      "raise RuntimeError เพราะสองเธรดแตะ object เดียวกัน"
     ],
-    answer: 2
+    answer: 1,
+    explain: "ต่างจาก tight loop ของ += ตรงที่ time.sleep เป็นจุดหยุดจริงที่ปล่อย GIL กลางลำดับ ทั้งสองเธรดอ่าน balance=100 เดียวกันก่อนที่ตัวใดตัวหนึ่งจะเขียนกลับ ดังนั้นมีแค่การถอนครั้งเดียวที่มีผลจริง: balance จบที่ 20 แทนที่จะเป็น -60 ที่ถูกต้อง (หรือการปฏิเสธที่ serialize ถูกต้อง) นี่คือเหตุผลพอดีที่ผลของ tight-loop ไม่ได้แปลว่า '+= ปลอดภัย' -- จุดปล่อยจริงใดๆ ระหว่างการอ่านกับการเขียนที่ขึ้นกับมันยังคง race ได้เสมอ"
+  },
+  {
+    q: "ความต่างเชิงพฤติกรรมหลักระหว่าง `ThreadPoolExecutor.map` กับ `submit` + `as_completed` คืออะไร?",
+    options: [
+      "map รันบนเธรด submit รันบน process",
+      "map คืนผลลัพธ์ตามลำดับ input เสมอ; as_completed คืน future ที่เสร็จก่อนก่อน",
+      "submit ไม่รองรับ exception แต่ map รองรับ",
+      "ไม่มีความต่าง -- เป็นแค่ alias ของกันและกัน"
+    ],
+    answer: 1,
+    explain: "map รักษาลำดับ input ของ iterable เสมอไม่ว่า call ไหนจะเสร็จก่อนจริง ทำให้ใช้ง่ายแต่ตอบสนองผลลัพธ์ที่พร้อมเร็วที่สุดไม่ได้ as_completed คืน future ตามลำดับ completion ซึ่งมีประโยชน์เมื่อต้องการประมวลผลผลลัพธ์ทันทีที่พร้อม"
+  },
+  {
+    q: "เกิดอะไรขึ้นกับ daemon thread เมื่อ main thread เสร็จและ process พร้อม exit?",
+    options: [
+      "Python รอ daemon thread จนเสร็จเหมือนเธรดธรรมดา",
+      "daemon thread ถูกฆ่าทันที โดยไม่รันโค้ดที่เหลือหรือ finally block ใดๆ",
+      "daemon thread ถูกแปลงเป็น non-daemon thread อัตโนมัติ",
+      "process ปฏิเสธที่จะ exit จนกว่า daemon thread จะเรียก sys.exit()"
+    ],
+    answer: 1,
+    explain: "Daemon thread ไม่ทำให้ process มีชีวิตอยู่ต่อ เมื่อทุกเธรดที่ไม่ใช่ daemon เสร็จแล้ว interpreter จะ exit และ daemon thread ที่กำลังรันอยู่ถูกยุติทันที -- รวมถึงข้าม finally block ไปเลย -- ดังนั้น daemon=True เหมาะกับงาน background ที่ยอมรับได้ถ้าจะหายไปเท่านั้น"
+  },
+  {
+    q: "ใน free-threaded build ของ Python 3.14 (`python3.14t`) `sys._is_gil_enabled()` รายงานอะไร และ benchmark CPU-bound ที่วัดจริงแสดงอะไร?",
+    options: [
+      "True และไม่มี speedup -- free-threading ช่วยแค่โค้ด I/O-bound",
+      "False และวัดได้ speedup ประมาณ 1.96x บนสองเธรดสำหรับ pure-Python loop ที่เป็น CPU-bound เทียบกับประมาณ 1.04x บน default GIL build",
+      "True และ speedup 2x จาก JIT compiler ไม่เกี่ยวกับ GIL",
+      "False แต่ benchmark ไม่แสดงความต่างที่วัดได้จาก default build"
+    ],
+    answer: 1,
+    explain: "sys._is_gil_enabled() รายงาน False ถูกต้องบน free-threaded build benchmark count_down ที่วัดจริงแสดงประมาณ 1.04x (ไม่มี speedup จริง) บน default GIL build และประมาณ 1.96x (ใกล้อุดมคติสำหรับสองเธรด) บน python3.14t สำหรับ workload CPU-bound เดียวกัน -- ความต่างที่วัดได้จริงบนเครื่อง ไม่ใช่แค่ทางทฤษฎี"
   }
 ];
 
