@@ -1,6 +1,6 @@
 ---
 title: Dicts and Sets
-description: 'dict insertion order, get/setdefault/items, dict comprehensions, and set algebra in Python 3.14.'
+description: 'dict merging with |, live views, hashability, Counter, mutate-while-iterate RuntimeError, and set algebra in Python 3.14.'
 sidebar:
   order: 3
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Dicts — fast key-value lookup
 
@@ -23,10 +25,10 @@ del scores['bob']            # remove a key
 print(scores)                # {'alice': 95, 'carol': 92}
 ```
 
-### Safe access: `get` and `setdefault`
+### Safe access: `get`, `setdefault`, and `defaultdict`
 
 Accessing a missing key with `[]` raises `KeyError`.
-Use `.get()` for a safe read with an optional default, or `.setdefault()` to insert a default value when the key is absent.
+Use `.get()` for a safe read with an optional default, or `.setdefault()` to insert a default value when the key is absent — it does **not** overwrite an existing value.
 
 ```python
 scores = {'alice': 95, 'bob': 87}
@@ -34,6 +36,16 @@ unknown = scores.get('dave', 0)      # returns 0 — no KeyError
 scores.setdefault('eve', 88)         # inserts eve=88 only if absent
 print(scores)
 # {'alice': 95, 'bob': 87, 'eve': 88}
+```
+
+When *every* missing key should get a default — not just the first access — `collections.defaultdict` is less code than a repeated `setdefault`:
+
+```python
+from collections import defaultdict
+counts = defaultdict(int)
+for word in ['a', 'b', 'a', 'c', 'b', 'a']:
+    counts[word] += 1
+print(dict(counts))  # {'a': 3, 'b': 2, 'c': 1}
 ```
 
 ### Iterating with `.items()`
@@ -47,6 +59,36 @@ for name, score in scores.items():
 
 You can also iterate over `.keys()` (default) or `.values()` independently.
 
+### Dict views are live, not a snapshot
+
+`.keys()`, `.values()`, and `.items()` return **view objects** — they reflect the dict as it is *right now*, every time you look at them, rather than freezing a copy at call time:
+
+```python
+d = {'a': 1, 'b': 2}
+keys_view = d.keys()
+d['c'] = 3
+print(list(keys_view))  # ['a', 'b', 'c'] — the view saw the later insert
+```
+
+If you need a frozen snapshot to iterate over safely while also modifying the dict, wrap the view in `list(...)` — that copies the keys *now*, once.
+
+### Merging dicts: `|` and `|=`
+
+Since Python 3.9, `|` merges two dicts into a **new** dict (later operand's keys win on conflict), and `|=` merges the right-hand dict into the left-hand one in place:
+
+```python
+a = {'x': 1, 'y': 2}
+b = {'y': 99, 'z': 3}
+merged = a | b
+print(merged)  # {'x': 1, 'y': 99, 'z': 3} — new dict, b's y wins
+print(a)       # {'x': 1, 'y': 2} — a itself is untouched by |
+
+a |= b
+print(a)       # {'x': 1, 'y': 99, 'z': 3} — now a is updated in place
+```
+
+`|` is the modern replacement for `{**a, **b}`; `|=` is the modern replacement for `a.update(b)`.
+
 ### Dict comprehensions
 
 Like list comprehensions, dict comprehensions build a new dict in one expression.
@@ -55,6 +97,84 @@ Like list comprehensions, dict comprehensions build a new dict in one expression
 squared = {n: n**2 for n in range(1, 6)}
 # {1: 1, 2: 4, 3: 9, 4: 16, 5: 25}
 ```
+
+### Hashability: what is allowed to be a dict key
+
+A key must be hashable, which means it needs a `__hash__` that stays consistent with `__eq__` (two keys that compare equal must hash equal). `list` has no `__hash__` — it is mutable, so its hash could never stay valid — and a `tuple` containing a `list` inherits the same problem:
+
+```python
+bad_key = {[1, 2]: 'value'}
+# TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+```
+
+```python
+bad_key2 = {(1, [2, 3]): 'value'}
+# TypeError: cannot use 'tuple' as a dict key (unhashable type: 'list')
+```
+
+`str`, `int`, `float`, `bool`, `tuple`-of-hashables, and `frozenset` are all safe keys.
+
+### `Counter`: a dict specialised for counting
+
+`collections.Counter` is a dict subclass built for counting hashable items, with arithmetic and a `.most_common()` ranking built in:
+
+```python
+from collections import Counter
+letters = Counter('abracadabra')
+print(letters)               # Counter({'a': 5, 'b': 2, 'r': 2, 'c': 1, 'd': 1})
+print(letters.most_common(2))  # [('a', 5), ('b', 2)]
+```
+
+### Insertion order vs equality
+
+Insertion order is guaranteed for iteration (`.keys()`, `.values()`, `.items()`, `for key in d`) — but two dicts still compare equal if they have the same keys and values, **regardless of order**:
+
+```python
+d1 = {'a': 1, 'b': 2}
+d2 = {'b': 2, 'a': 1}
+print(d1 == d2)  # True — equality ignores insertion order
+```
+
+Do not rely on order to mean "these dicts are different" — check `==` for equality and iterate for order.
+
+### Mutating a dict while iterating over it
+
+Changing a dict's *size* (adding or removing a key) while a loop is iterating over it raises `RuntimeError` — CPython detects the size change and refuses to guess what should happen next:
+
+```python
+d = {'a': 1, 'b': 2, 'c': 3}
+for key in d:
+    if key == 'b':
+        del d[key]
+# RuntimeError: dictionary changed size during iteration
+```
+
+Iterate over a snapshot of the keys instead — `list(d)` copies the keys once, up front, so deleting from `d` during the loop no longer changes what the loop is iterating over:
+
+```python
+d = {'a': 1, 'b': 2, 'c': 3}
+for key in list(d):
+    if key == 'b':
+        del d[key]
+print(d)  # {'a': 1, 'c': 3}
+```
+
+Reassigning an *existing* key's value (not adding or removing one) does not change the dict's size, so it does not trigger this error.
+
+### `KeyError` handling: pick one style and stay consistent
+
+Three equally valid ways to handle a possibly-missing key — mixing all three in one codebase is what makes AI-generated code hard to trust:
+
+```python
+inventory = {'apples': 10}
+for item in ['apples', 'bananas']:
+    if item in inventory:              # LBYL: check first
+        print(inventory[item])
+    else:
+        print('out of stock')
+```
+
+`.get(item, default)` (EAFP-adjacent, one expression) and `try: ... except KeyError:` (true EAFP) are the other two — reach for `.get()` when a default value is enough, and `try/except` when a missing key is exceptional and you want to react differently than "use a placeholder."
 
 ## Sets — unique elements and set algebra
 
@@ -71,7 +191,13 @@ print(a - b)   # difference:       {1, 2}
 print(a ^ b)   # symmetric diff:   {1, 2, 5, 6}
 ```
 
-Use `frozenset` for an immutable set (hashable, usable as a dict key or set element).
+Use `frozenset` for an immutable set — because it never changes, it is itself hashable, so it can be a dict key or live inside another set:
+
+```python
+fs = frozenset([1, 2, 3])
+group_lookup = {fs: 'group-a'}   # a plain set could never do this
+fs.add(4)                        # AttributeError: 'frozenset' object has no attribute 'add'
+```
 
 ## Full runnable demo
 
@@ -105,9 +231,158 @@ print('symmetric diff:', sorted(a ^ b))
 
 <Playground code={dictsSetsCode} />
 
+The playground below runs the depth topics above — merging with `|`/`|=`, live views, `defaultdict`, the hashability contract, `Counter`, insertion order vs equality, mutate-while-iterate's `RuntimeError`, and `frozenset`:
+
+export const dictsSetsDepthCode = `
+# --- dict | and |= (3.9+) ---
+a = {'x': 1, 'y': 2}
+b = {'y': 99, 'z': 3}
+merged = a | b
+print('merged (new dict):', merged)
+print('a unchanged:', a)
+
+a |= b
+print('a after |=:', a)
+
+# --- dict views are live, not a snapshot ---
+d = {'a': 1, 'b': 2}
+keys_view = d.keys()
+print('view before:', list(keys_view))
+d['c'] = 3
+print('view after adding c:', list(keys_view))
+
+# --- d[k] vs .get vs .setdefault vs defaultdict ---
+scores = {'alice': 95}
+try:
+    scores['bob']
+except KeyError as e:
+    print('KeyError:', e)
+
+print('get missing:', scores.get('bob', 0))
+scores.setdefault('bob', 80)
+print('after setdefault:', scores)
+scores.setdefault('alice', 999)
+print('setdefault does not overwrite existing:', scores)
+
+from collections import defaultdict
+counts = defaultdict(int)
+for word in ['a', 'b', 'a', 'c', 'b', 'a']:
+    counts[word] += 1
+print('defaultdict counts:', dict(counts))
+
+# --- hashability contract: __hash__ + __eq__ ---
+try:
+    bad_key = {[1, 2]: 'value'}
+except TypeError as e:
+    print('TypeError:', e)
+
+try:
+    bad_key2 = {(1, [2, 3]): 'value'}
+except TypeError as e:
+    print('TypeError:', e)
+
+# --- Counter ---
+from collections import Counter
+letters = Counter('abracadabra')
+print('Counter:', letters)
+print('most common 2:', letters.most_common(2))
+
+# --- insertion order since 3.7; dict equality ignores order ---
+d1 = {'a': 1, 'b': 2}
+d2 = {'b': 2, 'a': 1}
+print('d1 == d2 (order ignored):', d1 == d2)
+print('d1 keys order:', list(d1.keys()))
+print('d2 keys order:', list(d2.keys()))
+
+# --- mutate a dict while iterating over it -> RuntimeError ---
+d3 = {'a': 1, 'b': 2, 'c': 3}
+try:
+    for key in d3:
+        if key == 'b':
+            del d3['b']
+except RuntimeError as e:
+    print('RuntimeError:', e)
+
+# Safe pattern: iterate over a snapshot of the keys
+d4 = {'a': 1, 'b': 2, 'c': 3}
+for key in list(d4):
+    if key == 'b':
+        del d4['b']
+print('safe delete result:', d4)
+
+# --- frozenset: hashable, usable as dict key or set element ---
+fs = frozenset([1, 2, 3])
+group_lookup = {fs: 'group-a'}
+print('frozenset as key:', group_lookup)
+try:
+    fs.add(4)
+except AttributeError as e:
+    print('AttributeError:', e)
+
+# --- KeyError handling: try/except vs .get vs 'in' check ---
+inventory = {'apples': 10}
+for item in ['apples', 'bananas']:
+    if item in inventory:
+        print(f'{item}: {inventory[item]}')
+    else:
+        print(f'{item}: out of stock')
+`.trim();
+
+<Playground code={dictsSetsDepthCode} />
+
+## Mental Model
+
+export const dictsSetsMentalModel = `flowchart LR
+  subgraph Dict["dict buckets (hash table)"]
+    H0["hash('alice') % n -> bucket 0"] --> KV0["'alice': 95"]
+    H1["hash('bob') % n -> bucket 1"] --> KV1["'bob': 87"]
+    H2["hash('carol') % n -> bucket 2"] --> KV2["'carol': 92"]
+  end
+  Lookup["scores['bob']"] -->|hash then compare with ==| H1`;
+
+<Mermaid code={dictsSetsMentalModel} title="A dict hashes the key to find its bucket, then confirms with == — this is why a key must be both hashable and support meaningful equality" />
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| `dict` lookup by key | `O(1)` average read/write regardless of size | every key must be hashable — no `list` keys |
+| `dict` view (`.keys()`/`.items()`) | no copy — always reflects the live dict | mutating the dict's size while iterating a view raises `RuntimeError` |
+| `defaultdict` | no `if key not in d` boilerplate | a plain read (`d[missing_key]`) silently *creates* the key with the default |
+| `set` / `frozenset` membership | `O(1)` average `in` check | unordered — no indexing, no guaranteed iteration order |
+| `frozenset` over `set` | hashable — usable as a dict key or set element | immutable — no `.add()`/`.remove()` after creation |
+
+## Common Misconceptions
+
+- **"`a.setdefault(k, v)` always sets the value to `v`"** — fact: it only sets `v` when `k` is absent; if `k` already exists, the existing value is kept and returned.
+- **"`d.keys()` is a list, a fixed snapshot at the time you called it"** — fact: it's a live view — later inserts to `d` are visible through the same view object.
+- **"Any object can be a dict key"** — fact: only hashable objects can — mutable containers (`list`, and a `tuple` holding one) raise `TypeError`.
+- **"Dicts with the same keys inserted in a different order are different dicts"** — fact: `==` ignores insertion order; only iteration order differs.
+- **"You can delete a key from a dict while looping over it, as long as you're careful"** — fact: changing a dict's size during iteration always raises `RuntimeError`, regardless of care; iterate over `list(d)` instead.
+
+## Reading AI-generated code
+
+- Does a loop do `for key in some_dict:` and then `del some_dict[key]` (or add a new key) inside the loop? That is a guaranteed `RuntimeError: dictionary changed size during iteration` — look for `list(some_dict)` in the `for` line instead.
+- Does the code use `dict[key]` where the key might be absent, with no surrounding `try/except`, `.get()`, or `in` check? That is an unguarded `KeyError` waiting for the first cache miss or malformed input.
+- Is a `list`, or a `tuple` containing a `list`, ever used (or about to be used) as a dict key or set element? That raises `TypeError: unhashable type` immediately.
+- Does the code assume `dict` iteration order reflects *when values were last updated* rather than *when keys were first inserted*? Re-assigning an existing key's value does not move it in iteration order.
+- Does `defaultdict(int)` (or similar) get read with `d[key]` in a context where "does this key exist" actually matters? A plain read silently creates the key with the default value — that read is not free of side effects.
+
+<SpotTheBug code={`def purge_expired(cache, now):
+    for key, expires_at in cache.items():
+        if expires_at < now:
+            del cache[key]
+    return cache
+
+
+data = {'a': 1, 'b': 5, 'c': 2}
+print(purge_expired(data, now=3))`}>
+Deleting a key from `cache` while a `for` loop is iterating over `cache.items()` changes the dict's size mid-iteration. CPython detects this and raises `RuntimeError: dictionary changed size during iteration` — verified on Python 3.14, the traceback points at the `for` line itself, not the `del`. The fix is to iterate over a snapshot of the items instead: `for key, expires_at in list(cache.items()):`, or build a list of keys to delete first and delete them in a second pass after the loop ends.
+</SpotTheBug>
+
 <Callout title="dict preserves insertion order (3.7+); sets are unordered">
-Since Python 3.7, `dict` guarantees that `list(d.keys())` returns keys in the order they were first inserted.
-Sets have no ordering guarantee — `sorted()` is the safe way to produce a reproducible sequence from a set.
+Since Python 3.7, `dict` guarantees that `list(d.keys())` returns keys in the order they were first inserted — but `==` between two dicts ignores that order entirely.
+Sets have no ordering guarantee at all — `sorted()` is the safe way to produce a reproducible sequence from a set.
 Note also that an empty `{}` creates a **dict**, not a set.
 To create an empty set, write `set()`.
 </Callout>
@@ -121,7 +396,8 @@ export const quizDictsSets = [
             "Returns 0",
             "Returns an empty dict"
         ],
-        answer: 2
+        answer: 2,
+        explain: ".get(key, default) never raises KeyError — it returns the default (0 here) when the key is absent, and never modifies the dict."
     },
     {
         q: "What does `scores.setdefault('eve', 88)` do when 'eve' is already in scores?",
@@ -131,17 +407,52 @@ export const quizDictsSets = [
             "Does nothing — the existing value is kept",
             "Deletes the key"
         ],
-        answer: 2
+        answer: 2,
+        explain: "setdefault only inserts the given default when the key is absent. If the key already exists, its current value is left untouched and returned."
     },
     {
-        q: "Which set operation returns elements that are in BOTH sets?",
-        options: ["a | b", "a & b", "a - b", "a ^ b"],
-        answer: 1
+        q: "What does this print?\n\nd = {'a': 1}\nview = d.keys()\nd['b'] = 2\nprint(list(view))",
+        options: [
+            "['a']",
+            "['a', 'b']",
+            "Raises RuntimeError",
+            "[] — the view was invalidated by the mutation"
+        ],
+        answer: 1,
+        explain: "dict.keys() returns a live view, not a frozen snapshot. It reflects the dict's current state every time you look at it, so the later insert of 'b' is visible through the same view object."
     },
     {
-        q: "How do you create an empty set in Python?",
-        options: ["{}", "set()", "[]", "frozenset({})"],
-        answer: 1
+        q: "What does this raise?\n\nd = {'a': 1, 'b': 2}\nfor key in d:\n    if key == 'a':\n        del d[key]",
+        options: [
+            "Nothing — it deletes 'a' and finishes the loop normally",
+            "KeyError: 'a'",
+            "RuntimeError: dictionary changed size during iteration",
+            "TypeError: 'dict' object does not support item deletion"
+        ],
+        answer: 2,
+        explain: "Deleting a key changes the dict's size while a loop is actively iterating over it. CPython detects the size change on the very next iteration step and raises RuntimeError rather than guessing what should happen. Iterating over list(d) instead avoids this."
+    },
+    {
+        q: "Which of these can be used as a dict key without raising TypeError?",
+        options: [
+            "[1, 2, 3]",
+            "(1, [2, 3])",
+            "(1, 2, 3)",
+            "{1, 2, 3}"
+        ],
+        answer: 2,
+        explain: "A key must be hashable. A plain tuple of hashable elements, like (1, 2, 3), is hashable. A list is never hashable (it's mutable), a tuple containing a list inherits that list's unhashability, and a set (unlike frozenset) is also mutable and unhashable."
+    },
+    {
+        q: "What does `{'a': 1, 'b': 2} == {'b': 2, 'a': 1}` evaluate to?",
+        options: [
+            "False — the keys were inserted in a different order",
+            "True — dict equality compares keys and values, not insertion order",
+            "Raises TypeError — dicts cannot be compared with ==",
+            "True only if both dicts also iterate in the same order"
+        ],
+        answer: 1,
+        explain: "dict preserves insertion order for iteration purposes, but == checks that both dicts have the same set of key-value pairs, regardless of the order they were inserted in. Both dicts here have identical contents, so they compare equal."
     }
 ];
 

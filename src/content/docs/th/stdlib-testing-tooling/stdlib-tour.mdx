@@ -1,6 +1,6 @@
 ---
-title: 'Stdlib Tour'
-description: 'ทัวร์ module สำคัญใน standard library: collections, itertools, datetime, json และ pathlib'
+title: 'ทัวร์ Stdlib'
+description: 'ทัวร์แบบลงมือทำของโมดูล standard library ที่สำคัญ: collections, itertools, datetime, json และ pathlib'
 sidebar:
   order: 2
 ---
@@ -9,19 +9,21 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
-## ทัวร์ module สำคัญใน stdlib
+## ทัวร์แนะนำโมดูล stdlib ที่สำคัญ
 
-Python standard library มีขนาดใหญ่ แต่มี module จำนวนหนึ่งที่ปรากฏในเกือบทุก codebase จริงจัง
-บทเรียนนี้จะพาคุณรู้จักห้า module อย่างลงมือปฏิบัติ: `collections`, `itertools`, `datetime`, `json` และ `pathlib`
+Python standard library มีขนาดใหญ่ แต่มีโมดูลไม่กี่ตัวที่ปรากฏในแทบทุกโค้ดเบสจริงจัง
+บทนี้ให้บทนำที่รันได้จริงของห้าตัวคือ `collections`, `itertools`, `datetime`, `json` และ `pathlib` — บวก `functools`, `decimal`, `enum`, `secrets` และ `subprocess`
 
 ---
 
-## `collections` — container type พิเศษ
+## `collections` — container type เฉพาะทาง
 
-module `collections` ขยาย container built-in ของ Python ด้วยสี่ตัวหลักที่คุณจะใช้ทุกวัน
+โมดูล `collections` ต่อยอด container ในตัวของ Python ด้วยเครื่องมือหลักสี่ตัวที่คุณจะใช้ทุกวัน
 
-**`Counter`** นับ hashable object และรองรับ arithmetic บน count
+**`Counter`** นับ object ที่ hashable ได้และรองรับการคำนวณทางคณิตศาสตร์บนจำนวนนับ
 
 ```python
 from collections import Counter
@@ -30,7 +32,7 @@ print(c)           # Counter({'b': 3, 'a': 2, 'c': 2})
 print(c.most_common(2))  # [('b', 3), ('a', 2)]
 ```
 
-**`defaultdict`** ไม่เคย raise `KeyError` — key ที่หายไปจะถูก initialise อัตโนมัติด้วย factory ที่คุณกำหนด
+**`defaultdict`** ไม่ raise `KeyError` เลย — key ที่ไม่มีจะถูกสร้างอัตโนมัติด้วย factory ที่คุณให้มา
 
 ```python
 from collections import defaultdict
@@ -38,7 +40,7 @@ dd = defaultdict(list)
 dd["fruits"].append("apple")   # no KeyError on a fresh key
 ```
 
-**`namedtuple`** สร้าง record type แบบ lightweight, immutable ที่มี named field — อ่านง่ายกว่า tuple ธรรมดาและไม่มี overhead ต่างจาก tuple ปกติ
+**`namedtuple`** สร้าง record type ที่เบาและ immutable พร้อมชื่อ field — อ่านง่ายกว่า tuple ธรรมดาและไม่มี overhead เพิ่มเมื่อเทียบกับ tuple ปกติ
 
 ```python
 from collections import namedtuple
@@ -49,18 +51,22 @@ print(p.x, p.y)   # 3 4
 
 ---
 
-## `itertools` — lazy combinator
+## `itertools` — ตัวประกอบแบบ lazy
 
-`itertools` มี iterator building block ที่ compose ได้ดีและไม่ materialize sequence ทั้งหมดในหน่วยความจำจนกว่าจะถูกขอ
+`itertools` มี iterator-building block ที่ประกอบกันได้ดีและไม่สร้าง sequence เต็มขึ้นในหน่วยความจำจนกว่าคุณจะขอ
 
-**`chain`** รวม iterable หลายตัวเป็น stream เดียว
-**`islice`** ตัด iterator ใดก็ได้อย่าง lazy
-**`groupby`** จัดกลุ่ม element ที่มี key เท่ากันติดกัน — input *ต้องถูก sort* ตาม key เดียวกันก่อน
+**`chain`** รวมหลาย iterable เข้าเป็น stream เดียว
+**`islice`** slice iterator ใดก็ได้แบบ lazy
+**`groupby`** จัดกลุ่ม element ที่มี key เท่ากันติดกัน — ข้อมูล*ต้องถูก sort*ด้วย key เดียวกันมาก่อน
+**`accumulate`** ให้ผลรวมสะสม (หรือ binary operation ใดก็ได้ที่สะสมไปเรื่อย ๆ) **`pairwise`** ให้คู่ที่ติดกันซ้อนทับกัน **`compress`** กรอง iterable หนึ่งด้วย iterable บูลีนที่ขนานกัน
 
 ```python
 import itertools
 list(itertools.chain([1, 2], [3, 4]))          # [1, 2, 3, 4]
 list(itertools.islice(range(100), 5))          # [0, 1, 2, 3, 4]
+list(itertools.accumulate([1, 2, 3, 4]))       # [1, 3, 6, 10]
+list(itertools.pairwise([1, 2, 3, 4]))         # [(1, 2), (2, 3), (3, 4)]
+list(itertools.compress("ABCDEF", [1, 0, 1, 0, 1, 1]))  # ['A', 'C', 'E', 'F']
 ```
 
 ---
@@ -95,30 +101,110 @@ print("chained:", merged)
 data = [("a", 1), ("a", 2), ("b", 3), ("b", 4)]
 for key, group in itertools.groupby(data, key=lambda t: t[0]):
     print(key, list(group))
+
+# --- accumulate / pairwise / compress ---
+print("running totals:", list(itertools.accumulate([1, 2, 3, 4])))
+print("pairwise:", list(itertools.pairwise([1, 2, 3, 4])))
+print("compressed:", list(itertools.compress("ABCDEF", [1, 0, 1, 0, 1, 1])))
 `.trim();
 
 <Playground code={collIterCode} />
 
 ---
 
-## `datetime` — date, time และ arithmetic
+## `datetime` — aware กับ naive และทำไมความต่างนี้ถึงสำคัญ
 
-module `datetime` จัดการ date, time และการคำนวณระหว่างกัน
-object `datetime.datetime` เป็น immutable; operation เช่นการบวก `timedelta` จะคืน object ใหม่
+`datetime` มีสองแบบ: **naive** (ไม่มี timezone ติดอยู่ — เป็นแค่ตัวเลข กำกวมว่าหมายถึงช่วงเวลาไหนจริง ๆ) หรือ **aware** (มี `tzinfo` — จุดเวลาที่ไม่กำกวม) การผสมทั้งสองแบบจะ raise `TypeError` โดยตั้งใจ:
 
-Demo ด้านล่างใช้ **วันที่คงที่** เพื่อให้ output คาดเดาได้เสมอ — เป็นนิสัยที่ดีเมื่อเขียน example หรือ test
+```python
+import datetime as dt
+
+naive = dt.datetime(2026, 9, 22, 10, 0, 0)
+aware = dt.datetime(2026, 9, 22, 10, 0, 0, tzinfo=dt.timezone.utc)
+print(naive.tzinfo, aware.tzinfo)   # None UTC
+
+naive - aware
+# TypeError: can't subtract offset-naive and offset-aware datetimes
+```
+
+`datetime.now()` ที่ไม่มี argument คืนเวลา**ท้องถิ่นแบบ naive** — เป็นต้นตอของ bug บ่อยครั้งเมื่อค่านั้นถูกเก็บ เปรียบเทียบ หรือส่งข้าม timezone ให้ใส่ timezone เสมอ:
+
+```python
+now_utc = dt.datetime.now(dt.timezone.utc)   # aware, unambiguous
+```
+
+`datetime.utcnow()` ดูเหมือนจะแก้ปัญหาแต่ไม่ใช่ — มันคืน datetime แบบ **naive** ที่บังเอิญถือตัวเลขของ UTC และถูก deprecate แล้ว:
+
+```python
+import warnings
+warnings.simplefilter("always")
+dt.datetime.utcnow()
+# DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled
+# for removal in a future version. Use timezone-aware objects to represent
+# datetimes in UTC: datetime.datetime.now(datetime.UTC).
+```
+
+สำหรับ timezone จริง (ไม่ใช่แค่ offset UTC คงที่ — กฎ DST จริง ภูมิภาคจริง) ใช้ `zoneinfo` (อยู่ใน stdlib ตั้งแต่ 3.9):
+
+```python
+from zoneinfo import ZoneInfo
+
+bkk = dt.datetime(2026, 9, 22, 10, 0, tzinfo=ZoneInfo("Asia/Bangkok"))
+print(bkk, "-> utc:", bkk.astimezone(dt.timezone.utc))
+# 2026-09-22 10:00:00+07:00 -> utc: 2026-09-22 03:00:00+00:00
+```
+
+`datetime.fromisoformat` parse ข้อความ ISO 8601 ที่ JSON API, log และฐานข้อมูลผลิตออกมาจริง ๆ รวม offset ด้วย:
+
+```python
+dt.datetime.fromisoformat("2026-09-22T10:00:00+07:00")
+# datetime.datetime(2026, 9, 22, 10, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=25200)))
+```
+
+ตัวอย่างด้านล่างใช้**วันที่คงที่**เพื่อให้ output แน่นอนเสมอ — เป็นนิสัยที่ดีเวลาเขียนตัวอย่างหรือเทส
 
 ---
 
-## `json` — serialisation และ deserialisation
+## `json` — การ serialize, `default=` และความแม่นยำ
 
 `json.dumps` แปลง Python object เป็น JSON string; `json.loads` parse กลับ
-argument `separators` ช่วยตัด whitespace สำหรับ output แบบ compact
+argument `separators` ช่วยตัด whitespace ออกเพื่อ output ที่กระชับ
 
 ```python
 import json
 s = json.dumps({"key": "value"}, separators=(",", ":"))
 # '{"key":"value"}'
+```
+
+`json` รู้จักแค่ชุด Python type ที่กำหนดตายตัวเท่านั้น — `Decimal` (type ที่ถูกต้องสำหรับเงิน ดูด้านล่าง) จะ raise `TypeError` เว้นแต่คุณจะให้ `default=` ซึ่งเป็นทางสำรองที่ถูกเรียกกับอะไรก็ตามที่มันไม่รู้จัก:
+
+```python
+from dataclasses import dataclass, asdict
+from decimal import Decimal
+
+@dataclass
+class Order:
+    id: int
+    total: Decimal
+
+o = Order(1, Decimal("19.99"))
+json.dumps(asdict(o))
+# TypeError: Object of type Decimal is not JSON serializable
+
+def default(obj):
+    if isinstance(obj, Decimal):
+        return str(obj)
+    raise TypeError(f"not serializable: {type(obj)}")
+
+json.dumps(asdict(o), default=default)
+# '{"id": 1, "total": "19.99"}'
+```
+
+`ensure_ascii=True` (ค่า default) escape อักขระที่ไม่ใช่ ASCII ทุกตัวเป็นลำดับ `\uXXXX` — ปลอดภัยทุกที่ แต่อ่านไม่ออกสำหรับข้อความที่ไม่ใช่ภาษาอังกฤษ ตั้งเป็น `False` เมื่อคุณรู้ว่าฝั่งที่รับรองรับ UTF-8:
+
+```python
+json.dumps({"city": "กรุงเทพ"})                    # '{"city": "\\u0e01\\u0e23..."}'
+json.dumps({"city": "กรุงเทพ"}, ensure_ascii=False)  # '{"city": "กรุงเทพ"}'
 ```
 
 ---
@@ -135,21 +221,84 @@ print("pi day:", dt.strftime("%Y-%m-%d %H:%M:%S"))
 delta = datetime.timedelta(days=10)
 print("plus 10 days:", (dt + delta).date())
 
+# aware vs naive
+aware = dt.replace(tzinfo=datetime.timezone.utc)
+print("naive tzinfo:", dt.tzinfo, "| aware tzinfo:", aware.tzinfo)
+try:
+    dt - aware
+except TypeError as e:
+    print("TypeError:", e)
+
 # json round-trip
 obj = {"name": "Python", "versions": [3, 10, 11]}
 s = json.dumps(obj, separators=(",", ":"))
 print("serialized:", s)
 back = json.loads(s)
 print("name:", back["name"], "| latest:", back["versions"][-1])
+
+# ensure_ascii
+print(json.dumps({"note": "café"}))
+print(json.dumps({"note": "café"}, ensure_ascii=False))
 `.trim();
 
 <Playground code={dtJsonCode} />
 
 ---
 
-## `pathlib` — path ระบบไฟล์แบบ object-oriented
+## `functools` — `lru_cache`, `partial`, `reduce`, `singledispatch`
 
-`pathlib.Path` แทน path ระบบไฟล์เป็น object ที่มี method และ property แทนที่การใช้ string ของ `os.path` แบบเก่า
+```python
+from functools import lru_cache, partial, reduce, singledispatch
+
+@lru_cache(maxsize=128)
+def fib(n: int) -> int:
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+fib(30)                # 832040 -- cached after the first call
+fib.cache_info()        # CacheInfo(hits=28, misses=31, maxsize=128, currsize=31)
+```
+
+`lru_cache` ต้องการให้ทุก argument **hashable** — decorator cache ที่ AI สร้างบนฟังก์ชันที่รับ `list` จะล้มเหลวตอนเรียก ไม่ใช่ตอน decorate:
+
+```python
+@lru_cache
+def total(items: list) -> int:
+    return sum(items)
+
+total([1, 2, 3])
+# TypeError: unhashable type: 'list'
+```
+
+`partial` ตรึง argument บางตัวของ callable ไว้ ได้ callable ใหม่ที่มีพารามิเตอร์น้อยลง — มีประโยชน์เวลาปรับฟังก์ชันให้เข้ากับ API ที่เรียกด้วยรูปแบบตายตัว `reduce` พับ iterable ลงเหลือค่าเดียวด้วยฟังก์ชัน binary `singledispatch` เลือก implementation ตาม type ของ argument ตัวแรก — ทางเลือกที่เบากว่าการเช็ค `isinstance` เป็นชุด:
+
+```python
+add3 = partial(lambda a, b, c: a + b + c, 1, 2)
+add3(3)   # 6
+
+reduce(lambda acc, x: acc + x, [1, 2, 3, 4], 0)   # 10
+
+@singledispatch
+def describe(x):
+    return f"generic: {x!r}"
+
+@describe.register
+def _(x: int):
+    return f"int: {x}"
+
+@describe.register
+def _(x: str):
+    return f"str: {x!r}"
+
+describe(5)      # 'int: 5'
+describe("hi")   # "str: 'hi'"
+describe(3.14)   # 'generic: 3.14'
+```
+
+---
+
+## `pathlib` — object-oriented filesystem path
+
+`pathlib.Path` แทน filesystem path ด้วย object ที่มีเมธอดและ property แทนวิธีสตริงแบบเก่าของ `os.path`
 
 ```python
 from pathlib import Path
@@ -165,30 +314,139 @@ config  = project / "config.toml"
 print(config)
 ```
 
-> `pathlib` จัดการ path ระบบไฟล์ — รัน code นี้ใน local; sandbox ของ browser ไม่มีระบบไฟล์จริง
+`open()` ที่ไม่มี `encoding=` จะรับ encoding ข้อความ default ของแพลตฟอร์ม — `UTF-8` บน Linux/macOS ส่วนใหญ่ทุกวันนี้ แต่ในอดีตเป็น `cp1252` บน Windows ใส่ `encoding="utf-8"` ตรง ๆ เสมอ เพื่อให้โค้ดเดียวกันทำงานเหมือนกันทุกที่ รวมถึงตอนเนื้อหามีข้อความที่ไม่ใช่ ASCII:
+
+```python
+p = Path("notes.txt")
+p.write_text("สวัสดี\n", encoding="utf-8")
+with open(p, encoding="utf-8") as f:
+    print(repr(f.read()))   # 'สวัสดี\n'
+```
+
+> `pathlib` จัดการ filesystem path จริง — รันในเครื่อง; browser sandbox ไม่มี filesystem จริง
 
 ---
 
-## อะไรเข้ามา และอะไรออกไป
+## `subprocess` — รันโปรแกรมอื่นอย่างปลอดภัย
 
-standard library ขยับทั้งสองทาง Python 3.13 ถอด module ที่ deprecated มานาน 19 ตัวออก (PEP 594) —
-`cgi`, `telnetlib`, `crypt`, `imghdr`, `nntplib`, `pipes`, `uu` และพวกพ้อง พร้อมกับ `lib2to3` code ที่ import
-ตัวใดตัวหนึ่งต้องหาตัวแทนจาก third-party หรือเขียนใหม่
+`subprocess.run` ที่มี `check=True` จะ raise `CalledProcessError` เมื่อ exit code ไม่เป็นศูนย์แทนที่จะรันต่อเงียบ ๆ `capture_output=True` เก็บ stdout/stderr แทนที่จะพ่นลง terminal `timeout=` ป้องกัน child process ที่ค้างไม่ให้ทำโปรแกรมของคุณค้างตลอดไป
 
-ฝั่งที่เพิ่มเข้ามาซึ่งควรรู้ไว้:
+```python
+import subprocess
 
-| สิ่งที่เพิ่ม | เวอร์ชัน | ทำไมถึงสำคัญ |
+result = subprocess.run(
+    ["echo", "hello"], check=True, capture_output=True, text=True, timeout=5
+)
+print(result.stdout.strip())   # 'hello'
+
+subprocess.run(["false"], check=True, capture_output=True, text=True)
+# subprocess.CalledProcessError: Command '['false']' returned non-zero exit status 1.
+
+subprocess.run(["sleep", "5"], timeout=0.2)
+# subprocess.TimeoutExpired: Command '['sleep', '5']' timed out after 0.2 seconds
+```
+
+`shell=True` กับสตริงที่ไม่น่าเชื่อถือคือช่องโหว่ command injection — ทั้งสตริงถูกส่งให้ shell ของระบบ รวมถึง `;`, `&&` และ backtick:
+
+```python
+user_filename = "notes.txt; echo INJECTED"
+subprocess.run(f"ls {user_filename}", shell=True)
+# real output includes a line "INJECTED" -- the shell ran a second command
+```
+
+ทางแก้คือส่ง list (ไม่มี shell เข้ามาเกี่ยวข้อง ไม่มีการตีความอักขระพิเศษ) แล้วให้ `subprocess` จัดการ quoting เอง:
+
+```python
+subprocess.run(["ls", user_filename])  # looks for a literal file named
+                                        # "notes.txt; echo INJECTED" -- not found, no injection
+```
+
+> `subprocess` สร้าง OS process จริง — รันในเครื่อง; ไม่มี process model ใน browser sandbox
+
+---
+
+## `secrets` เทียบกับ `random`
+
+`random` เป็นตัวสร้างสุ่มเทียมที่เร็วและ**ทำซ้ำได้** (seed ได้) — เหมาะสำหรับ simulation เกม และการสับข้อมูลทดสอบ และไม่เหมาะโดยสิ้นเชิงสำหรับสิ่งที่เกี่ยวข้องกับความปลอดภัย เพราะ state ของมันสามารถถูกกู้คืนได้จาก output ที่มากพอ `secrets` ใช้แหล่งที่ปลอดภัยทางการเข้ารหัสของ OS และไม่มีการ seed เลย:
+
+```python
+import random, secrets
+
+random.seed(0)
+random.randint(1, 100)      # 50 -- reproducible given the same seed, by design
+secrets.token_hex(8)        # e.g. 'e1535f914b8e7eb4' -- cryptographically unpredictable
+secrets.choice(["a", "b", "c"])
+```
+
+ใช้ `secrets` สำหรับ token, ลิงก์รีเซ็ตรหัสผ่าน, API key และ session ID — ห้ามใช้ `random` เด็ดขาด
+
+---
+
+## `decimal` — เลขคณิตที่แม่นยำสำหรับเงิน
+
+floating-point `float` ไม่สามารถแทนเศษส่วนทศนิยมส่วนใหญ่ได้แม่นยำ ซึ่งเป็นหายนะสำหรับเงิน:
+
+```python
+print(0.1 + 0.2)                              # 0.30000000000000004
+
+from decimal import Decimal
+print(Decimal("0.1") + Decimal("0.2"))        # 0.3
+print(Decimal("19.99") * 3)                   # 59.97
+```
+
+สร้าง `Decimal` จาก**สตริง**เสมอ (`Decimal("0.1")`) ห้ามสร้างจาก `float` (`Decimal(0.1)`) — แบบหลังจะทำซ้ำความไม่แม่นยำของ float เองอย่างซื่อสัตย์แทนที่จะแก้มัน
+
+---
+
+## `enum` — ค่าคงที่ที่มีชื่อและเป็น type จริง ๆ
+
+string หรือ int ดิบสำหรับ status code รับค่าอะไรก็ได้ รวมถึงที่พิมพ์ผิด `Enum` คือชุดค่าที่มีชื่อและปิดตายพร้อมการตรวจ type:
+
+```python
+from enum import Enum, auto, IntFlag
+
+class Status(Enum):
+    PENDING = auto()
+    SHIPPED = auto()
+    DELIVERED = auto()
+
+print(Status.SHIPPED)              # Status.SHIPPED
+print(Status.SHIPPED.name, Status.SHIPPED.value)  # SHIPPED 2
+print(Status.SHIPPED == Status.SHIPPED)            # True
+
+class Perm(IntFlag):
+    READ = 1
+    WRITE = 2
+    EXEC = 4
+
+p = Perm.READ | Perm.WRITE
+print(p, Perm.READ in p, Perm.EXEC in p)    # Perm.READ|WRITE True False
+```
+
+`IntFlag` รองรับการรวมแบบ bitwise ได้โดยตรง ทำให้มันเป็นเครื่องมือที่ถูกต้องสำหรับชุดสิทธิ์; `Enum` ธรรมดาไม่รองรับ `|` ระหว่าง member
+
+---
+
+## อะไรมา อะไรไป
+
+standard library เคลื่อนไหวทั้งสองทิศทาง Python 3.13 เอาโมดูลที่ deprecate มานานออก 19 ตัว (PEP 594) —
+`cgi`, `telnetlib`, `crypt`, `imghdr`, `nntplib`, `pipes`, `uu` และเพื่อน ๆ บวก `lib2to3` โค้ดที่ import
+โมดูลเหล่านี้ต้องหาตัวแทนจาก third-party หรือเขียนใหม่
+
+สิ่งที่ควรรู้อีกฝั่งของบัญชี:
+
+| สิ่งที่เพิ่มเข้ามา | เวอร์ชัน | ทำไมถึงสำคัญ |
 |---|---|---|
-| `itertools.batched(it, n)` | 3.12 | แบ่งเป็นก้อนขนาดคงที่โดยไม่ต้องเขียน loop เอง |
-| `pathlib.Path.walk()` | 3.12 | `os.walk` ที่คืน object `Path` |
-| `copy.replace(obj, **changes)` | 3.13 | `dataclasses.replace` แบบใช้ได้ทั่วไป ผ่าน `__replace__` |
+| `itertools.batched(it, n)` | 3.12 | แบ่งเป็นก้อนขนาดคงที่โดยไม่ต้องเขียนลูปเอง |
+| `pathlib.Path.walk()` | 3.12 | `os.walk` ที่ yield `Path` object |
+| `copy.replace(obj, **changes)` | 3.13 | `dataclasses.replace` แบบทั่วไป ผ่าน `__replace__` |
 | `dbm.sqlite3` | 3.13 | SQLite เป็น backend เริ่มต้นของ `dbm` แล้ว |
-| `glob.translate()` | 3.13 | แปลง shell wildcard เป็น regular expression |
-| `compression.zstd` | 3.14 | Zstandard ต่อเข้ากับ `tarfile`, `zipfile`, `shutil` ให้ด้วย |
-| `pathlib.Path.copy()` และ `.move()` | 3.14 | copy และ move โดยไม่ต้องเรียก `shutil` |
-| `heapq.heapify_max()` และเพื่อน ๆ | 3.14 | max-heap โดยไม่ต้องใส่เครื่องหมายลบทุกค่า |
-| `functools.Placeholder` | 3.14 | ข้าม positional argument ตอนสร้าง `partial` |
-| `Decimal.from_number()` | 3.14 | สร้างค่าแบบเป๊ะ ๆ จาก `int` หรือ `float` |
+| `glob.translate()` | 3.13 | wildcard ของ shell แปลงเป็น regular expression |
+| `compression.zstd` | 3.14 | Zstandard เชื่อมเข้ากับ `tarfile`, `zipfile`, `shutil` ด้วย |
+| `pathlib.Path.copy()` และ `.move()` | 3.14 | copy และ move โดยไม่ต้องพึ่ง `shutil` |
+| `heapq.heapify_max()` และเพื่อน ๆ | 3.14 | max-heap โดยไม่ต้องกลับเครื่องหมายทุกค่า |
+| `functools.Placeholder` | 3.14 | ข้าม positional argument เวลาสร้าง `partial` |
+| `Decimal.from_number()` | 3.14 | สร้างค่าแม่นยำจาก `int` หรือ `float` |
 
 export const newStdlibCode = `
 import copy, heapq
@@ -215,42 +473,141 @@ print(to_2dp(3.14159))
 
 <Playground code={newStdlibCode} />
 
-<Callout title="Reach for stdlib before adding a dependency">
-ทุก module ในหน้านี้มาพร้อมกับ Python — ไม่ต้องใช้ `pip install`
-ก่อนจะเพิ่ม third-party library ให้ถามก่อนว่า `collections`, `itertools`, `datetime`, `json` หรือ `pathlib` แก้ปัญหาได้หรือไม่
-Module เหล่านี้ import ได้เร็วกว่า, ไม่มี dependency และได้ผ่านการทดสอบอย่างหนักในทุก Python version ที่คุณน่าจะ target
+<Callout title="หยิบ stdlib ก่อนเพิ่ม dependency">
+ทุกโมดูลในหน้านี้มากับ Python — ไม่ต้อง `pip install`
+ก่อนเพิ่มไลบรารี third-party ให้ถามก่อนว่า `collections`, `itertools`, `datetime`, `json`, `pathlib`, `functools`, `decimal`, `enum` หรือ `secrets` แก้ปัญหาได้อยู่แล้วหรือไม่
+มัน import ได้เร็วกว่า ไม่มี dependency และผ่านการพิสูจน์มาแล้วในทุกเวอร์ชัน Python ที่คุณน่าจะต้องรองรับ
 </Callout>
+
+## Mental Model
+
+<Mermaid code={`flowchart LR
+  Naive["naive datetime -- no tzinfo, ambiguous"] -->|"tzinfo=timezone.utc"| Aware["aware datetime -- unambiguous point in time"]
+  Naive -.->|"naive - aware"| Err["TypeError: can't mix naive and aware"]
+  Aware -->|".astimezone(tz)"| Other["same instant, different tzinfo"]
+  Str["ISO 8601 string"] -->|"fromisoformat()"| Aware`} title="datetime: aware กับ naive คือความต่างระดับ type ไม่ใช่แค่ field ที่ขาดไป" />
+
+`datetime.now()` และ `datetime.utcnow()` ต่างก็คืนค่าแบบ **naive** — ความต่างมีแค่ว่าตัวเลข wall-clock ที่มันถือคืออะไร ทั้งคู่ไม่มีข้อมูล timezone ติดมาเลย จึงไม่สามารถเปรียบเทียบ ลบ หรือแปลงเทียบกับ aware datetime ได้อย่างปลอดภัย Python จะ raise `TypeError` แทนที่จะเดาเงียบ ๆ ทางแก้เหมือนกันเสมอ: ติด `tzinfo` ตั้งแต่จุดที่สร้าง `datetime` (`datetime.now(timezone.utc)` หรือ `ZoneInfo(...)` สำหรับภูมิภาคจริง) แล้วรักษาความเป็น aware ไว้ตั้งแต่นั้น
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| `namedtuple` / `Counter` / `defaultdict` | ไม่มี dependency เร็ว ผ่านการพิสูจน์แล้ว | ยืดหยุ่นน้อยกว่าคลาสเต็มรูปแบบเมื่อต้องการพฤติกรรม (เมธอด) |
+| `datetime` แบบ aware ทุกที่ | ไม่กำกวม เปรียบเทียบข้าม timezone ได้ปลอดภัย | ต้องใส่ argument เพิ่มหนึ่งตัวทุกจุดที่สร้าง ลืมง่าย |
+| `Decimal` สำหรับเงิน | เลขคณิตทศนิยมแม่นยำ ไม่มีปัญหาการปัดเศษของ float | ช้ากว่า `float` และเลขคณิตกับ `float` จะ raise `TypeError` |
+| `secrets` แทน `random` | token ที่ปลอดภัยทางการเข้ารหัส | seed ไม่ได้ — เสียความทำซ้ำได้ ซึ่งคือจุดประสงค์ |
+| `subprocess.run([...])` แทน `shell=True` | ไม่มีช่องโหว่ shell-injection | เสียความสามารถของ shell (pipe, glob) ที่ต้องเขียนใหม่เองใน Python |
+| `lru_cache` | memoization ฟรี แค่ decorator เดียว | ทุก argument ต้อง hashable; `maxsize=None` แบบไม่จำกัดอาจกิน memory |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"`datetime.now()` ให้ 'เวลา UTC ปัจจุบัน'"** มันให้เวลา**ท้องถิ่นแบบ naive**ที่ไม่มี timezone ติดมาเลย ไม่ใช่ทั้ง UTC หรือท้องถิ่นในแบบที่ Python ตรวจสอบได้ ใช้ `datetime.now(timezone.utc)`
+- **"`datetime.utcnow()` คือเวอร์ชันที่ 'ปลอดภัยแบบ UTC' ของ `now()`"** มันคืนตัวเลขของ UTC แต่เป็น object แบบ **naive** — แยกไม่ออกจาก naive datetime อื่น ๆ และถูก deprecate ตั้งแต่ 3.12 ด้วยเหตุผลนี้เอง
+- **"`subprocess.run(cmd, shell=True)` โอเคตราบใดที่ `cmd` 'ดูเหมือน' คำสั่งง่าย ๆ"** สตริงใดก็ตามที่สร้างจาก input ของผู้ใช้หรือภายนอกแล้วส่งให้ `shell=True` คือช่องโหว่ command injection ทันทีที่มี `;`, `&&`, backtick หรือ `$(...)`
+- **"`random.choice` โอเคสำหรับสร้าง token รีเซ็ตรหัสผ่าน"** output ของ `random` ทำซ้ำได้จาก internal state ของมัน `secrets` มีอยู่ก็เพื่อเหตุผลนี้ — "ดูเหมือนสุ่ม" กับ "ไม่สามารถคาดเดาได้ทางการเข้ารหัส" เป็นคุณสมบัติคนละอย่างกัน
+- **"`0.1 + 0.2 == 0.3` ใน Python เพราะ Python เป็นภาษาที่ 'แม่นยำ'"** `float` ของ Python คือ IEEE-754 double precision แบบเดียวกับที่ภาษากระแสหลักทุกตัวใช้ — ความไม่แม่นยำแบบเดียวกันเกิดขึ้น `Decimal` (สร้างจากสตริง) คือทางแก้ ไม่ใช่ Python คนละตัว
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อโค้ดที่ถูกสร้างขึ้นซึ่งใช้โมดูลเหล่านี้ ให้ตรวจ:
+
+- `datetime.now()` หรือ `datetime.utcnow()` ที่ใช้ตรงไหนก็ตามที่ timestamp ถูกเก็บ เปรียบเทียบ หรือส่งข้ามขอบเขต timezone — ทั้งคู่คืน object แบบ naive; `datetime.now(timezone.utc)` มักเป็นสิ่งที่ตั้งใจจะเขียนจริง ๆ
+- `subprocess.run(cmd, shell=True)` ที่ส่วนใดส่วนหนึ่งของ `cmd` มาจาก input ผู้ใช้ ไฟล์ config หรือ service อื่น — เป็นช่องทาง command-injection จริง ไม่ใช่แค่ทฤษฎี
+- `open(path)` ที่ไม่มี argument `encoding=` — ทำงานได้บนเครื่องผู้เขียน แต่พังทันทีที่ไฟล์มีเนื้อหาที่ไม่ใช่ ASCII บนแพลตฟอร์มที่มี encoding default ต่างออกไป
+- `float` ที่ใช้กับราคา ยอดเงินคงเหลือ หรือยอดรวมเงินใด ๆ — `Decimal` ที่สร้างจากสตริงคือ type ที่ถูกต้อง
+- `random` ที่ใช้สร้างอะไรก็ตามที่ต้องเดาไม่ได้ (token, รหัสผ่านชั่วคราว, session ID) — นั่นคือหน้าที่ของ `secrets`
+
+<SpotTheBug code={`import subprocess
+from pathlib import Path
+
+
+def export_report(filename: str, content: str) -> None:
+    report_path = Path("/tmp/reports") / filename
+    with open(report_path, "w") as f:
+        f.write(content)
+    # Compress the report using the user-supplied filename
+    subprocess.run(f"gzip /tmp/reports/{filename}", shell=True)`} lang="python">
+สอง bug: `open(report_path, "w")` ไม่มี `encoding=` ทำให้พฤติกรรมขึ้นอยู่กับ encoding ข้อความ default ของแพลตฟอร์มสำหรับ `content` ที่ไม่ใช่ ASCII แย่กว่านั้น `subprocess.run(f"gzip /tmp/reports/{filename}", shell=True)` สร้าง shell command string ตรงจาก `filename` — ผู้เรียกที่ส่ง `filename="report.txt; rm -rf /tmp/reports"` จะทำให้คำสั่งที่สองถูก shell รันด้วย ยืนยันแล้ว: `subprocess.run("ls notes.txt; echo INJECTED", shell=True)` พิมพ์ `INJECTED` จริง พิสูจน์ว่า shell ตีความ `;` เป็นตัวแบ่งคำสั่ง แก้ทั้งสองจุด: `open(report_path, "w", encoding="utf-8")` และ `subprocess.run(["gzip", str(report_path)])` — เป็น list ไม่มี shell ไม่มี injection
+</SpotTheBug>
 
 export const quizStdlibTour = [
     {
-        q: "`print(collections.Counter('aab'))` ให้ผลลัพธ์อะไร?",
+        q: "`print(collections.Counter('aab'))` ให้ผลอะไร?",
         options: [
             "Counter({'a': 2, 'b': 1})",
             "['a', 'a', 'b']",
             "Counter({1: 'a', 2: 'b'})",
             "{'a': 1, 'b': 1}"
         ],
-        answer: 0
+        answer: 0,
+        explain: "repr ของ Counter แสดงชื่อคลาสเสมอ เช่น Counter({'a': 2, 'b': 1}) -- ยืนยันบน 3.14 การนับ 'aab' ได้ 'a' 2 ตัวและ 'b' 1 ตัว พิมพ์จากมากไปน้อย"
     },
     {
-        q: "ทำไมต้อง sort ข้อมูลก่อนส่งให้ `itertools.groupby`?",
+        q: "ทำไมข้อมูลต้องถูก sort ก่อนส่งเข้า `itertools.groupby`?",
         options: [
-            "groupby raise error เมื่อข้อมูลไม่ได้ sort",
-            "groupby จัดกลุ่มเฉพาะ key ที่เท่ากันติดกัน — ข้อมูลที่ไม่ได้ sort จะได้กลุ่มผิด",
-            "groupby ทำงานเร็วกว่าบนข้อมูลที่ sort แล้ว",
-            "Python dict ไม่มีลำดับ"
+            "groupby raise error กับข้อมูลที่ไม่ได้ sort",
+            "groupby จัดกลุ่มเฉพาะ key ที่เท่ากันติดกันเท่านั้น -- ข้อมูลที่ไม่ sort จะได้กลุ่มผิด",
+            "groupby เร็วกว่าเมื่อข้อมูล sort แล้ว",
+            "dict ของ Python ไม่มีลำดับ"
         ],
-        answer: 1
+        answer: 1,
+        explain: "groupby สแกนแบบเชิงเส้นและเริ่มกลุ่มใหม่ทุกครั้งที่ key เปลี่ยน -- มันไม่มองไปข้างหน้าเลย ข้อมูลที่ไม่ sort จะได้กลุ่มเล็ก ๆ หลายกลุ่มสำหรับ key เดียวกันแทนที่จะเป็นกลุ่มเดียว โดยไม่มี error ใด ๆ"
     },
     {
-        q: "`datetime` method ใดที่ format วันที่เป็น string?",
+        q: "เมธอดไหนของ `datetime` ที่ format วันที่เป็นสตริง?",
         options: [
             "datetime.format()",
-            "datetime.isoformat() only",
+            "datetime.isoformat() เท่านั้น",
             "datetime.strftime(format_string)",
             "str(datetime)"
         ],
-        answer: 2
+        answer: 2,
+        explain: "strftime รับ format string (เช่น '%Y-%m-%d') สำหรับ output แบบกำหนดเอง isoformat() ก็เป็นเมธอดจริงเช่นกัน แต่ให้แค่รูปแบบ ISO 8601 ที่ตายตัว ไม่ใช่ format ใดก็ได้"
+    },
+    {
+        q: "```python\nimport datetime as dt\nnaive = dt.datetime(2026, 9, 22, 10, 0)\naware = dt.datetime(2026, 9, 22, 10, 0, tzinfo=dt.timezone.utc)\nnaive - aware\n```\nเกิดอะไรขึ้น?",
+        options: [
+            "คืน timedelta เป็น 0",
+            "TypeError -- can't subtract offset-naive and offset-aware datetimes",
+            "ถือว่า naive เป็น UTC เงียบ ๆ แล้วคืนผลลัพธ์ที่ใช้ได้",
+            "raise ValueError"
+        ],
+        answer: 1,
+        explain: "Python ปฏิเสธที่จะเดาว่า naive datetime หมายถึง UTC หรือเวลาท้องถิ่น ดังนั้นการเปรียบเทียบหรือลบระหว่าง naive กับ aware datetime จะ raise TypeError เสมอ ยืนยันข้อความจริง: \"can't subtract offset-naive and offset-aware datetimes\"",
+    },
+    {
+        q: "```python\nimport subprocess\nfilename = \"notes.txt; echo INJECTED\"\nsubprocess.run(f\"ls {filename}\", shell=True)\n```\noutput จริงมีอะไรรวมอยู่ด้วย?",
+        options: [
+            "มีแค่ error ว่าไม่พบ notes.txt",
+            "บรรทัดที่มีคำว่า INJECTED -- shell รันคำสั่งที่สองหลังเครื่องหมาย semicolon",
+            "ไม่มีอะไรเลย -- shell=True escape อักขระพิเศษให้อัตโนมัติ",
+            "SyntaxError ก่อนที่ subprocess จะรันด้วยซ้ำ"
+        ],
+        answer: 1,
+        explain: "shell=True ส่งทั้งสตริงให้ shell ของระบบ ซึ่งตีความ ';' เป็นตัวแบ่งคำสั่ง ยืนยันแล้ว: การรันโค้ดนี้จริงพิมพ์ 'INJECTED' ออกมา -- ช่องโหว่ shell-injection แบบคลาสสิกเมื่อส่วนใดส่วนหนึ่งของ command string มาจาก input ที่ไม่น่าเชื่อถือ",
+    },
+    {
+        q: "ทำไมใช้ `Decimal(\"0.1\")` แทน `Decimal(0.1)`?",
+        options: [
+            "ไม่มีความต่าง -- ทั้งคู่ได้ 0.1 ที่แม่นยำ",
+            "Decimal(0.1) ทำซ้ำความไม่แม่นยำแบบเศษส่วนไบนารีของ float 0.1 เองอย่างซื่อสัตย์; Decimal(\"0.1\") parse ค่าทศนิยมที่แม่นยำโดยตรง",
+            "Decimal(0.1) raise TypeError",
+            "Decimal(\"0.1\") ช้ากว่า"
+        ],
+        answer: 1,
+        explain: "float literal 0.1 เป็นค่าประมาณแบบไบนารีที่ไม่แม่นยำอยู่แล้วก่อนที่ Decimal จะเห็นด้วยซ้ำ -- การสร้างจาก float แค่จับความไม่แม่นยำเดียวกันนั้นมาตรง ๆ การสร้างจากสตริง \"0.1\" parse ค่าทศนิยมโดยตรง ไม่ผ่าน float เลย",
+    },
+    {
+        q: "ทำไม `secrets.token_hex()` ถึงดีกว่า `random.getrandbits()` สำหรับ token รีเซ็ตรหัสผ่าน?",
+        options: [
+            "secrets เร็วกว่า",
+            "random seed ได้และ output ของมันถูกทำซ้ำ/คาดเดาได้จาก internal state; secrets ใช้แหล่งที่ปลอดภัยทางการเข้ารหัสระดับ OS",
+            "จริง ๆ ไม่ต่างกัน แค่ชื่อเรียกต่างกัน",
+            "secrets สร้าง token ที่ยาวกว่า"
+        ],
+        answer: 1,
+        explain: "random.seed(0) ทำให้การเรียก random.* ทุกครั้งในโปรเซสนั้นแน่นอนตายตัว -- โอเคสำหรับ simulation แต่รับไม่ได้กับอะไรที่ผู้โจมตีสามารถเอาเปรียบได้ด้วยการคาดเดาค่า secrets ไม่รับ seed เลยและดึงจาก CSPRNG ของ OS",
     }
 ];
 

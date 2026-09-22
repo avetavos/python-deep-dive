@@ -1,0 +1,334 @@
+---
+title: 'Worked review 2: asyncio fetcher simulation'
+description: 'AI-style concurrent fetcher ที่มี bug ปลูกไว้ 4 ตัว -- fire-and-forget create_task, blocking sleep, ไม่มี concurrency limit และ except BaseException กลืน cancellation'
+sidebar:
+  order: 6
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+concurrent fetcher จำลอง — ไม่มีการเรียก network จริง แค่ `asyncio.sleep` แทน I/O — พร้อม bug 4 ตัวที่มองไม่เห็นเลยเมื่ออ่านผ่าน ๆ เพราะ output ของ happy path ดูสมเหตุสมผลสมบูรณ์
+
+<Playground code={fetcherBuggyCode} />
+
+export const fetcherBuggyCode = `import asyncio
+import time
+
+SERVER_CAPACITY = 2
+active_requests = 0
+max_concurrent_seen = 0
+
+
+async def log_slow_requests(url: str) -> None:
+    await asyncio.sleep(0.3)
+    print(f"ALERT: {url} still running after 0.3s")
+
+
+async def fetch(url: str, fail: bool = False) -> str:
+    global active_requests, max_concurrent_seen
+    active_requests += 1
+    max_concurrent_seen = max(max_concurrent_seen, active_requests)
+
+    asyncio.create_task(log_slow_requests(url))  # fire-and-forget -- no reference kept
+
+    try:
+        if "slow-dns" in url:
+            time.sleep(0.05)  # blocking call inside an async function
+        await asyncio.sleep(0.1)
+        if fail:
+            raise ValueError(f"{url} returned 500")
+        result = f"OK {url}"
+    except Exception as e:
+        result = f"FAILED {url}: {e}"
+    finally:
+        active_requests -= 1
+    return result
+
+
+async def fetch_with_timeout(url: str) -> str:
+    try:
+        return await asyncio.wait_for(fetch(url), timeout=10)
+    except BaseException:  # BUG: also swallows this task's own outer cancellation
+        return f"TIMEOUT {url}"
+
+
+async def main() -> None:
+    urls = ["a.example", "slow-dns.example", "b.example", "c.example", "d.example"]
+    results = await asyncio.gather(*(fetch(u) for u in urls))
+    for r in results:
+        print(r)
+    print("max concurrent requests observed:", max_concurrent_seen, "(server capacity:", SERVER_CAPACITY, ")")
+
+    outer = asyncio.create_task(fetch_with_timeout("slow-endpoint.example"))
+    await asyncio.sleep(0.05)
+    outer.cancel()
+    outcome = await outer
+    print("outer.cancelled():", outer.cancelled(), "-- result:", outcome)
+
+
+asyncio.run(main())
+`.trim();
+
+**output จริง:**
+
+```text
+OK a.example
+OK slow-dns.example
+OK b.example
+OK c.example
+OK d.example
+max concurrent requests observed: 5 (server capacity: 2 )
+outer.cancelled(): False -- result: TIMEOUT slow-endpoint.example
+```
+
+สังเกตสิ่งที่ *ไม่* พิมพ์: ไม่มีบรรทัด `"ALERT: ... still running"` โผล่มาเลย ทั้งที่มี background task `log_slow_requests` ถูกสร้างไว้ห้าตัว
+
+## สิ่งที่พบ
+
+<details>
+<summary>Bug 1: fire-and-forget <code>create_task</code> — alert task หายไปแบบเงียบ ๆ (catalog #10)</summary>
+
+**อาการ:** ไม่มีข้อความ `"ALERT: ... still running after 0.3s"` ทั้งห้าข้อความไหนพิมพ์ออกมาเลย ทั้งที่ `fetch` สร้าง task แบบนี้หนึ่งตัวต่อ URL
+
+**หลักฐาน:** return value ของ `asyncio.create_task(log_slow_requests(url))` ถูกทิ้งทันที `asyncio.run(main())` ปิด event loop ทันทีที่ `main()` return ยกเลิกทุก task ที่ไม่มีใคร await อยู่ — ไม่มี error ไม่มี warning ในการรันนี้
+
+**ทางแก้:** track ทุก background task ไว้ใน set ที่มี lifetime ยาวกว่า function ที่สร้างมัน แล้ว drain มันก่อนที่โปรแกรมจะจบ:
+
+```python
+background_tasks: set[asyncio.Task[None]] = set()
+
+def spawn(coro) -> asyncio.Task[None]:
+    task = asyncio.create_task(coro)
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+    return task
+```
+
+</details>
+
+<details>
+<summary>Bug 2: <code>time.sleep</code> ข้างใน <code>fetch</code> block event loop ทั้งหมด (catalog #11)</summary>
+
+**อาการ:** `"slow-dns.example"` ใช้ `time.sleep(0.05)` แทนที่จะเป็น `await asyncio.sleep(0.05)` — สิ่งนี้ block ทุก task อื่นในกระบวนการเป็นเวลา 50ms นั้น ไม่ใช่แค่ตัวที่จัดการ URL นั้น บนตัวอย่างเล็ก ๆ นี้ความต่างของเวลารวมค่อนข้างเล็กน้อย แต่มันโตขึ้นเป็นเส้นตรงตาม concurrency ใน service จริง — blocking call ที่ช้าเพียงตัวเดียวใน request handler เดียวทำให้ทุก concurrent request ที่ event loop นั้นให้บริการหยุดชะงัก
+
+**หลักฐาน:** `ruff` flag บรรทัดนี้ตรง ๆ (ดู **สิ่งที่เครื่องมือจับได้** ด้านล่าง) การเขียนโค้ดเดียวกันใหม่ด้วย sleep จริงที่ยาวขึ้นแล้ววัดเวลา (แบบที่ทำใน pattern #11 ของ **[AI Bug Catalog](/python/th/reading-python/ai-bug-catalog/)**) แสดงว่าสาม task ที่ "concurrent" ใช้เวลารวม 3 เท่าของที่ควรจะเป็น
+
+**ทางแก้:** ใช้ `await asyncio.sleep(0.05)` แทน — มันคืน control กลับให้ event loop แทนที่จะ block ทั้งกระบวนการ
+
+</details>
+
+<details>
+<summary>Bug 3: ไม่มี concurrency limit — 5 request รันพร้อมกันกับ "capacity" ที่ 2 (spec: missing Semaphore)</summary>
+
+**อาการ:** `max_concurrent_seen` ขึ้นไปถึง `5` ไม่ใช่ `2` — `asyncio.gather` เริ่ม coroutine ทุกตัวทันที โดยไม่มีอะไร cap ว่ากี่ตัวรันพร้อมกันได้
+
+**หลักฐาน:** บรรทัดที่พิมพ์บอกตรง ๆ: `max concurrent requests observed: 5 (server capacity: 2 )`
+
+**ทางแก้:** ครอบ body ของ `fetch` ด้วย `async with semaphore:` โดย `semaphore = asyncio.Semaphore(SERVER_CAPACITY)` ถูกสร้างครั้งเดียวใน `main` แล้วส่งลงไปทุก call
+
+</details>
+
+<details>
+<summary>Bug 4: <code>except BaseException</code> กลืน cancellation ของ task ตัวเอง (catalog #6)</summary>
+
+**อาการ:** `outer.cancel()` ถูกเรียก แต่ `outer.cancelled()` รายงาน `False` — cancellation ไม่เคยมีผลจริง แทนที่ task จะจบด้วยสถานะ cancelled มันคืน `"TIMEOUT slow-endpoint.example"` ราวกับว่า `asyncio.wait_for` แค่ timeout เฉย ๆ
+
+**หลักฐาน:** `except BaseException:` ข้างใน `fetch_with_timeout` จับ `asyncio.CancelledError` ที่ `outer.cancel()` raise ที่จุด `await` แล้วคืน string ปกติแทนที่จะปล่อยให้ cancellation propagate
+
+**ทางแก้:** จับเฉพาะ timeout exception ที่เจาะจง ปล่อยให้ `CancelledError` (subclass ของ `BaseException` ไม่ถูกจับโดย `except Exception`) propagate ไปโดยไม่แตะต้อง:
+
+```python
+async def fetch_with_timeout(url: str, semaphore: asyncio.Semaphore) -> str:
+    try:
+        return await asyncio.wait_for(fetch(url, semaphore), timeout=10)
+    except TimeoutError:
+        return f"TIMEOUT {url}"
+```
+
+</details>
+
+## เวอร์ชันที่แก้แล้ว
+
+แก้ทั้งสี่ bug แล้ว: track background task, sleep ที่ไม่ block, `asyncio.Semaphore` จำกัด concurrency ให้เท่ากับ `SERVER_CAPACITY` และ `except TimeoutError` ที่แคบลงซึ่งปล่อยให้ cancellation จริงผ่านไปได้:
+
+<Playground code={fetcherFixedCode} />
+
+export const fetcherFixedCode = `import asyncio
+from collections.abc import Coroutine
+from typing import Any
+
+SERVER_CAPACITY = 2
+active_requests = 0
+max_concurrent_seen = 0
+
+background_tasks: set[asyncio.Task[None]] = set()
+
+
+def spawn(coro: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
+    task = asyncio.create_task(coro)
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+    return task
+
+
+async def log_slow_requests(url: str) -> None:
+    await asyncio.sleep(0.3)
+    print(f"ALERT: {url} still running after 0.3s")
+
+
+async def fetch(url: str, semaphore: asyncio.Semaphore, fail: bool = False) -> str:
+    global active_requests, max_concurrent_seen
+    async with semaphore:
+        active_requests += 1
+        max_concurrent_seen = max(max_concurrent_seen, active_requests)
+
+        spawn(log_slow_requests(url))  # tracked -- can be awaited/cancelled on shutdown
+
+        try:
+            if "slow-dns" in url:
+                await asyncio.sleep(0.05)  # non-blocking -- yields to the event loop
+            await asyncio.sleep(0.1)
+            if fail:
+                raise ValueError(f"{url} returned 500")
+            result = f"OK {url}"
+        except ValueError as e:
+            result = f"FAILED {url}: {e}"
+        finally:
+            active_requests -= 1
+        return result
+
+
+async def fetch_with_timeout(url: str, semaphore: asyncio.Semaphore) -> str:
+    try:
+        return await asyncio.wait_for(fetch(url, semaphore), timeout=10)
+    except TimeoutError:  # only the timeout is handled; CancelledError still propagates
+        return f"TIMEOUT {url}"
+
+
+async def main() -> None:
+    semaphore = asyncio.Semaphore(SERVER_CAPACITY)
+    urls = ["a.example", "slow-dns.example", "b.example", "c.example", "d.example"]
+    results = await asyncio.gather(*(fetch(u, semaphore) for u in urls))
+    for r in results:
+        print(r)
+    print("max concurrent requests observed:", max_concurrent_seen, "(server capacity:", SERVER_CAPACITY, ")")
+
+    outer = asyncio.create_task(fetch_with_timeout("slow-endpoint.example", semaphore))
+    await asyncio.sleep(0.05)
+    outer.cancel()
+    try:
+        outcome = await outer
+    except asyncio.CancelledError:
+        outcome = "(cancelled)"
+    print("outer.cancelled():", outer.cancelled(), "-- result:", outcome)
+
+    if background_tasks:
+        await asyncio.gather(*background_tasks, return_exceptions=True)
+
+
+asyncio.run(main())
+`.trim();
+
+**output จริง:**
+
+```text
+ALERT: a.example still running after 0.3s
+ALERT: slow-dns.example still running after 0.3s
+OK a.example
+OK slow-dns.example
+OK b.example
+OK c.example
+OK d.example
+max concurrent requests observed: 2 (server capacity: 2 )
+outer.cancelled(): True -- result: (cancelled)
+ALERT: b.example still running after 0.3s
+ALERT: c.example still running after 0.3s
+ALERT: d.example still running after 0.3s
+ALERT: slow-endpoint.example still running after 0.3s
+```
+
+`max_concurrent_seen` ตอนนี้เป็น `2` เป๊ะ `outer.cancelled()` เป็น `True` และทุกบรรทัด `ALERT` พิมพ์ออกมา — task ที่เคยหายไปแบบเงียบ ๆ ตอนนี้รันจนจบเพราะ `main` รอ `background_tasks` ก่อนที่จะ return
+
+## สิ่งที่เครื่องมือจับได้
+
+**`ruff` บนไฟล์ที่มี bug** — ทั้งสี่ bug จับได้ตรง ๆ:
+
+```text
+RUF006 Store a reference to the return value of `asyncio.create_task`
+ASYNC251 Async functions should not call `time.sleep`
+BLE001 Do not catch blind exception: `Exception`
+BLE001 Do not catch blind exception: `BaseException`
+```
+
+`ruff` มองไม่เห็น concurrency limit ที่หายไป (bug 3) เลย — ตัวนั้นโผล่มาก็ต่อเมื่อรันโค้ดจริงแล้วสังเกต `max_concurrent_seen` เท่านั้น `BLE001` ยัง fire บน `except Exception as e` ที่ถูกต้องข้างใน `fetch` ด้วย (ซึ่ง narrow ไปที่ application error อย่างถูกต้อง) — เป็นเครื่องเตือนว่า `BLE001` เป็นเครื่องมือที่หยาบ flag `except` กว้าง ๆ *ทุกตัว* ไม่ใช่หลักฐานว่าทุกบรรทัดที่ flag ผิดจริง `except BaseException` ต่างหากคือตัวที่เป็น bug จริงตรงนี้
+
+**`ruff` บนไฟล์ที่แก้แล้ว:**
+
+```text
+All checks passed!
+```
+
+**`mypy --strict` และ `pyright` บนไฟล์ที่แก้แล้ว:**
+
+```text
+mypy --strict:  Success: no issues found in 1 source file
+pyright:        0 errors, 0 warnings, 0 informations
+```
+
+<Callout title="bug เรื่อง concurrency limit โผล่มาแค่ตอน runtime เท่านั้น">
+สามในสี่ bug นี้ (`RUF006`, `ASYNC251`, `BLE001`) เป็นการค้นพบแบบ static — `ruff` จะ flag มันตั้งแต่ save ครั้งแรก ก่อนที่โค้ดจะรันด้วยซ้ำ `Semaphore` ที่หายไปต่างออกไป: ไม่มีอะไรผิดใน source text เลย และ bug เป็นคุณสมบัติล้วน ๆ ของสิ่งที่เกิดขึ้นเมื่อโค้ดรันจริงภายใต้ concurrency จริง นี่คือเหตุผลที่ **[Verification Tools](/python/th/reading-python/verification-tools/)** ยืนกรานให้รันโค้ด ไม่ใช่แค่ lint มัน
+</Callout>
+
+export const quizWorkedReview2 = [
+  {
+    q: "task `log_slow_requests` ห้าตัวถูกสร้างผ่าน `asyncio.create_task(...)` แต่ไม่มีข้อความ 'ALERT' โผล่มาเลยในเวอร์ชันที่มี bug ทำไม?",
+    options: [
+      "log_slow_requests has a bug in its own logic",
+      "The task references are discarded immediately; asyncio.run(main()) closes the event loop the moment main() returns, silently cancelling every task nothing is still awaiting",
+      "asyncio.create_task requires an explicit await to even start running",
+      "print() does not work inside background tasks"
+    ],
+    answer: 1,
+    explain: "return value ของ create_task ไม่เคยถูกเก็บไว้ที่ไหนเลย พอ main() return asyncio.run รื้อ event loop และยกเลิก task ที่ยังค้างอยู่ -- ไม่มี reference และไม่มีอะไร await มัน alert task จึงหายไปโดยไม่มี error เลย"
+  },
+  {
+    q: "ทำไม `time.sleep(0.05)` ข้างใน coroutine `fetch` สำหรับ 'slow-dns.example' ถึงกระทบ request ของ URL อื่นด้วย ไม่ใช่แค่ตัวนั้น?",
+    options: [
+      "It doesn't -- time.sleep only affects the current coroutine",
+      "time.sleep is a blocking call that occupies the single OS thread the event loop runs on -- while it sleeps, the event loop cannot run ANY other task, coroutine, or callback",
+      "time.sleep always runs on a separate thread automatically",
+      "This only happens if the URL contains the word 'slow'"
+    ],
+    answer: 1,
+    explain: "ต่างจาก await asyncio.sleep(...) ที่คืน control กลับให้ event loop time.sleep block thread ที่ event loop ทั้งหมดพึ่งพา -- ทำให้ทุก task ที่รันพร้อมกันหยุดนิ่งตลอดช่วง sleep นั้น"
+  },
+  {
+    q: "`SERVER_CAPACITY` ถูกตั้งเป็น 2 แต่ `max_concurrent_seen` ขึ้นไปถึง 5 อะไรใน source code เป็นสาเหตุ และมันถูกตรวจพบได้อย่างไรจริง ๆ?",
+    options: [
+      "A syntax error that a linter would catch",
+      "Nothing in fetch or main ever bounds concurrency (no Semaphore) -- asyncio.gather starts every coroutine at once; this was detected by running the code and reading the printed max_concurrent_seen value, not by any static tool",
+      "asyncio.gather has a hard-coded limit of 5",
+      "The bug only appears when using asyncio.create_task"
+    ],
+    answer: 1,
+    explain: "ไม่มีอะไรใน source บังคับเพดาน concurrency เลย -- gather แค่ schedule coroutine ทุกตัวที่ส่งเข้าไป bug นี้มองไม่เห็นจาก ruff/mypy/pyright เลย มันเผยตัวได้แค่จากการรันโค้ดแล้วสังเกต peak concurrency จริง"
+  },
+  {
+    q: "`outer.cancel()` ถูกเรียกบน fetch_with_timeout task แต่ `outer.cancelled()` รายงาน False อะไรกลืน cancellation ไป?",
+    options: [
+      "asyncio.wait_for always ignores external cancellation",
+      "except BaseException: inside fetch_with_timeout catches the asyncio.CancelledError raised at the await point and returns a normal string instead of letting the cancellation propagate",
+      "cancel() only works on tasks created with asyncio.create_task, not coroutines",
+      "This is expected, correct behavior for any try/except around await"
+    ],
+    answer: 1,
+    explain: "CancelledError เป็น subclass ของ BaseException โดยเฉพาะเพื่อให้ error handler แบบ 'except Exception' ทั่วไปไม่ดักมัน การจับ BaseException ที่นี่ทำลายการป้องกันนั้น -- task จับสัญญาณ cancellation ของตัวเองแล้วรายงานผล 'TIMEOUT' ปลอมแทนที่จะหยุดจริง ๆ"
+  }
+];
+
+<Quiz client:visible id="reading-python/worked-review-2" questions={quizWorkedReview2} />
+
+<ProgressTracker client:visible id="reading-python/worked-review-2" />

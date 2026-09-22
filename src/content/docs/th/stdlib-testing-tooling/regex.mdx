@@ -1,0 +1,388 @@
+---
+title: 'Regex with re'
+description: 'Pattern matching ด้วย module re: raw string, match เทียบกับ search เทียบกับ fullmatch, group, flag, การแทนที่ และ catastrophic backtracking'
+sidebar:
+  order: 6
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+## Raw string และทำไม regex pattern เกือบทุกครั้งต้องใช้มัน
+
+regex pattern ถูกเขียนเป็น Python string ธรรมดาก่อน แล้วค่อยส่งให้ engine `re` ซึ่งจะตีความ backslash เป็น *รอบที่สอง* ของมันเอง (`\d` แปลว่า "ตัวเลข" สำหรับ `re` ไม่ใช่สำหรับ Python) ถ้าไม่ใช่ raw string ตัว string parser ของ Python เองจะกิน backslash ไปก่อน
+
+```python
+print("\d+")   # Python sees an unrecognised escape -- see the warning below
+print(r"\d+")  # raw string: the backslash reaches re untouched
+```
+
+ตั้งแต่ Python 3.12 escape sequence ที่ Python ไม่รู้จักภายใน string literal แบบธรรมดา (ไม่ใช่ raw) จะเป็น `SyntaxWarning` ไม่ใช่เงียบไปเฉย ๆ:
+
+```text
+$ python3.14 -c 'pattern = "\d+"; print(pattern)'
+<string>:1: SyntaxWarning: "\d" is an invalid escape sequence. Such sequences will not work in
+the future. Did you mean "\\d"? A raw string is also an option.
+  pattern = "\d+"; print(pattern)
+\d+
+```
+
+โปรแกรมยังรันได้ต่อ — `\d` ตกกลับไปเป็น backslash ตามด้วย `d` แบบตรงตัว ทำให้ pattern *นี้* บังเอิญยังถูกต้องอยู่ — แต่นั่นคือโชค ไม่ใช่การออกแบบ `\n`, `\t` และตัวอื่น ๆ อีกหยิบมือเป็น escape ที่ Python รู้จัก และจะเปลี่ยนความหมายไปเงียบ ๆ แทนที่จะเตือน ทางแก้เหมือนเดิมเสมอ: ใส่ `r` นำหน้า string ทันทีที่มันคือ regex pattern ไม่มีข้อยกเว้น
+
+> `SyntaxWarning` ตัวนี้เป็นการวินิจฉัยตอน compile จาก string parser ของ Python เอง ไม่ใช่ `RuntimeWarning` — มันจะไม่กลายเป็น exception ใน Playground ด้านล่าง (ซึ่งยกระดับเฉพาะ `RuntimeWarning` ให้เป็น error) จึงแสดงเป็น terminal transcript จริงแทน
+
+## `re.compile` และ module cache
+
+`re.compile(pattern)` คืน `Pattern` object ที่ใช้ซ้ำได้พร้อม method `.match`/`.search`/`.findall`/ฯลฯ ฟังก์ชันระดับ module (`re.search(pattern, text)`, `re.findall(pattern, text)`, ...) เป็น wrapper สะดวกใช้ที่เรียก `re.compile` ข้างในอีกที — และ `re.compile` เองก็มี cache เล็ก ๆ รองรับอยู่ (`re._MAXCACHE` entry คีย์ด้วย pattern text และ flag ตัวเดียวกันเป๊ะ) ดังนั้นเรียกซ้ำด้วย argument เดิมจะไม่ compile ใหม่:
+
+export const pg1Code = `
+import re
+
+# re.compile is cached: same pattern text + same flags returns the SAME object
+a = re.compile(r"\\d+")
+b = re.compile(r"\\d+")
+print("cache hit (identical pattern+flags):", a is b)
+
+c = re.compile(r"\\d+", re.IGNORECASE)
+print("cache miss (different flags):", a is c)
+
+# Five ways to look for the same pattern in the same text
+pattern = re.compile(r"\\d+")
+text = "room 12, hall 345, gate 6"
+
+print("match:    ", pattern.match(text))       # anchored at index 0 only
+print("search:   ", pattern.search(text))      # first match anywhere
+print("fullmatch:", pattern.fullmatch(text))    # entire string must match
+print("fullmatch (digits only):", pattern.fullmatch("789"))
+print("findall:  ", pattern.findall(text))      # every match, as strings
+print("finditer: ", [m.group() for m in pattern.finditer(text)])  # every match, as Match objects
+`.trim();
+
+<Playground code={pg1Code} />
+
+`re.compile` แบบชัดเจนยังสำคัญเพื่อความอ่านง่ายและเพื่อผูก flag ไว้ที่เดียวแทนที่จะพิมพ์ซ้ำทุกจุดเรียก — แต่ "compile ครั้งเดียวระดับ module เพื่อ performance" ส่วนใหญ่เป็นความเชื่อเก่าตั้งแต่ยุค 3.x: cache ทำสิ่งนั้นให้แล้วตราบใดที่ pattern text และ flag เหมือนเดิม
+
+## `match` เทียบกับ `search` เทียบกับ `fullmatch` เทียบกับ `findall` เทียบกับ `finditer`
+
+ทั้งห้าวิธีในการหา pattern ใน string ต่างกันแค่ **ตำแหน่ง** ที่บังคับให้ match และ **สิ่งที่ได้กลับมา**:
+
+<Mermaid code={`flowchart LR
+  Text["text = 'concatenate', pattern = re.compile('cat')"] --> M["pattern.match(text) -- checks only index 0 -- None"]
+  Text --> S["pattern.search(text) -- scans left-to-right -- finds 'cat' at index 3"]
+  Text --> F["pattern.fullmatch(text) -- requires the ENTIRE string -- None"]`} title="match / search / fullmatch: pattern เดียวกัน กฎการยึดตำแหน่งต่างกันสามแบบ" />
+
+`match` และ `fullmatch` ถูกยึดตำแหน่ง (โดยนัยที่จุดเริ่ม; `fullmatch` ยึดที่จุดจบด้วย); `search` ไม่ถูกยึดตำแหน่งเลย `findall` คืนทุก match เป็น string ธรรมดา (หรือ tuple ถ้า pattern มี group); `finditer` คืนทุก match เป็น `Match` object แบบ lazy ทำให้ยังเข้าถึง `.start()`, `.end()`, และ `.groups()` ของแต่ละอันได้
+
+## Group, named group และ `groupdict`
+
+วงเล็บ `(...)` capture sub-match; `(?P<name>...)` ตั้งชื่อให้มัน ทำให้ไม่ต้องจำ positional index ตอนอ่านผลลัพธ์ทีหลัง
+
+## Quantifier แบบ greedy เทียบกับ lazy
+
+`*`, `+`, และ `{m,n}` เป็น **greedy** โดย default: มันจะกินให้มากที่สุดเท่าที่ทำได้ก่อน แล้วค่อยคายตัวอักษรคืนถ้าส่วนที่เหลือของ pattern ต้องการ การเติม `?` ต่อท้าย quantifier (`*?`, `+?`, `{m,n}?`) ทำให้เป็น **lazy**: กินให้น้อยที่สุดก่อน แล้วค่อยขยายถ้าจำเป็น
+
+export const pg2Code = `
+import re
+
+m = re.search(r"(\\d{4})-(\\d{2})-(\\d{2})", "created: 2026-09-22")
+print("groups:", m.groups())
+print("group 1:", m.group(1))
+
+named = re.search(r"(?P<year>\\d{4})-(?P<month>\\d{2})-(?P<day>\\d{2})", "created: 2026-09-22")
+print("groupdict:", named.groupdict())
+
+# Greedy vs lazy on the same text
+html = "<b>bold</b> and <i>italic</i>"
+greedy = re.search(r"<.*>", html)
+lazy = re.search(r"<.*?>", html)
+print("greedy:", greedy.group())
+print("lazy:  ", lazy.group())
+`.trim();
+
+<Playground code={pg2Code} />
+
+`<.*>` แบบ greedy กินตั้งแต่ `<` ตัวแรกไปจนถึง `>` ตัว *สุดท้าย* ในสตริง กลืนทุกอย่างระหว่างทางไปด้วย — แทบไม่ใช่สิ่งที่ต้องการเมื่อเจอข้อความคล้าย HTML เลย ส่วน `<.*?>` แบบ lazy หยุดที่ `>` ตัวแรกที่มันพอจะหยุดได้
+
+## Flag: `re.I`, `re.M`, `re.S`, `re.X`
+
+export const pg3Code = `
+import re
+
+print(bool(re.search(r"python", "I love PYTHON", re.I)))
+
+text = "line1\\nline2\\nline3"
+print(re.findall(r"^line\\d", text, re.M))
+
+print(bool(re.match(r"a.b", "a\\nb", re.S)))
+
+pattern = re.compile(
+    r"""
+    (?P<area>\\d{3})   # area code
+    -
+    (?P<num>\\d{4})    # local number
+    """,
+    re.X,
+)
+m = pattern.search("call 555-1234 now")
+print(m.groupdict())
+`.trim();
+
+<Playground code={pg3Code} />
+
+`re.I` (`IGNORECASE`) พับตัวพิมพ์ใหญ่เล็กให้เท่ากัน `re.M` (`MULTILINE`) ทำให้ `^`/`$` match ที่ขอบเขตทุกบรรทัด ไม่ใช่แค่จุดเริ่ม/จุดจบของทั้ง string `re.S` (`DOTALL`) ทำให้ `.` match `\n` ด้วย (ปกติไม่ match) `re.X` (`VERBOSE`) ไม่สนใจ whitespace และให้เขียน comment ด้วย `#` ในตัว pattern เองได้ — เป็นตัวช่วยความอ่านง่ายที่สำคัญที่สุดสำหรับ pattern ที่มีมากกว่าสองสามส่วน และเป็นเหตุผลที่ pattern เบอร์โทรด้านบนอ่านออกได้เลย
+
+## `re.sub` กับ callable และ backreference
+
+argument replacement ของ `re.sub` เป็นได้ทั้ง string ธรรมดาที่มี backreference (`\1`, `\2`, ...) อ้างถึง group ที่ capture ไว้ หรือฟังก์ชันที่รับ `Match` object แล้วคืน replacement text — ต้องใช้แบบหลังเมื่อ replacement ขึ้นกับสิ่งที่ match ได้จริง ไม่ใช่แค่การจัดเรียงคงที่
+
+export const pg4Code = `
+import re
+
+# Backreference: swap "first last" to "last, first"
+print(re.sub(r"(\\w+) (\\w+)", r"\\2, \\1", "John Smith"))
+
+# Callable: shout every word, using a function instead of a static replacement
+def upper_word(m: re.Match) -> str:
+    return m.group().upper()
+
+print(re.sub(r"\\b\\w+\\b", upper_word, "make this shout"))
+
+# re.escape: safe substring search built from untrusted input
+user_input = "3.14 (pi)"
+print(bool(re.search(re.escape(user_input), "value is 3.14 (pi) exactly")))
+print(bool(re.search(user_input, "value is 3.14 (pi) exactly")))  # unescaped: . and () mean something else
+`.trim();
+
+<Playground code={pg4Code} />
+
+สองบรรทัดสุดท้ายคือส่วนสำคัญที่ตัดกัน: ด้วย `re.escape` ตัวอักษรพิเศษของ regex ทุกตัวใน `user_input` จะถูกปฏิบัติแบบตรงตัว และการค้นหาเจอ substring ที่ตรงเป๊ะ ถ้าไม่ escape `.` จะแปลว่า "ตัวอักษรอะไรก็ได้" และ `(pi)` จะถูกตีความเป็น capturing group รอบตัวอักษร `pi` — วงเล็บเองไม่ใช่ตัวอักษรตรงตัวที่ต้อง match ดังนั้น pattern จริง ๆ ต้องการข้อความตรงตัว `"pi"` ให้ปรากฏทันทีหลัง `"3X14 "` โดย **ไม่มี** `(` คั่นกลาง ซึ่งมันไม่มี; ข้อความจริงคือ `"(pi)"` ไม่ใช่ `"pi"` ตรงหลัง space — การค้นหาแบบไม่ escape จึงคืน `False` แบบเงียบ ๆ โดยไม่มี exception เตือนว่า pattern มีความหมายต่างจากที่พิมพ์ไว้ **string ที่มาจากผู้ใช้ที่จะเอาไปสร้าง regex pattern ต้องผ่าน `re.escape` ก่อนเสมอ** เว้นแต่จุดประสงค์คือให้ผู้ใช้เขียน pattern เองจริง ๆ
+
+## Catastrophic backtracking คืออะไร
+
+pattern อย่าง `(a+)+b` ดูไม่มีพิษภัย แต่การซ้อน quantifier "หนึ่งตัวขึ้นไป" สองชั้นทับ input ที่ทับซ้อนกันเองสร้างจำนวนวิธีแบ่ง string ระหว่าง group ชั้นในกับชั้นนอกมหาศาล — และเมื่อ `b` ท้ายสุดไม่โผล่มา engine จะลองแบ่ง *ทุกแบบ* ก่อนจะยอมแพ้ จำนวนวิธีแบ่ง `n` ตัวอักษรโตแบบ exponential ตาม `n`:
+
+export const pg5Code = `
+import re
+import time
+
+# (a+)+b : two nested "one or more" quantifiers over the same character class.
+# For a string of all "a" with no trailing "b", the engine tries every way to
+# split the a-run between the inner and outer "+" before giving up -- that
+# splitting count grows exponentially with the input length.
+evil = re.compile(r"(a+)+b")
+
+print("catastrophic pattern (a+)+b -- timing grows fast:")
+for n in (20, 22, 24):
+    text = "a" * n
+    start = time.perf_counter()
+    result = evil.match(text)
+    elapsed = time.perf_counter() - start
+    print(f"  n={n:2d}  match={result}  {elapsed:.4f}s")
+
+# Fix 1: possessive quantifier \`*+\` (3.11+) -- once the outer group grabs
+# characters, it never gives them back to try another split.
+possessive = re.compile(r"(a+)*+b")
+
+# Fix 2: atomic group \`(?>...)\` (3.11+) -- same idea, wraps the whole
+# backtracking-prone group so its internal choices are never revisited.
+atomic = re.compile(r"(?>(a+)+)b")
+
+print("\\nfixed with possessive quantifier / atomic group -- flat timing:")
+for name, fixed in (("possessive (a+)*+b", possessive), ("atomic (?>(a+)+)b", atomic)):
+    for n in (20, 22, 24):
+        text = "a" * n
+        start = time.perf_counter()
+        result = fixed.match(text)
+        elapsed = time.perf_counter() - start
+        print(f"  {name:20s} n={n:2d}  match={result}  {elapsed:.6f}s")
+`.trim();
+
+<Playground code={pg5Code} />
+
+เวลาจริงที่วัดบนเครื่องพัฒนาคอร์สนี้ (เครื่องคุณจะต่างออกไป แต่ *รูปทรง* ของกราฟต่างหากที่สำคัญ): เวอร์ชัน catastrophic ใช้เวลาประมาณ 0.03 วินาทีที่ 20 ตัวอักษร, 0.11 วินาทีที่ 22, และ 0.47 วินาทีที่ 24 — ทุก ๆ 2 ตัวอักษรที่เพิ่มขึ้น เวลาคูณขึ้นประมาณ 4 เท่า ดังนั้น 40 ตัวอักษรจะใช้เวลาเป็นนาที และ 60 ตัวอักษรจะไม่จบภายในอายุขัยมนุษย์ ทั้งสองเวอร์ชันที่แก้แล้วจบภายในเวลาต่ำกว่ามิลลิวินาทีทุกความยาวที่ทดสอบ (ขึ้นกับเครื่อง แต่ความ "แบนราบ" ของกราฟ ไม่ใช่ตัวเลขเป๊ะ ๆ ต่างหากที่พิสูจน์ว่าแก้ได้จริง) Possessive quantifier (`*+`, `++`, `{m,n}+`) และ atomic group (`(?>...)`) `re` รองรับมาตั้งแต่ Python 3.11: ทั้งคู่บอก engine ว่า "พอ group นี้ match แล้ว ห้ามย้อนกลับมาลองแบ่งแบบอื่นอีก" — ซึ่งตรงกับตัวเลือกที่ระเบิดแบบ combinatorial ก่อนหน้านี้พอดี
+
+นี่ไม่ใช่กรณีหายากเลย: pattern รูปทรงไหนก็ตามอย่าง `(X+)+`, `(X*)*`, หรือ `(X|XY)+` ที่เจอ input ยาว ๆ ที่ไม่ match หรือเกือบ match คือผู้ต้องสงสัย ถ้า pattern ถูกสร้างจาก input ของผู้ใช้ หรือ match กับ input ของผู้ใช้ catastrophic backtracking คือความเสี่ยง denial-of-service จริง ไม่ใช่แค่เรื่อง performance ที่น่าสนใจเฉย ๆ
+
+## เมื่อไหร่ `str` method ดีกว่า regex
+
+regex คือของเกินความจำเป็น — เขียนช้ากว่า อ่านยากกว่า และมักรันช้ากว่า — สำหรับการตรวจสอบที่ string method ธรรมดาแสดงออกได้ตรง ๆ อยู่แล้ว:
+
+export const pg6Code = `
+import re
+
+path = "/api/v2/users"
+
+# str methods beat regex for fixed, literal checks
+print(path.startswith("/api/"))
+print(path.split("/"))
+print(path.removeprefix("/api/v2"))
+print("users" in path)
+
+# unicode \\w matches more than ASCII letters/digits/underscore
+print(re.findall(r"\\w+", "café münchen 42"))
+print(re.findall(r"[A-Za-z0-9_]+", "café münchen 42"))
+`.trim();
+
+<Playground code={pg6Code} />
+
+`startswith`/`endswith` ดีกว่า `re.match(r"^literal")`; `split` ดีกว่า regex ที่ไม่มี pattern จริงอยู่เลย; `removeprefix`/`removesuffix` (3.9+) ดีกว่า regex ที่ใช้แค่ตัด literal string คงที่; `in` ธรรมดาดีกว่า `re.search` สำหรับเช็ค substring ตรงตัว หันไปใช้ `re` เมื่อสิ่งที่กำลังหามี *ความหลากหลาย* ที่ string method ธรรมดาแสดงออกไม่ได้ — เป็นรูปทรง ไม่ใช่ค่าคงที่
+
+ผลลัพธ์ unicode ด้านบนก็ควรจำไว้เช่นกัน: `\w` ภายใต้โหมด default (unicode) ของ `re` match ตัวอักษรอะไรก็ได้ที่ Unicode จัดว่าเป็นตัวอักษร "word" — รวมตัวอักษร Latin ที่มีเครื่องหมายกำกับเสียงด้วย — ไม่ใช่แค่ `[A-Za-z0-9_]` โค้ดที่สมมติว่า `\w` เป็น ASCII อย่างเดียวจะจัดการข้อความที่ไม่ใช่ภาษาอังกฤษผิดแบบเงียบ ๆ
+
+## สัญญาณ regex ที่ AI มักเขียนผิด
+
+- `re.match` ถูกใช้ทั้งที่เจตนาคือ "pattern นี้ปรากฏที่ไหนก็ได้ในสตริง" — `re.match` เช็คแค่จุดเริ่มของ string; `re.search` แทบจะเป็นตัวที่ตั้งใจใช้จริงเสมอ
+- pattern ที่สร้างจากการเอา variable ที่มาจาก user input มาต่อ string หรือใส่ใน f-string โดยไม่ใส่ `re.escape` รอบตัวแปรนั้น
+- รูปทรง nested quantifier อย่าง `(.*)*`, `(a+)+`, หรือ `(\w*)*` — ผู้ต้องสงสัย catastrophic backtracking โดยเฉพาะถ้า input มาจากนอกโปรแกรมได้
+- string ธรรมดา (ไม่ raw) ถูกใช้เป็น regex pattern — ไม่มี `r` นำหน้า — โดยอาศัยความบังเอิญที่ escape sequence ส่วนใหญ่ไม่ชนกับของ Python ที่รู้จัก
+- `re.compile` ถูกสร้างใหม่ใน hot loop ทั้งที่ pattern เปลี่ยนจริง ๆ ทุกครั้ง โดยคิดว่าต้องยกออกมาเพื่อ performance — module cache ทำให้เรื่องนี้แทบไม่สำคัญแล้ว เว้นแต่ pattern text เองเปลี่ยนทุกครั้งที่เรียก
+- regex ถูกใช้ validate หรือ parse สิ่งที่มี parser จริงอยู่ใน stdlib แล้ว (URL, JSON, วันที่, file path) — regex จัดการ pattern ระดับ *lexical* ไม่ใช่โครงสร้างซ้อน/recursive
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อ regex ที่ AI สร้างให้ ให้ตรวจสอบ:
+
+- `re.match` ถูกใช้หา substring ที่ไม่รับประกันว่าอยู่ที่ index 0 — คืน `None` แบบเงียบ ๆ สำหรับ input ที่ถูกต้องเป๊ะแต่แค่ไม่ได้ขึ้นต้นด้วย pattern
+- pattern ที่ประกอบจาก user input ที่ไม่ได้ escape — metacharacter ใน input นั้นเปลี่ยนความหมายจริงของ pattern และ `re.escape` คือทางแก้
+- nested quantifier ทับ character class เดียวกัน (`(.*)*`, `(a+)+`) — ความเสี่ยง catastrophic backtracking ที่จะโผล่มาก็ต่อเมื่อ input ยาวพอ
+- regex pattern string ที่ขาด `r` นำหน้า
+
+<SpotTheBug code={`import re
+
+
+def find_error_code(log_line: str, code: str) -> bool:
+    """Check whether \`code\` (typed by a user into a search box) appears in log_line."""
+    return bool(re.match(code, log_line))
+
+
+line = "2026-09-22 ERROR-500 payment failed"
+print(find_error_code(line, "ERROR-500"))     # expected True, mid-string
+print(find_error_code(line, "2026-09-22"))    # True only because it happens to be at index 0
+print(find_error_code(line, "."))             # user types a lone "." and it matches everything`} lang="python">
+สอง bug ข้อแรก `re.match` ยึดตำแหน่งที่ index 0 -- หา `"ERROR-500"` ใน `"2026-09-22 ERROR-500 payment failed"` แล้วได้ `None` (verified: `find_error_code` พิมพ์ `False`) ทั้งที่ข้อความอยู่ตรงกลางบรรทัดนั้นแท้ ๆ; `re.search` คือตัวที่ตั้งใจใช้จริง ข้อสอง `code` เป็น user input ที่ส่งตรงเข้า `re.match` โดยไม่มี `re.escape` -- ผู้ใช้ที่พิมพ์ `.` ตัวเดียว (คำค้นที่ดูไม่มีพิษภัย) จะได้ pattern ที่ match ทุกบรรทัดจริง ๆ เพราะ `.` แปลว่า "ตัวอักษรอะไรก็ได้" สำหรับ `re` ไม่ใช่จุดตรงตัว แก้ด้วย: `bool(re.search(re.escape(code), log_line))`
+</SpotTheBug>
+
+<Callout title="Escape user input, search แทน match, และระวัง nested quantifier">
+`re.search` (ไม่ใช่ `re.match`) แทบจะเป็นค่า default ที่ถูกต้องเสมอสำหรับ "pattern นี้ปรากฏในข้อความนี้ไหม" pattern text ใด ๆ ที่สร้างจากภายนอกโปรแกรมต้องผ่าน `re.escape` ก่อน และ pattern รูปทรง `(X+)+` ที่เจอ input ที่ผู้โจมตีควบคุมได้ คือความเสี่ยง denial-of-service จริง แก้ได้ตั้งแต่ 3.11 ด้วย possessive quantifier หรือ atomic group
+</Callout>
+
+## Mental Model
+
+regex engine คือ virtual machine เล็ก ๆ ที่พยายามเดินไปตาม pattern กับ string พร้อมกัน โดย backtrack (ยกเลิกตัวเลือก greedy แล้วลองตัวสั้นกว่า) ทุกครั้งที่ส่วนที่เหลือของ pattern match กับสิ่งที่เหลือไม่ได้ `match`/`search`/`fullmatch` เปลี่ยนแค่ *ตำแหน่ง* ที่การเดินนี้ได้รับอนุญาตให้เริ่มและจบ; กลไกการเดินและ backtrack ข้างใต้เหมือนกันทั้งสามตัว catastrophic backtracking คือสิ่งที่เกิดขึ้นเมื่อ pattern ให้ engine มีวิธีที่ valid เท่า ๆ กันหลายวิธีในการมาถึงตำแหน่งเดียวกัน — มันไม่จำว่า "ลองแบบนี้ไปแล้ว" จึงทำงานซ้ำแบบ exponential
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| `re.search` แทน `re.match` เป็นค่า default | ตรงกับเจตนาจริง ("pattern นี้มีอยู่ไหม") ในเกือบทุกกรณี | การยึดตำแหน่งของ `match` ลืมง่ายว่าเป็นข้อจำกัดจนกว่าจะคืน `None` แบบเงียบ ๆ |
+| `re.compile` ระดับ module scope | อ่านง่าย เห็น flag ที่เดียว | ส่วนใหญ่เป็นแค่ความอ่านง่ายตอนนี้ — cache ภายในหลีกเลี่ยงการ compile ซ้ำของ (pattern, flag) เดิมอยู่แล้ว |
+| pattern แบบ `re.X` (verbose) | อธิบายตัวเองได้ ใส่ comment ในตัวได้ | whitespace ในตัว pattern ต้อง escape ชัดเจน (`\ ` หรือ `[ ]`) เพราะ space ตรง ๆ ถูกมองข้าม |
+| Possessive quantifier / atomic group | กำจัด catastrophic backtracking ของ group ที่ครอบไว้ | group ที่ครอบไว้ backtrack *ไม่ได้เลย* — pattern ที่เคยพึ่ง backtrack นั้นเพื่อ match input ที่ valid อาจเริ่ม fail |
+| `str` method ธรรมดาแทน regex | เร็วกว่า อ่านง่ายกว่าสำหรับการตรวจสอบแบบคงที่/ตรงตัว | แสดงความหลากหลาย (character class, การซ้ำ, ทางเลือก) ไม่ได้ — หันไปใช้ `re` ทันทีที่เป้าหมายมี *รูปทรง* ไม่ใช่ค่าคงที่ |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"`re.match` เช็คว่า pattern ปรากฏอยู่ใน string หรือไม่"** มันเช็คแค่ *จุดเริ่ม* ของ string เท่านั้น `re.search` เช็คได้ทุกที่; `re.match(pattern, s)` ทำงานเหมือน `re.search(f"^{pattern}", s)` (เมื่อ `re.M` ปิดอยู่)
+- **"pattern ที่ไม่มี `r` นำหน้าก็ใช้ได้ตราบใดที่ดูถูกต้อง"** มันถูกต้องแค่โดยบังเอิญ — ทันทีที่ pattern ต้องการ `\n`, `\t`, หรือ escape ที่ Python รู้จักตัวอื่น ความหมายจะเปลี่ยนไปเงียบ ๆ แทนที่จะถึง `re` ตามที่พิมพ์ไว้
+- **"การ compile pattern ด้วย `re.compile` ในฟังก์ชันเป็นความผิดพลาดด้าน performance"** module-level cache กำจัดการซ้ำของ `(pattern, flag)` เดิมให้อยู่แล้ว; ต้นทุนจริงของการ *ไม่* ใช้ `re.compile` คือความอ่านง่าย (flag ถูกพิมพ์ซ้ำทุกจุดเรียก) ไม่ใช่การ compile ซ้ำ
+- **"`\w` match แค่ `[A-Za-z0-9_]`"** โดย default `re` ทำงานในโหมด unicode และ `\w` match ตัวอักษรอะไรก็ได้ที่ Unicode จัดว่าเป็นตัวอักษรตัวเลข ไม่ใช่แค่ ASCII — verified แล้วด้านบนด้วย `café münchen`
+- **"catastrophic backtracking เป็นแค่เรื่องทางทฤษฎี ไม่ใช่ bug จริง"** เวลาที่วัดด้านบนเป็นของจริง วัดได้จริง และโตจากมิลลิวินาทีไปเป็นนาทีไปเป็นนานกว่าอายุขัยมนุษย์ด้วยความยาว input ที่เพิ่มแบบเชิงเส้น — นี่คือความเสี่ยง denial-of-service จริงสำหรับ pattern รูปทรง `(X+)+` ที่เจอ input ที่ผู้โจมตีควบคุมได้
+
+export const quizRegex = [
+    {
+        q: "`re.compile(r'\\d+').match('room 12')` คืนอะไร และทำไม?",
+        options: [
+            "A Match object for '12' -- match scans the whole string",
+            "None -- match only checks starting at index 0, and 'room 12' doesn't start with a digit",
+            "A Match object for 'room' -- match is case-insensitive by default",
+            "Raises a ValueError because there's no digit at the start"
+        ],
+        answer: 1,
+        explain: "match ยึดตำแหน่งที่ index 0 'room 12' ขึ้นต้นด้วย 'r' ไม่ใช่ตัวเลข ดังนั้น match จึงคืน None ทั้งที่ '12' ปรากฏอยู่ในสตริงจริง -- search จะเจอมัน"
+    },
+    {
+        q: "ทำไม `re.compile(r'\\d+') is re.compile(r'\\d+')` ถึงคืน `True`?",
+        options: [
+            "re.compile always returns the same singleton object for any pattern",
+            "re.compile is backed by a small internal cache keyed on (pattern text, flags) -- an identical call reuses the cached Pattern object instead of recompiling",
+            "Python interns all string literals, so the two calls receive the same argument object",
+            "This is undefined behaviour and could be False on a different run"
+        ],
+        answer: 1,
+        explain: "re._compile เก็บ cache สูงสุด re._MAXCACHE (512) entry คีย์ด้วย pattern text และ flag ที่ตรงเป๊ะ การเรียกครั้งที่สองด้วย argument เดิมเจอ cache hit และคืน object เดิม -- verified ด้วย 'is' ข้างบน flag ที่ต่างกันคือ cache miss และคืน object คนละตัว"
+    },
+    {
+        q: "```python\nimport re\nhtml = \"<b>bold</b> and <i>italic</i>\"\nprint(re.search(r\"<.*>\", html).group())\n```\nโค้ดนี้พิมพ์อะไร?",
+        options: [
+            "<b>",
+            "<b>bold</b> and <i>italic</i>",
+            "<b>bold</b>",
+            "An empty string"
+        ],
+        answer: 1,
+        explain: "`.*` เป็น greedy: มันกินให้มากที่สุดเท่าที่ทำได้ จึงกินทุกอย่างไปจนถึง '>' ตัว *สุดท้าย* ในสตริง ไม่ใช่ตัวแรก substring ทั้งก้อนตั้งแต่ '<' ตัวแรกถึง '>' ตัวสุดท้ายถูกคืนกลับมา ถ้าเป็น `<.*?>` แบบ lazy จะคืนแค่ '<b>'"
+    },
+    {
+        q: "flag ตัวไหนที่ทำให้ `^` และ `$` match ที่ขอบเขตทุกบรรทัดแทนที่จะเป็นแค่จุดเริ่ม/จบของทั้ง string?",
+        options: [
+            "re.S (DOTALL)",
+            "re.X (VERBOSE)",
+            "re.M (MULTILINE)",
+            "re.I (IGNORECASE)"
+        ],
+        answer: 2,
+        explain: "re.M (MULTILINE) ทำให้ ^ match ทันทีหลังทุก newline และ $ match ทันทีก่อนทุก newline นอกเหนือจากจุดเริ่ม/จบของทั้ง string re.S เปลี่ยนสิ่งที่ '.' match (เพิ่ม newline) ไม่เกี่ยวกับ ^/$ เลย"
+    },
+    {
+        q: "```python\nimport re\nuser_input = \"3.14 (pi)\"\ntext = \"value is 3.14 (pi) exactly\"\nprint(bool(re.search(user_input, text)))\nprint(bool(re.search(re.escape(user_input), text)))\n```\nโค้ดนี้พิมพ์อะไร?",
+        options: [
+            "True then True -- the pattern matches the literal substring either way",
+            "False then True -- unescaped, '.' and the parentheses change what the pattern means; escaped, it matches the literal text",
+            "True then False -- escaping breaks the match",
+            "Both raise re.error because of the unmatched parenthesis"
+        ],
+        answer: 1,
+        explain: "ถ้าไม่ escape '.' แปลว่า 'ตัวอักษรอะไรก็ได้' และ '(pi)' ถูกตีความเป็น capturing group -- วงเล็บไม่ใช่ตัวอักษรตรงตัว ดังนั้น pattern จริง ๆ ต้องการ 'pi' ทันทีหลัง '3X14 ' โดยไม่มี '(' คั่น ซึ่งข้อความไม่มีแบบนั้น -- search จึงคืน None/False re.escape ทำให้ทุกตัวอักษรตรงตัว การค้นหาครั้งที่สองจึงเจอ substring ตรงเป๊ะและคืน True"
+    },
+    {
+        q: "ทำไม `(a+)+b` ที่ match กับสตริงยาว ๆ ที่มีแต่ตัวอักษร 'a' (ไม่มี 'b' ต่อท้าย) ถึงช้าลงแบบ catastrophic เมื่อ string ยาวขึ้น?",
+        options: [
+            "Because 're' switches to a slower fallback algorithm for long strings",
+            "Because the nested quantifiers create an exponential number of ways to split the 'a' run between the inner and outer group, and the engine tries all of them before failing",
+            "Because Python strings longer than 20 characters are stored differently",
+            "It doesn't -- the timing is actually constant regardless of length"
+        ],
+        answer: 1,
+        explain: "quantifier 'หนึ่งตัวขึ้นไป' สองชั้นทับ input ที่ทับซ้อนกันให้ engine มีวิธีมาถึงตำแหน่งเดียวกันหลายแบบก่อนจะสรุปได้ว่าไม่มี 'b' ต่อท้าย จำนวนวิธีแบ่งที่เท่ากันนี้โตแบบ exponential ตามความยาว input -- verified แล้ว: ช้าลงประมาณ 4 เท่าทุก ๆ 2 ตัวอักษรที่เพิ่มขึ้นใน demo จับเวลาของบทนี้"
+    },
+    {
+        q: "possessive quantifier (`*+`, `++`) และ atomic group (`(?>...)`) แก้ catastrophic backtracking ได้อย่างไร?",
+        options: [
+            "They make the regex engine run on multiple threads",
+            "They tell the engine to never backtrack into the wrapped group once it has matched -- eliminating the exponential re-trying of splits, at the cost of that group being unable to give characters back if a later part of the pattern needs it to",
+            "They automatically rewrite (a+)+b into a non-nested equivalent pattern",
+            "They only work when combined with the re.S flag"
+        ],
+        answer: 1,
+        explain: "ทั้งสองอย่างยึดมั่นกับสิ่งที่ group match ไปแล้ว -- engine จะไม่ย้อนกลับมาลองแบ่งแบบอื่นอีก นี่คือตัวเลือกเดียวกับที่เคยระเบิดแบบ combinatorial ก่อนหน้านี้พอดี เวลาจึงลดจาก exponential เหลือแบนราบ -- verified ใน demo ของบทนี้ (ต่ำกว่ามิลลิวินาทีทุกความยาวที่ทดสอบ เทียบกับสูงสุด 0.47 วินาทีของ pattern ที่ยังไม่แก้ที่แค่ 24 ตัวอักษร) รองรับใน re ตั้งแต่ Python 3.11"
+    },
+    {
+        q: "ข้อไหนควรใช้ `str` method ธรรมดาแทน `re`?",
+        options: [
+            "Checking whether a string contains one or more digits in a row",
+            "Checking whether a path starts with a fixed literal prefix like '/api/'",
+            "Extracting all email-shaped substrings from a block of text",
+            "Validating a date shaped like YYYY-MM-DD"
+        ],
+        answer: 1,
+        explain: "startswith('/api/') เป็นการตรวจสอบ literal คงที่ที่ไม่มีความหลากหลายให้แสดงออก -- str.startswith เร็วกว่าและชัดกว่า re.match(r'^/api/', s) อีกสามข้อล้วนมี *รูปทรง* (ตัวเลข, รูปแบบอีเมล, รูปแบบวันที่) ที่ string method ธรรมดาแสดงออกไม่ได้ ซึ่งเป็นจุดที่ re คุ้มค่ากับความซับซ้อนของมันจริง ๆ"
+    },
+];
+
+<Quiz client:visible id="stdlib-testing-tooling/regex" questions={quizRegex} />
+
+<ProgressTracker client:visible id="stdlib-testing-tooling/regex" />

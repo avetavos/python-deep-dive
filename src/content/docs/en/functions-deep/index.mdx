@@ -9,6 +9,7 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Functions are first-class objects
 
@@ -73,6 +74,112 @@ for op in ops:
 
 <Playground code={indexDemoCode} />
 
+## Dispatching on data instead of an if/elif chain
+
+Because functions are ordinary values, they can be stored as dict **values**, keyed by whatever selects the behavior — a string, an enum, a type. Looking a function up in a dict and calling it replaces a long `if/elif` chain with one dict lookup, and adding a new case means adding one entry instead of one more `elif`.
+
+export const indexDispatchCode = `
+def area_circle(r):
+    return 3.14159 * r ** 2
+
+def area_square(s):
+    return s ** 2
+
+def area_rectangle(w, h):
+    return w * h
+
+# Dict dispatch instead of an if/elif chain
+SHAPE_AREA = {
+    "circle": area_circle,
+    "square": area_square,
+    "rectangle": area_rectangle,
+}
+
+def compute_area(shape, *args):
+    handler = SHAPE_AREA.get(shape)
+    if handler is None:
+        raise ValueError(f"unknown shape: {shape}")
+    return handler(*args)
+
+print(compute_area("circle", 2))
+print(compute_area("square", 3))
+print(compute_area("rectangle", 2, 5))
+
+# callable() asks "does this support ()?" for any object, not just def-defined functions
+print(callable(area_circle))
+print(callable(SHAPE_AREA))
+print(callable(42))
+
+try:
+    compute_area("triangle", 1, 2)
+except ValueError as e:
+    print(type(e).__name__ + ":", e)
+`.trim();
+
+<Playground code={indexDispatchCode} />
+
+`SHAPE_AREA.get(shape)` returns `None` for an unregistered shape, which `compute_area` turns into an explicit `ValueError` — the dict-dispatch equivalent of an `if/elif` chain's final `else`. `callable(x)` is the general-purpose check for "can I put `()` after this?": it is `True` for plain functions, but `False` for a dict — even one whose *values* are all functions.
+
+## Recursion: a limit, and no tail-call optimization
+
+A recursive function calls itself to make progress toward a base case. Every call keeps its own stack frame alive until it returns — CPython performs **no tail-call optimization**, so this is true even when the recursive call is the very last thing a function does. `sys.getrecursionlimit()` reports how many nested calls Python allows before giving up with `RecursionError`, not a stack overflow crash.
+
+export const indexRecursionCode = `
+import sys
+
+def count_down(n):
+    if n <= 0:
+        return "liftoff"
+    return count_down(n - 1)  # not tail-call optimized -- Python keeps every frame
+
+print("recursion limit:", sys.getrecursionlimit())
+print(count_down(50))
+
+def infinite_recursion(n):
+    return infinite_recursion(n + 1)
+
+try:
+    infinite_recursion(0)
+except RecursionError as e:
+    print(type(e).__name__ + ":", e)
+`.trim();
+
+<Playground code={indexRecursionCode} />
+
+`count_down(50)` only needs 50 nested calls, well under the default limit of 1000, so it returns normally. `infinite_recursion` has no base case at all — every call recurses again — so it always runs into the recursion limit and Python raises `RecursionError` rather than exhausting all available memory.
+
+## Mental Model
+
+A function is just an object with one extra super-power: put `()` after it and it runs. Everything the rest of this module teaches — closures, decorators, generators, `*args`/`**kwargs` — is built on that one fact. A dict mapping strings to functions (like `{"circle": area_circle}`) works because functions are ordinary values that can sit anywhere a value can; `callable(obj)` asks whether `obj` supports `()`, for any object at all, not just things defined with `def`.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Dict dispatch instead of `if`/`elif` | A new case is one dict entry, not one more branch; the mapping itself is data you can build, extend, or inspect at runtime | A missing key raises `KeyError` (or is silently ignored with `.get`) instead of Python telling you which `elif` you forgot to write |
+| Recursion instead of a loop | Mirrors the problem's own recursive structure; often shorter and closer to the definition | Every call keeps its stack frame alive — no tail-call optimization in CPython — so deep recursion costs real memory and can hit `sys.getrecursionlimit()` |
+
+## Common Misconceptions
+
+- **"Python optimizes tail-recursive calls the way some other languages do"** — fact: CPython performs no tail-call optimization at all; a recursive function that would run forever will eventually raise `RecursionError`, no matter how the recursive call is positioned.
+- **"A `KeyError` from a dispatch dict means the dict itself is broken"** — fact: it usually means the *input* didn't match any registered case — exactly the situation an `if/elif` chain would fall through to its final `else` for, just reported as an exception instead of silent fallthrough.
+- **"`callable(x)` tells you `x` is a function"** — fact: it tells you `x` supports being called with `()`. Classes, bound methods, and any instance whose class defines `__call__` are all callable without being functions.
+
+## Reading AI-generated code
+
+- Does a dict-based dispatch table have a fallback for an unregistered key (`.get(key, default)`, or a `try/except KeyError`) — or does a missing key crash the whole call chain with an unhandled exception?
+- Does a recursive function have a base case at all, and can every possible input actually reach it — or does the base case depend on a condition the arguments can never satisfy?
+- Is deep, unbounded recursion used where an equivalent loop would use a small, constant amount of stack space regardless of input size?
+- Is `callable(x)` used where a check like `isinstance(x, SomeClass)` was actually meant — the two ask different questions and are not interchangeable?
+
+<SpotTheBug code={`def factorial(n):
+    return n * factorial(n - 1)
+
+
+print(factorial(5))`}>
+`factorial` has no base case — every call makes another recursive call, including `factorial(0)`, `factorial(-1)`, `factorial(-2)`, and so on forever. Verified on Python 3.14: this never reaches a correct answer; it recurses until the call stack exceeds `sys.getrecursionlimit()` and Python raises `RecursionError: maximum recursion depth exceeded`. The fix is a base case that stops the recursion, e.g. `if n <= 1: return 1` before the recursive line — the same shape of bug as an `if/elif` chain or dict-dispatch table with no case for some inputs, just discovered through a stack of calls instead of a single lookup.
+</SpotTheBug>
+
 <Callout title="Functions are objects">
 Every Python function is an instance of the built-in `function` type. You can inspect it:
 `type(greet)` returns `<class 'function'>`. This is why passing functions to `map()`, `sorted()`,
@@ -88,12 +195,14 @@ export const quizIndex = [
       "Functions defined at module level have global scope",
       "Functions are compiled before execution"
     ],
-    answer: 1
+    answer: 1,
+    explain: "First-class means functions are ordinary values in Python — they can be assigned to variables, stored in data structures, passed as arguments, and returned from other functions, with no special syntax required."
   },
   {
     q: "Which built-in function accepts a function and an iterable as arguments?",
     options: ["apply()", "map()", "call()", "exec()"],
-    answer: 1
+    answer: 1,
+    explain: "map(fn, iterable) calls fn on every element of iterable and returns an iterator of the results — this only works because fn is an ordinary value that map() can accept and call."
   },
   {
     q: "After writing `f = greet`, which statement is true?",
@@ -103,7 +212,41 @@ export const quizIndex = [
       "f and greet reference the same function object",
       "f is only callable if greet is deleted first"
     ],
-    answer: 2
+    answer: 2,
+    explain: "Assignment never copies in Python — f = greet makes f a second name bound to the exact same function object as greet. Calling f(...) and calling greet(...) run the identical underlying function."
+  },
+  {
+    q: "What does this print?\n\nops = {\"add\": lambda a, b: a + b, \"sub\": lambda a, b: a - b}\n\ndef calc(op, a, b):\n    return ops[op](a, b)\n\nprint(calc(\"add\", 2, 3))\nprint(calc(\"mul\", 2, 3))",
+    options: [
+      "5\n-1",
+      "5\nKeyError: 'mul'",
+      "5\nNone",
+      "TypeError: 'mul' is not callable"
+    ],
+    answer: 1,
+    explain: "calc(\"add\", 2, 3) looks up \"add\" in ops and calls the matching lambda, printing 5. calc(\"mul\", 2, 3) looks up a key that was never registered in ops — ops[op] raises KeyError: 'mul' before any call happens, the same situation an if/elif chain would reach its final else for, just as an exception instead of a silent fallback."
+  },
+  {
+    q: "What happens when this runs?\n\ndef countdown(n):\n    return countdown(n - 1)\n\ncountdown(0)",
+    options: [
+      "Returns None immediately",
+      "Loops forever without ever raising an error",
+      "Raises RecursionError: maximum recursion depth exceeded",
+      "Raises StopIteration"
+    ],
+    answer: 2,
+    explain: "countdown has no base case that ever stops the recursion — every call makes another call. Since CPython performs no tail-call optimization, each call keeps its own stack frame; once the number of frames exceeds sys.getrecursionlimit() (1000 by default), Python raises RecursionError: maximum recursion depth exceeded."
+  },
+  {
+    q: "What does `callable(5)` return, and why?",
+    options: [
+      "True — every Python object is callable",
+      "False — int instances do not implement __call__",
+      "True — because 5 is a literal, not a variable",
+      "It raises TypeError"
+    ],
+    answer: 1,
+    explain: "callable(x) is True only when x's type implements __call__, meaning x supports being followed by (). Functions, classes, and instances of classes that define __call__ are callable; an int like 5 has no __call__, so callable(5) is False."
   }
 ];
 

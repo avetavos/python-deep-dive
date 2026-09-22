@@ -1,6 +1,6 @@
 ---
-title: Properties และ Class Methods
-description: '@property สำหรับ getters/setters, computed attributes, @classmethod และ @staticmethod ใน Python'
+title: Properties and Class Methods
+description: '@property ในฐานะ descriptor, การเขียน descriptor เอง, cached_property, @classmethod ที่ return Self และ @staticmethod ใน Python'
 sidebar:
   order: 4
 ---
@@ -9,11 +9,13 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Decorator `@property`
 
-`@property` เปลี่ยน method ให้เป็น attribute-style accessor
-ผู้เรียกใช้ `obj.celsius` แทน `obj.get_celsius()` ทำให้ public API สะอาดโดยยังเรียก validation logic ได้เบื้องหลัง
+`@property` เปลี่ยน method ให้เป็น accessor แบบ attribute
+ผู้เรียกใช้ `obj.celsius` แทน `obj.get_celsius()` ทำให้ public API สะอาดในขณะที่ validation logic ยังทำงานอยู่เบื้องหลัง
 
 ```python
 class Temperature:
@@ -27,7 +29,7 @@ class Temperature:
 
 ## Setters
 
-จับคู่ `@property` กับ `@name.setter` เพื่อ intercept การ assign ค่า:
+จับคู่ `@property` กับ `@name.setter` เพื่อดัก assignment:
 
 ```python
     @celsius.setter
@@ -37,12 +39,12 @@ class Temperature:
         self._celsius = value
 ```
 
-ตอนนี้ `t.celsius = -300` จะ raise `ValueError` อัตโนมัติ
-หากไม่มี setter, property จะเป็น read-only — การ assign จะ raise `AttributeError`
+ตอนนี้ `t.celsius = -300` raise `ValueError` อัตโนมัติ
+ถ้าไม่มี setter property จะ read-only — การพยายาม assign จะ raise `AttributeError`
 
 ## Computed (derived) properties
 
-Property คำนวณค่าตอนถูกเรียกได้ โดยไม่ต้องมีพื้นที่จัดเก็บเบื้องหลัง:
+Property คำนวณค่าสดๆ ได้โดยไม่มีที่เก็บข้อมูล:
 
 ```python
     @property
@@ -50,12 +52,56 @@ Property คำนวณค่าตอนถูกเรียกได้ โ�
         return self._celsius * 9 / 5 + 32
 ```
 
-`t.fahrenheit` ดูเหมือน plain attribute สำหรับผู้เรียก แต่คำนวณใหม่ทุกครั้ง
+`t.fahrenheit` ดูเหมือน attribute ธรรมดาสำหรับผู้เรียกใช้ แต่มันถูกคำนวณใหม่ทุกครั้ง
 
-## `@classmethod` — alternative constructors
+## `property` *คือ* descriptor — เขียนของตัวเองใน 10 บรรทัด
+
+`@property` ไม่ใช่ syntax พิเศษที่ interpreter hard-code ไว้ — มันคือ class ชื่อ `property` ที่ implement **descriptor protocol**: `__get__`, `__set__` และ `__delete__` (ถ้าต้องการ) Class ไหนก็ตามที่ implement method เหล่านี้และถูกเก็บเป็น attribute ระดับ *class* จะทำงานแบบเดียวกัน นี่คือ descriptor ที่เขียนเองที่ทำ `celsius` property แบบ validate ใหม่ตั้งแต่ต้น ในราวสิบบรรทัด:
+
+```python
+class Celsius:
+    def __set_name__(self, owner: type, name: str) -> None:
+        self.name = f"_{name}"          # remembers the attribute name it's bound to
+
+    def __get__(self, obj: object, objtype: type | None = None) -> float:
+        if obj is None:
+            return self                  # accessed on the class itself, e.g. Thermostat.celsius
+        return getattr(obj, self.name, 0.0)
+
+    def __set__(self, obj: object, value: float) -> None:
+        if value < -273.15:
+            raise ValueError("Temperature below absolute zero!")
+        setattr(obj, self.name, value)
+
+
+class Thermostat:
+    celsius = Celsius()   # a descriptor instance, used exactly like @property
+```
+
+`t.celsius = 21.0` เรียก `Celsius.__set__`; `t.celsius` เรียก `Celsius.__get__` — behavior เหมือนกับ `@property` ที่มี setter ทุกประการ เพราะนั่นคือสิ่งที่ `property` เป็นจริงๆ เบื้องหลัง: `hasattr(property, "__get__")` และ `hasattr(property, "__set__")` ล้วนเป็น `True` การเข้าใจสิ่งนี้อธิบาย behavior "แปลกๆ" อีกหลายอย่างใน Python: `classmethod`, `staticmethod` และแม้แต่ function เอง (bound method) ล้วนเป็น descriptor ด้วยกันทั้งหมด — การเข้าถึง attribute บน instance จริงๆ แล้วคือ descriptor protocol ที่ทำงานอยู่ ทุกครั้ง
+
+## `functools.cached_property`
+
+`@property` คำนวณใหม่ทุกครั้งที่เข้าถึง `@cached_property` (จาก `functools`) คำนวณค่าครั้งเดียวตอนเข้าถึงครั้งแรก แล้วเก็บเป็น entry ธรรมดาใน `__dict__` ของ instance — การเข้าถึงหลังจากนั้นทุกครั้งเป็นแค่ attribute lookup ธรรมดา (เร็ว) ไม่ใช่การรัน method ใหม่:
+
+```python
+from functools import cached_property
+
+class Report:
+    def __init__(self, rows: list[int]) -> None:
+        self.rows = rows
+
+    @cached_property
+    def total(self) -> int:
+        return sum(self.rows)   # only runs once per instance
+```
+
+`r.total` ที่เข้าถึงสองครั้งรัน method รวมยอดแค่ครั้งเดียว `r.__dict__["total"]` แสดงผลลัพธ์ที่ cache ไว้เป็น attribute ธรรมดาหลังการเข้าถึงครั้งแรก เพราะ cache อยู่ใน `__dict__` `cached_property` จึงต้องการให้ instance มี `__dict__` (จะไม่ทำงานบน class `slots=True` เว้นแต่ `"total"` จะถูกระบุเป็น slot) — และเพราะ cache เป็นแค่ instance attribute การ invalidate มันคือ `del obj.total` ซึ่งบังคับให้การเข้าถึงครั้งถัดไปคำนวณใหม่
+
+## `@classmethod` — alternative constructor
 
 Class method รับ **class** (`cls`) เป็น argument แรกแทน instance
-การใช้งานที่พบบ่อยที่สุดคือการสร้าง alternative constructors:
+การใช้งานที่พบบ่อยที่สุดคือทำ alternative constructor:
 
 ```python
     @classmethod
@@ -68,13 +114,25 @@ boiling = Temperature.from_fahrenheit(212)
 print(boiling.celsius)   # 100.0
 ```
 
-Subclass สืบทอด class method อัตโนมัติและ `cls` จะอ้างถึง subclass — factory จึงสร้าง instance ของ type ที่ถูกต้อง
-Annotate return type ด้วย `typing.Self` (`from typing import Self`) ไม่ใช่ string literal `"Temperature"` — string annotation ทำให้ type checker infer เป็น base class แม้ `cls` จะเป็น subclass ก็ตาม ด้วย annotation แบบเก่า `uvx mypy --strict` บน subclass ที่เพิ่ม method จะรายงานแบบนี้เป๊ะ ๆ: `` "Temperature" has no attribute "to_kelvin"  [attr-defined] `` `Self` แก้ปัญหานี้ได้เพราะมันอ้างถึง class ที่ method ถูกเรียกจริง ๆ เสมอ
+Subclass สืบทอด class method อัตโนมัติและ `cls` จะอ้างถึง subclass — ทำให้ factory สร้าง instance ของ type ที่ถูกต้อง
+Annotate return type ด้วย `typing.Self` (`from typing import Self`) ไม่ใช่ string literal `"Temperature"` — string annotation ทำให้ type checker infer เป็น base class แม้ `cls` จะเป็น subclass ก็ตาม ด้วย annotation แบบเก่า `uvx mypy --strict` บน subclass ที่เพิ่ม method จะรายงานตรงตัวว่า: `` "Temperature" has no attribute "to_kelvin"  [attr-defined] `` `Self` แก้ปัญหานี้เพราะมันอ้างถึง class ที่ถูกเรียกจริงเสมอ — ยืนยันด้วย subclass จริง:
 
-## `@staticmethod` — utility functions
+```python
+class Kelvin(Temperature):
+    def to_kelvin(self) -> float:
+        return self.celsius + 273.15
 
-Static method ไม่รับทั้ง instance และ class
-ใช้สำหรับ utility ที่อยู่ใน class ตามตรรกะแต่ไม่ต้องการ access state ของ class หรือ instance:
+k = Kelvin.from_fahrenheit(32)
+print(type(k))       # <class '__main__.Kelvin'>
+print(k.to_kelvin())  # 273.15 -- only type-checks because from_fahrenheit's return type is Self
+```
+
+`k` เป็น `Kelvin` จริงตอน runtime ไม่ว่า annotation จะเป็นอะไร — แต่มีแค่ `Self` annotation เท่านั้นที่ทำให้ทั้ง `uvx mypy --strict` และ `uvx pyright` ยืนยันว่า `k.to_kelvin()` ถูกต้องโดยไม่ต้อง cast เอง
+
+## `@staticmethod` — utility function
+
+Static method ไม่รับ**ทั้ง**instance และ class
+ใช้กับ utility ที่เป็นของ class ในเชิง logic แต่ไม่ต้องการเข้าถึง class หรือ instance state:
 
 ```python
     @staticmethod
@@ -89,7 +147,57 @@ print(Temperature.absolute_zero())   # -273.15
 ## Demo รันได้จริง
 
 export const propertiesCode = `
+from functools import cached_property
 from typing import Self
+
+
+class Celsius:
+    def __set_name__(self, owner: type, name: str) -> None:
+        self.name = f"_{name}"
+
+    def __get__(self, obj: object, objtype: type | None = None) -> float:
+        if obj is None:
+            return self  # type: ignore[return-value]
+        return getattr(obj, self.name, 0.0)
+
+    def __set__(self, obj: object, value: float) -> None:
+        if value < -273.15:
+            raise ValueError("Temperature below absolute zero!")
+        setattr(obj, self.name, value)
+
+
+class Thermostat:
+    celsius = Celsius()  # a descriptor instance, used exactly like @property
+
+
+t = Thermostat()
+t.celsius = 21.0
+print(t.celsius)
+try:
+    t.celsius = -300
+except ValueError as e:
+    print(f"ValueError: {e}")
+
+print(hasattr(Celsius, "__get__"), hasattr(Celsius, "__set__"))
+print(hasattr(property, "__get__"), hasattr(property, "__set__"))
+
+
+class Report:
+    def __init__(self, rows: list[int]) -> None:
+        self.rows = rows
+        self.builds = 0
+
+    @cached_property
+    def total(self) -> int:
+        self.builds += 1
+        return sum(self.rows)
+
+
+r = Report([1, 2, 3])
+print(r.total)
+print(r.total)
+print(r.builds)  # computed once -- cached_property stores the result in the instance __dict__
+print(r.__dict__["total"])  # the cache IS an ordinary instance attribute now
 
 
 class Temperature:
@@ -119,64 +227,187 @@ class Temperature:
         return -273.15
 
 
-t = Temperature(100)
-print(t.celsius)
-print(t.fahrenheit)
-t.celsius = 0
-print(t.fahrenheit)
-t2 = Temperature.from_fahrenheit(212)
+t2 = Temperature(100)
 print(t2.celsius)
+print(t2.fahrenheit)
+t2.celsius = 0
+print(t2.fahrenheit)
+t3 = Temperature.from_fahrenheit(212)
+print(t3.celsius)
 print(Temperature.absolute_zero())
+
+
+class Kelvin(Temperature):
+    def to_kelvin(self) -> float:
+        return self.celsius + 273.15
+
+
+k = Kelvin.from_fahrenheit(32)
+print(type(k))
+print(k.to_kelvin())
 `.trim();
 
 <Playground code={propertiesCode} />
 
 <Callout title="Prefer @property over getX/setX methods">
-Java และโค้ด Python รุ่นเก่าใช้ getter/setter methods ที่ชัดเจนเช่น `get_celsius()` และ `set_celsius(value)`
-ใน Python `@property` ให้ validation และ computed values โดยที่ call site ยังดูเหมือน plain attribute access: `t.celsius = 0` แทน `t.set_celsius(0)`
-เริ่มต้นด้วย plain attribute ก่อน แล้วค่อย promote เป็น `@property` ภายหลังเมื่อต้องการ validation หรือ lazy computation — ผู้เรียกไม่จำเป็นต้องเปลี่ยนโค้ด
+Java และ Python รุ่นเก่าใช้ explicit getter/setter method อย่าง `get_celsius()` และ `set_celsius(value)`
+ใน Python, `@property` ให้ validation และ computed value ในขณะที่ call site ยังดูเหมือน plain attribute access: `t.celsius = 0` แทน `t.set_celsius(0)`
+เริ่มจาก plain attribute ธรรมดา แล้วค่อย promote เป็น `@property` ทีหลังถ้าต้องการ validation หรือ lazy computation — ผู้เรียกใช้ไม่ต้องแก้โค้ดเลย
+`@property` เองก็เป็น descriptor ดังนั้นเมื่อคุณโตเกินมันแล้ว — validation ที่ใช้ร่วมกันหลาย class หรือค่าที่คำนวณได้ที่อยากจะ cache — การเขียน descriptor เองหรือใช้ `cached_property` ก็เป็นแค่ก้าวเล็กๆ ไม่ใช่ mental model ใหม่
 </Callout>
+
+## Mental Model
+
+<Mermaid code={`flowchart TD
+  A["obj.attr ="] --> B{"type(obj) defines attr as a data descriptor? (has __set__)"}
+  B -->|"yes"| C["descriptor.__set__(obj, value) runs -- property setter, custom descriptor"]
+  B -->|"no"| D["plain assignment into obj.__dict__['attr']"]
+  E["obj.attr"] --> F{"type(obj) defines attr as a descriptor? (has __get__)"}
+  F -->|"yes, and it's a DATA descriptor (__set__ too)"| G["descriptor wins even over obj.__dict__"]
+  F -->|"yes, but non-data (only __get__, e.g. a plain method)"| H["obj.__dict__ wins if present, else descriptor.__get__ runs"]
+  F -->|"no"| I["obj.__dict__, then the class's MRO"]`} title="Descriptor อยู่ระหว่าง attribute lookup ธรรมดากับ instance __dict__" />
+
+`@property`, `cached_property`, `classmethod`, `staticmethod` และแม้แต่ function ธรรมดาที่เก็บบน class ล้วนเป็น descriptor — กลไกที่ Mental Model เรื่อง attribute lookup ในบท classes พูดกลบไว้ว่าเป็นแค่ "class `__dict__`" **Data descriptor** (มีทั้ง `__get__` และ `__set__` เหมือน `property`) มีความสำคัญเหนือ `__dict__` ของ instance เอง — นั่นคือเหตุผลที่ `@property` ที่ compute ได้ไม่สามารถถูก shadow ด้วย `obj.attr = x` แบบที่ class attribute ธรรมดาถูก shadow ได้ **Non-data descriptor** (มีแค่ `__get__` เหมือน `cached_property` ก่อนเข้าถึงครั้งแรก หรือ method ธรรมดา) แพ้ให้ entry ใน instance `__dict__` ที่ชื่อเดียวกัน — นี่คือวิธีที่ `cached_property` "cache" จริงๆ: หลังเข้าถึงครั้งแรกมันเขียน entry ลง `obj.__dict__` และการ lookup ครั้งถัดไปทุกครั้งจะเจอ entry นั้นก่อนที่ descriptor จะรันอีกครั้ง
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| `@property` | Validation และ computed value ในรูป plain-attribute syntax | คำนวณใหม่ทุกครั้งที่เข้าถึง |
+| Descriptor เอง | Validation/logic ที่ reuse ได้ข้าม class และ attribute หลายตัว | Boilerplate มากกว่า `@property` ตัวเดียว; ต้องเรียนรู้ protocol (`__get__`/`__set__`/`__set_name__`) ครั้งหนึ่ง |
+| `@cached_property` | คำนวณครั้งเดียว จากนั้นเร็วเหมือน attribute ธรรมดา | ต้องการ instance `__dict__` (ใช้กับ `slots=True` ไม่ได้ เว้นแต่ชื่อนั้นเป็น slot); cache ค้างถ้าข้อมูลต้นทางเปลี่ยน |
+| `@classmethod` + `Self` | Alternative constructor ที่ทำงานถูกต้องกับ subclass | Annotate return type เป็น literal ผิด (`"Temperature"` แทน `Self`) ทำลาย type-checking ของ subclass แบบเงียบๆ |
+| `@staticmethod` | จัดกลุ่ม utility function ไว้ใต้ namespace ของ class | ไม่มีสิทธิ์เข้าถึง `self` หรือ `cls` — แยกไม่ออกจาก module-level function ยกเว้นเรื่อง namespace |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **`@property` เป็น syntax พิเศษของ interpreter ไม่เกี่ยวกับ class ธรรมดา** มันเป็น built-in class ธรรมดาที่ implement descriptor protocol (`__get__`/`__set__`) — คุณเขียนเวอร์ชันของตัวเองได้ในราวสิบบรรทัด
+- **Property ที่ไม่มี setter ยังคง assign ได้ แค่ไม่มี validation** มัน assign ไม่ได้เลย — การพยายาม `obj.attr = x` บน property ที่ read-only จะ raise `AttributeError` ไม่ใช่แค่เงียบไปเฉยๆ
+- **`cached_property` รัน function ของมันทุกครั้ง แค่เร็วกว่า** มันรันแค่ครั้งเดียว — การเข้าถึงครั้งแรกเขียนค่าลง instance `__dict__` และการเข้าถึงหลังจากนั้นทุกครั้งเป็นแค่ dict lookup ธรรมดาที่ไม่เรียก function อีกเลย
+- **การ annotate return type ของ classmethod เป็นชื่อ class แบบ literal (`-> "Temperature"`) ถูกต้องพอๆ กับ `Self`** Type checker ยึด literal name ตรงตัวแม้ `cls` จะเป็น subclass ทำให้เกิด `attr-defined` error ปลอมบน method ที่มีแค่ใน subclass; `Self` ติดตาม class ที่ถูกเรียกจริง
+- **`@staticmethod` กับ module-level function ต่างกันอย่างมีนัยสำคัญตอน runtime** พวกมันทำงานเหมือนกันตอนถูกเรียก — ความต่างมีแค่เรื่อง namespace (`ClassName.util()` เทียบกับ free function) และการค้นหาเจอง่ายแค่ไหน
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อ property และ class method ที่ generate มา ตรวจสิ่งเหล่านี้:
+
+- `@classmethod` แบบ alternative constructor ที่ annotate `-> "ClassName"` (string / forward reference ไปยัง literal class) แทน `-> Self` — ทำลาย type-checking แบบเงียบๆ ทันทีที่มีคน subclass มัน
+- `@cached_property` บน class ที่มี `slots=True` โดยไม่มี slot ตั้งชื่อไว้สำหรับ attribute ที่ cache — จะ raise `AttributeError: 'ClassName' object has no attribute '__dict__'` ตอนเข้าถึงครั้งแรก เพราะไม่มีที่เก็บ cache
+- Business logic หรือ side effect (network call, การแก้ state ที่ไม่เกี่ยวข้อง) ซ่อนอยู่ใน `@property` getter — ผู้เรียกใช้ที่อ่าน `obj.attr` ไม่มีสัญญาณทาง syntax เลยว่ามันอาจช้าหรือ fail ได้
+- `__get__` ของ descriptor ที่เขียนเองที่ไม่จัดการ `obj is None` (กรณีที่ descriptor ถูกเข้าถึงบน class เอง เช่น `Thermostat.celsius`) — มันควร return `self` (หรือ sentinel คล้ายกัน) แทนที่จะ crash
+- `@staticmethod` ที่อ้างถึง `self` หรือ `cls` เลย — นั่นเป็นสัญญาณว่าควรเป็น instance หรือ class method แทน
+
+<SpotTheBug code={`class Config:
+    def __init__(self) -> None:
+        self._data = {"retries": 3}
+
+    @property
+    def retries(self) -> int:
+        return self._data["retries"]
+
+    @classmethod
+    def from_env(cls) -> "Config":
+        return cls()
+
+
+class StrictConfig(Config):
+    def validate(self) -> bool:
+        return self.retries > 0
+
+
+cfg = StrictConfig.from_env()
+cfg.validate()`} lang="python">
+`from_env` annotate เป็น `-> "Config"` แทนที่จะเป็น `-> Self` ตอน runtime `StrictConfig.from_env()` return `StrictConfig` จริง ดังนั้น `cfg.validate()` รันได้ปกติ — แต่ type checker ยึด annotation แบบ literal ตรงตัวและ infer `cfg: Config` ซึ่งไม่มี method `validate` ยืนยันแล้ว: `uvx mypy --strict` บนไฟล์นี้รายงาน `"Config" has no attribute "validate"  [attr-defined]` และ `uvx pyright` รายงาน `reportAttributeAccessIssue` ที่เทียบเท่ากัน แม้โค้ดจะรันถูกต้องก็ตาม แก้โดย import `Self` จาก `typing` แล้ว annotate `from_env(cls) -> Self`
+</SpotTheBug>
 
 export const quizProperties = [
   {
     q: "`@property` ทำอะไรกับ method?",
     options: [
-      "ทำให้เป็น class method",
-      "ทำให้เรียกใช้ได้เหมือน attribute (ไม่ต้องมีวงเล็บ)",
-      "ทำให้เป็น private",
-      "Cache ค่า return ตลอดไป"
+      "ทำให้มันเป็น class method",
+      "ทำให้เรียกได้แบบ attribute (ไม่ต้องมีวงเล็บ)",
+      "ทำให้มันเป็น private",
+      "Cache return value ของมันตลอดไป"
     ],
-    answer: 1
+    answer: 1,
+    explain: "@property ให้เข้าถึง method ด้วย syntax attribute ธรรมดา (obj.name ไม่มีวงเล็บ) ในขณะที่ยังรันโค้ดทุกครั้งที่เข้าถึง -- มันไม่ cache อะไรด้วยตัวเอง (นั่นคือหน้าที่ของ cached_property)"
   },
   {
-    q: "จะทำให้ `@property` เขียนได้อย่างไร?",
+    q: "ทำให้ `@property` เขียนได้ (writable) อย่างไร?",
     options: [
       "เพิ่ม `writable=True` ใน decorator",
       "กำหนด setter method ที่ decorate ด้วย `@name.setter`",
       "ใช้ `@property.writable` แทน",
-      "Property เขียนได้เสมอโดย default"
+      "Property เขียนได้โดย default อยู่แล้ว"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Property ที่มีแค่ getter จะ read-only -- การ assign ให้มันจะ raise AttributeError @name.setter คือตัวลงทะเบียน method ที่รันตอน assignment"
   },
   {
-    q: "parameter แรกของ `@classmethod` คืออะไร?",
+    q: "Parameter แรกของ `@classmethod` คืออะไร?",
     options: [
       "self — instance",
       "cls — class เอง",
       "type — metaclass",
-      "ไม่มี parameter เป็น implicit"
+      "ไม่มี parameter มันเป็น implicit"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Classmethod รับ class ที่ถูกเรียก (cls) แทนที่จะเป็น instance -- นั่นคือสิ่งที่ทำให้ cls(...) สร้าง subclass ที่ถูกต้องได้"
   },
   {
-    q: "`@staticmethod` เหมาะสมเมื่อใด?",
+    q: "`@staticmethod` เหมาะกับกรณีไหน?",
     options: [
-      "เมื่อ method ต้องการ access instance state",
+      "เมื่อ method ต้องการเข้าถึง instance state",
       "เมื่อ method ต้องการสร้าง instance ใหม่ผ่าน cls()",
       "เมื่อ method เป็น utility ที่ไม่ต้องการ instance หรือ class",
-      "เมื่อต้องการให้ subclass inherit method แตกต่างออกไป"
+      "เมื่อต้องการให้ subclass สืบทอด method นี้ต่างกัน"
     ],
-    answer: 2
+    answer: 2,
+    explain: "Staticmethod ไม่รับทั้ง self และ cls -- มันเหมาะกับ utility ที่ในเชิง concept เป็นของ namespace ของ class แต่ไม่ต้องการเข้าถึง instance หรือ class state"
+  },
+  {
+    q: "`@property` มีความสัมพันธ์กับ descriptor protocol อย่างไร?",
+    options: [
+      "ไม่เกี่ยวเลย -- property เป็น syntax พิเศษของ interpreter",
+      "property เป็น built-in class ที่ implement __get__ และ __set__",
+      "property ทำงานได้เพราะ __getattr__ เท่านั้น",
+      "property ถูก implement ทั้งหมดใน metaclass ของ class body"
+    ],
+    answer: 1,
+    explain: "property เป็น class ธรรมดาใน builtins ที่ implement descriptor protocol (__get__/__set__/__delete__) Class ไหนที่ implement method เหล่านี้และเก็บเป็น class attribute จะทำงานแบบเดียวกัน -- ยืนยันด้วย hasattr(property, '__get__') ที่เป็น True"
+  },
+  {
+    q: "```python\nclass Report:\n    def __init__(self, rows):\n        self.rows = rows\n        self.calls = 0\n\n    @cached_property\n    def total(self):\n        self.calls += 1\n        return sum(self.rows)\n\nr = Report([1, 2, 3])\nr.total\nr.total\nprint(r.calls)\n```\nโค้ดนี้พิมพ์อะไร?",
+    options: [
+      "0",
+      "1",
+      "2",
+      "AttributeError -- cached_property อ่านได้แค่ครั้งเดียว"
+    ],
+    answer: 1,
+    explain: "cached_property รัน method ตอนเข้าถึงครั้งแรกแล้วเก็บผลลัพธ์ตรงๆ ลง r.__dict__['total'] r.total ครั้งที่สองเจอ entry ใน dict นั้นและไม่เรียก method อีกเลย ดังนั้น calls จึงยังเป็น 1"
+  },
+  {
+    q: "```python\nclass Base:\n    @classmethod\n    def make(cls) -> \"Base\":\n        return cls()\n\nclass Sub(Base):\n    def extra(self) -> str:\n        return \"hi\"\n\ns = Sub.make()\ns.extra()\n```\n`uvx mypy --strict` รายงานอะไร?",
+    options: [
+      "ไม่มี error -- annotation ถูกต้องแล้ว",
+      "\"Base\" has no attribute \"extra\" [attr-defined]",
+      "SyntaxError บน classmethod decorator",
+      "Warning เรื่อง circular import"
+    ],
+    answer: 1,
+    explain: "String annotation -> \"Base\" ทำให้ type checker infer return type ของ make() เป็น Base ตรงๆ แม้เรียกผ่าน Sub mypy --strict รายงาน attr-defined บน s.extra() เพราะ Base ไม่มี method extra การเปลี่ยน annotation เป็น -> Self (จาก typing) แก้ปัญหานี้"
+  },
+  {
+    q: "ทำไม `__get__` ของ descriptor ที่เขียนเองถึงถูกเรียกด้วย `obj=None` ได้?",
+    options: [
+      "มันไม่มีทางเป็นไปได้ -- obj เป็น instance เสมอ",
+      "เกิดขึ้นเมื่อ descriptor ถูกเข้าถึงบน class เอง เช่น Thermostat.celsius แทนที่จะเป็น instance",
+      "เกิดขึ้นเฉพาะตอน descriptor raise exception",
+      "obj เป็น None แค่ตอน __init__"
+    ],
+    answer: 1,
+    explain: "การเข้าถึง descriptor ผ่าน class (ClassName.attr) แทนที่จะเป็น instance จะเรียก __get__ ด้วย obj=None และ objtype ตั้งเป็น class -- __get__ ที่เขียนดีจะตรวจกรณีนี้และ return อะไรที่สมเหตุสมผล (บ่อยครั้งคือ self) แทนที่จะ crash"
   }
 ];
 

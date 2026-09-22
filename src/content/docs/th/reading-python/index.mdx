@@ -1,0 +1,181 @@
+---
+title: How to read Python you did not write
+description: 'ลำดับการอ่านโค้ด Python ที่ไม่คุ้นเคย -- เริ่มจาก mutable data flow แล้วตามด้วย exception path, lifetime ของ task/resource, และอ่าน type hint แบบไม่เชื่อ'
+sidebar:
+  order: 1
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+
+ทุกโมดูลก่อนหน้าในคอร์สนี้สอนให้คุณ *เขียน* Python โมดูลนี้สอนอีกครึ่งหนึ่งของงาน: การอ่านโค้ด Python ที่คนอื่น — หรือสิ่งอื่น — เขียนไว้ แล้วตัดสินว่ามันถูกต้องหรือไม่ AI assistant จะส่งโค้ดที่รันได้ พิมพ์ output ที่ดูสมเหตุสมผล และดูเหมือนตัวอย่างที่ idiomatic ที่คุณเรียนมาทุกประการ การรันได้โดยไม่มี error ไม่เหมือนกับการถูกต้อง คำถามสี่ข้อด้านล่างคือลำดับที่ผู้รีวิว Python ที่มีประสบการณ์ใช้อ่านโค้ดจริง ๆ และทุกบทถัดไปในโมดูลนี้จะเจาะลึกข้อใดข้อหนึ่ง
+
+## ตาม mutable data flow
+
+Python ส่ง argument ทุกตัวแบบ pass-by-object-reference และ object ส่วนใหญ่ที่คุณส่งไปมา — `list`, `dict`, `set` และ instance ของ class ที่ไม่ใช่ `frozen=True` — เป็น mutable ก่อนจะอ่านว่า function *return* อะไร ให้อ่านก่อนว่ามัน *แตะ* อะไรบ้าง:
+
+- function นี้ mutate argument ในที่เดิม, return object ใหม่, หรือทั้งสองอย่าง?
+- ถ้ามัน return object เดิมที่ได้รับมา (`return the_list`) ผู้เรียกคาดหวัง list ใหม่ หรือคาดหวังว่าการ mutate กับค่าที่ return จะเป็นสิ่งเดียวกัน?
+- default argument (`def f(items=[])`) เป็น mutable object ที่ถูกสร้างครั้งเดียวตอน *definition* แล้วถูกแชร์ข้ามทุก call ที่ไม่ได้ส่งของตัวเองมาหรือเปล่า?
+- class attribute ที่ประกาศระดับ class (ไม่ใช่ใน `__init__`) ถูกแชร์ข้ามทุก instance เหมือนที่ module-level variable ถูกแชร์ข้ามทุกผู้เรียกหรือเปล่า?
+
+ทั้งหมดนี้ไม่ต้องรันโค้ดเลย ผู้รีวิวที่อ่าน `def restock(inventory: dict[str, int], item: str, qty: int) -> dict[str, int]:` แล้วเห็น body ทำ `inventory[item] = ...` ก่อน `return inventory` ก็รู้ทันทีว่า: มัน mutate dict ของผู้เรียก *และ* คืน object เดิมกลับมา — สิ่งต่อไปที่ต้องเช็คคือผู้เรียกทุกตัวคาดหวังแบบนั้นหรือเปล่า
+
+## ตาม exception path
+
+`try`/`except` ของ Python เป็น opt-in ไม่ได้ถูกบังคับโดย compiler แบบที่ error return ของ Go หรือ Rust เป็น — ไม่มีอะไรบังคับให้ผู้เรียกสังเกตว่า function สามารถ raise ได้ การอ่าน function ให้ดีคือการตาม path ความล้มเหลวทุกทาง ไม่ใช่แค่ happy-path `return`:
+
+- function raise อะไร ภายใต้เงื่อนไขไหน? มีเอกสารระบุไว้ที่ไหน หรือรู้ได้จากการอ่าน body เท่านั้น?
+- มี `except Exception` (หรือ bare `except:`) ที่กว้างเกินไปอยู่ระหว่างจุด raise กับจุดที่ควรจะถูก handle หรือเปล่า — และมันกลืน failure mode มากกว่าตัวเดียวที่ตั้งใจจะจับหรือเปล่า?
+- มี `assert` อยู่ในจุดที่ควรเป็น input validation จริงหรือเปล่า? `assert` หายไปทั้งหมดภายใต้ `python -O`
+- ใน async code มี `except Exception` (หรือกว้างกว่านั้นคือ `except BaseException`) คั่นอยู่ระหว่าง task กับการ `.cancel()` ของมัน — กลืน cancellation ไปเองหรือเปล่า?
+
+บทที่รวบรวมว่าโค้ดที่ AI generate ทำผิดตรงนี้อย่างไรบ้างคือ **[The AI Bug Catalog](/python/th/reading-python/ai-bug-catalog/)** — หน้านี้ถือว่าคุณรู้ `try`/`except`/`finally` จากบท [Exceptions](/python/th/typing-errors/exceptions/) แล้ว และจะฝึกให้คุณจับจุดที่ละเมิดกฎเหล่านั้นแทน
+
+## ตาม lifetime ของ task และ resource
+
+อะไรก็ตามที่มี `.close()`, `with` block หรือการเรียก `create_task()` มี lifetime ที่ Python ไม่ได้ track ให้อัตโนมัติ สำหรับ resource หรือ task ที่ถูกสร้างขึ้นทุกตัว ให้ถามว่า:
+
+- ใครมีหน้าที่ปิดมัน — function ที่เปิดมัน หรืออะไรก็ตามที่มันถูกส่งต่อไปให้?
+- การ release ถูกรับประกันในทุก path หรือเปล่า รวมถึง early `return` หรือ exception ที่ raise — ปกติผ่าน `with` ไม่ใช่ `.close()` เปล่า ๆ ท้าย function?
+- สำหรับการเรียก `asyncio.create_task(...)`: return value (`Task` object) ถูกเก็บไว้ที่ไหนหรือเปล่า? task ที่ไม่มีใครอ้างอิงถึงสามารถถูก garbage-collect ก่อนที่มันจะทำงานเสร็จได้ ทำให้งานที่มันกำลังทำหายไปแบบเงียบ ๆ
+- มีอะไร `await` task นั้นบ้างไหม เพื่อให้ exception ที่ raise ข้างในมันโผล่ออกมาจริง ๆ แทนที่จะหายไปเฉย ๆ?
+
+## อ่าน type hint แบบไม่เชื่อ
+
+type hint คือคำกล่าวอ้าง ไม่ใช่การรับประกัน ไม่มีอะไรเช็คมันตอน runtime เว้นแต่คุณจะเพิ่ม validation ของตัวเอง:
+
+- *body* ของ function ตรงกับสิ่งที่ signature สัญญาไว้จริงหรือเปล่า — หรือมันรับ `None` แบบเงียบ ๆ ในจุดที่ hint บอกว่าเป็น `str` เพราะไม่มีอะไรบังคับใน call ที่โค้ดถูก test ด้วย?
+- มีการใช้ `Any` ในจุดที่มี type เฉพาะเจาะจงกว่าให้ใช้ได้หรือเปล่า? `Any` ไม่ได้แปลว่า "ไม่เช็คตรงนี้" เท่านั้น มันปิดการเช็คของทุกอย่างที่ต่อจากมันด้วย
+- type hint ถูกเช็คด้วยเครื่องมือจริง (`mypy --strict`, `pyright`) แล้วหรือยัง — หรือแค่ *ดูเหมือน* สมเหตุสมผลเพราะมัน compile ผ่าน (Python ไม่มีแนวคิด hint ที่ "compile ไม่ผ่าน" อยู่แล้ว)?
+
+<Playground code={readingOrderCode} />
+
+export const readingOrderCode = `def restock(inventory: dict[str, int], item: str, qty: int) -> dict[str, int]:
+    # Reading order in practice: (1) this function MUTATES the dict you pass
+    # in -- it does not copy it -- so every caller's reference to that same
+    # dict sees the change too. (2) It can raise ValueError; the return value
+    # on the happy path is the SAME object as the input, which is easy to
+    # miss if you only skim the final return statement.
+    if qty < 0:
+        raise ValueError(f"qty must be >= 0, got {qty}")
+    inventory[item] = inventory.get(item, 0) + qty
+    return inventory
+
+
+warehouse = {"widgets": 10}
+same_dict = restock(warehouse, "widgets", 5)
+print("warehouse after restock:", warehouse)
+print("same object returned:", same_dict is warehouse)
+
+try:
+    restock(warehouse, "widgets", -3)
+except ValueError as e:
+    print(f"restock rejected: {e}")
+print("warehouse unchanged after the rejected call:", warehouse)
+`.trim();
+
+## Mental Model
+
+<Mermaid code={`flowchart TD
+  A["Read the code"] --> B["Where does mutable state flow -- mutated in place, or copied?"]
+  B --> C["What can raise here, and who actually catches it?"]
+  C --> D["What owns each task/resource, and who releases it?"]
+  D --> E["Do the type hints hold at runtime, or are they just claims?"]
+  E --> F["Only now: judge correctness"]`} title="ลำดับการอ่านโค้ด Python ที่ไม่ได้เขียนเอง" />
+
+```text
+Reading order for a function you did not write:
+
+1. Mutable data flow → mutated in place? returned as a new object? both? shared class/default state?
+2. Exception path     → what can raise, is it documented, is it swallowed by something too broad?
+3. Task/resource life → who closes it, is release guaranteed on every path, is a task ever awaited?
+4. Type hints         → checked by mypy/pyright, or just plausible-looking prose?
+
+Skipping straight to "it ran and printed something reasonable" answers none of these.
+```
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| ตาม mutable data flow ก่อน | จับ bug เรื่อง aliasing และ shared default ได้ก่อนที่จะเชื่อ return value ใด ๆ | ต้องรู้ว่า builtin ตัวไหน mutable และการส่ง argument แบบไหนแชร์ state จริง ๆ |
+| ตาม exception path ทั้งหมด | เจอ validation ที่ถูกกลืน, scope ผิด หรือใช้ `assert` แทนที่โค้ด AI ชอบซ่อนไว้ | ช้ากว่าการอ่านแค่ happy-path `return` |
+| ตาม lifetime ของ task/resource อย่างชัดเจน | เจอ file handle ที่รั่วและ background task ที่หายไปก่อนที่มันจะไป page ใครตอนตี 3 | ต้องเก็บ state ในหัวมากขึ้นตอนอ่าน async code |
+| มอง type hint เป็นคำกล่าวอ้าง ไม่ใช่การรับประกัน | เจอช่องว่างระหว่างสิ่งที่ signature สัญญากับสิ่งที่ body ทำจริง | ต้องรัน `mypy`/`pyright` เอง — hint อย่างเดียวพิสูจน์อะไรไม่ได้ |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"มันรันได้และพิมพ์อะไรที่ดูสมเหตุสมผล แสดงว่ามันถูกต้อง"** ทุก pattern ใน catalog ของโมดูลนี้รันได้และให้ output ที่ดูสมเหตุสมผลบน happy path — นั่นคือสิ่งที่ทำให้มันอันตรายพอดี
+- **"อ่าน happy-path `return` ก็คืออ่าน function แล้ว"** `except` clause, `assert` และโค้ดระหว่าง `await` กับบรรทัดถัดไป มักเป็นจุดที่โค้ดที่ AI generate ซ่อนความผิดพลาดไว้
+- **"ถ้าคนเขียนก็ไม่เป็นไร ต้องระวังเฉพาะโค้ด AI"** ทุก pattern ใน catalog ของโมดูลนี้ปรากฏในโค้ด Python ที่คนเขียนด้วยเช่นกัน — AI แค่ผลิตมันในปริมาณที่มากกว่าและดูน่าเชื่อถือกว่ามาก
+- **"type hint แปลว่าค่านั้นรับประกันว่าเป็น type นั้นแน่นอน"** hint ไม่ถูกเช็คตอน runtime เว้นแต่มีอะไรสักอย่าง (validator, checker ใน CI) บังคับใช้จริง ๆ input ที่ไม่น่าเชื่อถือสามารถละเมิด hint ใดก็ได้แบบเงียบ ๆ
+
+<Callout title="อ่านหา mechanism ไม่ใช่หา vibe">
+ทุกกฎในโมดูลนี้จบลงที่สิ่งที่จับต้องได้: traceback จริง, warning จริง, ข้อความจริงจาก `mypy`/`pyright`/`ruff` หรือบรรทัดที่ระบุได้ว่า task หรือ resource ไม่เคยถูก release เวลารีวิวโค้ด — ของตัวเองหรือของ AI — ให้มองหาการละเมิดที่จับต้องได้ ไม่ใช่แค่ว่าโค้ด "ดู" idiomatic หรือเปล่า
+</Callout>
+
+export const quizReadingPythonIndex = [
+  {
+    q: "```python\ndef restock(inventory: dict[str, int], item: str, qty: int) -> dict[str, int]:\n    inventory[item] = inventory.get(item, 0) + qty\n    return inventory\n```\nก่อนจะอ่านอย่างอื่นเกี่ยวกับ function นี้ คุณรู้อะไรแล้วบ้างจาก body ของมัน?",
+    options: [
+      "Nothing — you must run it to know anything",
+      "It mutates the caller's dict in place, and the returned dict is the same object as the argument",
+      "It always creates a brand-new dict and leaves the caller's dict untouched",
+      "It is guaranteed to be safe for concurrent use"
+    ],
+    answer: 1,
+    explain: "inventory[item] = ... mutate dict argument โดยตรง และ `return inventory` คืน object เดิมกลับไป — ไม่มีการ copy เกิดขึ้นเลยใน function นี้"
+  },
+  {
+    q: "ทำไม exception path มักสำคัญกว่าที่ต้องอ่านอย่างละเอียด เมื่อเทียบกับ happy-path return?",
+    options: [
+      "Python requires more lines of code for exception handling than success handling",
+      "The happy path is what quick manual testing exercises and rewards looking correct, so mistakes concentrate in how failures are raised, caught, or swallowed",
+      "The interpreter does not check the exception path",
+      "Exception paths always execute before the happy path"
+    ],
+    answer: 1,
+    explain: "happy path คือสิ่งที่การรัน `python demo.py` แบบเร็ว ๆ ตรวจสอบและทำให้ดูถูกต้องในการ demo ส่วน exception path -- สิ่งที่ raise, สิ่งที่ถูกจับ, สิ่งที่ถูกกลืนเงียบ ๆ โดย except กว้าง ๆ หรือ assert ที่ถูกตัดทิ้ง -- คือจุดที่โค้ดที่ AI generate มักซ่อน bug ไว้"
+  },
+  {
+    q: "สำหรับ `asyncio.create_task(send_metric(...))` ที่ถูกเรียกโดยไม่มีตัวแปรมาเก็บผลลัพธ์ ผู้รีวิวควรเช็คอะไร?",
+    options: [
+      "Whether send_metric has a descriptive name",
+      "Whether the returned Task is stored anywhere and eventually awaited, since an unreferenced task can be garbage-collected before it finishes",
+      "Whether the function uses tabs or spaces for indentation",
+      "Nothing -- create_task always runs to completion regardless of references"
+    ],
+    answer: 1,
+    explain: "lifetime ของ Task ไม่ถูก track โดยภาษาแบบที่ return value ถูก track -- ถ้าไม่มีอะไรเก็บ reference ไว้แล้ว await มัน มันสามารถถูก garbage-collect กลางทางแบบเงียบ ๆ ทำให้งานที่มันกำลังทำหายไปโดยไม่มี error เลย"
+  },
+  {
+    q: "function ถูก annotate เป็น `def greeting(name: str) -> str:` annotation นี้รับประกันอะไรจริง ๆ ตอน runtime?",
+    options: [
+      "Python will raise TypeError if name is not a str",
+      "Nothing by itself -- annotations are not enforced at runtime; only a checker like mypy/pyright (run separately, before execution) or your own validation code can catch a mismatch",
+      "The function will fail to import if called with the wrong type",
+      "mypy runs automatically every time the function is called"
+    ],
+    answer: 1,
+    explain: "type hint ไม่ถูกบังคับใช้โดย interpreter ไม่มีอะไรหยุด `greeting(None)` ไม่ให้รันแล้วพังที่ไหนสักแห่งใน body -- การจับความไม่ตรงกันต้องอาศัยการรัน static checker แยกต่างหาก หรือ validation code ที่เขียนเอง"
+  },
+  {
+    q: "ทำไมลำดับการอ่านของโมดูลนี้ถึงวาง 'ตาม mutable data flow' ไว้ก่อน 'อ่าน type hint'?",
+    options: [
+      "Type hints are never useful",
+      "A type hint can claim a value is immutable-looking (e.g. list[int]) while the function body still mutates the caller's actual list object -- the hint alone doesn't tell you that",
+      "Mutable data flow is only relevant in code with no type hints at all",
+      "There is no meaningful order; all four checks are interchangeable"
+    ],
+    answer: 1,
+    explain: "signature อย่าง `def f(items: list[int]) -> None` ไม่ได้บอกอะไรเลยว่า function จะ mutate list ที่ได้รับมาหรือไม่ -- นั่นเป็นข้อเท็จจริงเชิงพฤติกรรมที่รู้ได้จากการอ่าน (หรือทดสอบ) body เท่านั้น ซึ่งเป็นเหตุผลว่าทำไม mutable-data-flow ถึงถูกเช็คแยกจาก type hint"
+  }
+];
+
+<Quiz client:visible id="reading-python/index" questions={quizReadingPythonIndex} />
+
+<ProgressTracker client:visible id="reading-python/index" />

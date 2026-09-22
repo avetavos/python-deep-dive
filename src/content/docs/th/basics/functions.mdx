@@ -1,6 +1,6 @@
 ---
 title: Functions
-description: 'การกำหนดฟังก์ชันด้วย def, พารามิเตอร์และค่าที่คืน, การคืนหลายค่าผ่าน tuple, docstrings, และ LEGB scope'
+description: 'def, พารามิเตอร์, *args/**kwargs, mutable default arguments, positional-only parameters, LEGB scope, และ UnboundLocalError ใน Python'
 sidebar:
   order: 4
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## การกำหนดฟังก์ชัน
 
@@ -26,7 +28,7 @@ print(greet("Bob", greeting="Hi")) # Hi, Bob!
 ```
 
 พารามิเตอร์ที่สองมี **ค่าเริ่มต้น** — ผู้เรียกสามารถละเว้นได้
-ค่าเริ่มต้นถูกประเมินครั้งเดียวตอนกำหนดฟังก์ชัน ไม่ใช่ตอนเรียก
+ค่าเริ่มต้นถูกประเมิน **ครั้งเดียว** ตอนที่ statement `def` รัน — ไม่ใช่ทุกครั้งที่เรียก ข้อเท็จจริงข้อเดียวนี้คือต้นเหตุของ bug ที่พบบ่อยที่สุดสองแบบในโค้ด Python ที่ AI เขียน จะอธิบายด้านล่าง
 
 ## พารามิเตอร์และรูปแบบการเรียก
 
@@ -43,6 +45,66 @@ demo(1, normal=2, kw_only=3) # OK
 - **Positional-only** (ก่อน `/`): ไม่สามารถส่งผ่าน keyword ได้
 - **Normal**: positional หรือ keyword
 - **Keyword-only** (หลัง `*`): ต้องส่งผ่าน keyword เท่านั้น
+
+Positional-only parameter มีไว้เพื่อให้ library เปลี่ยนชื่อพารามิเตอร์ภายในทีหลังได้โดยไม่ทำให้ผู้เรียกพัง — ไม่มีใครส่งผ่านชื่อนั้นได้อยู่แล้วตั้งแต่แรก เพราะภาษาห้ามไว้:
+
+```python
+def power(base, /, exponent=2):
+    return base ** exponent
+
+print(power(3))          # 9
+try:
+    power(base=3)         # base is positional-only -- keyword form rejected
+except TypeError as e:
+    print(f"power(base=3) -> TypeError: {e}")
+```
+
+## `*args`, `**kwargs`, และการ unpack ตอนเรียก
+
+พารามิเตอร์ที่นำหน้าด้วย `*` จะรวบรวม positional argument ส่วนเกินเข้าเป็น `tuple` ส่วนที่นำหน้าด้วย `**` จะรวบรวม keyword argument ส่วนเกินเข้าเป็น `dict` ใหม่
+`*`/`**` แบบเดียวกันนี้ใช้กลับด้านได้ที่ **จุดเรียก** เพื่อกระจาย sequence หรือ mapping ออกเป็น argument แยก:
+
+```python
+def total(*args, **kwargs):
+    print("args:", args, "kwargs:", kwargs)
+    return sum(args) + sum(kwargs.values())
+
+numbers = [1, 2, 3]
+extra = {"bonus": 10}
+print(total(*numbers, **extra))
+# args: (1, 2, 3) kwargs: {'bonus': 10}
+# 16
+```
+
+รูปแบบนี้ — `def wrapper(*args, **kwargs): return inner(*args, **kwargs)` — คือวิธีที่ wrapper หรือ decorator ทั่วไปส่งต่อทุกอย่างที่ถูกเรียกมา โดยไม่ต้องรู้ signature จริงของฟังก์ชันที่ห่ออยู่
+
+## Mutable default argument
+
+ค่าเริ่มต้นถูกประเมินครั้งเดียวและเก็บไว้บน function object เอง — ดังนั้นค่าเริ่มต้นที่เป็น **mutable** (literal ของ `list`, `dict`, หรือ `set`) จะเป็น *object เดิม* ที่ถูกใช้ร่วมกันและอาจถูกแก้ไขซ้ำในทุกการเรียกที่ไม่ได้ override มัน:
+
+```python
+def add_item(item, items=[]):  # BUG: the same list object is reused across calls
+    items.append(item)
+    return items
+
+print(add_item("apple"))   # ['apple']
+print(add_item("banana"))  # ['apple', 'banana'] -- "apple" leaked in from the last call
+```
+
+ไม่มีตรงไหนในการเรียกครั้งที่สองที่พูดถึง `"apple"` เลย — bug นี้มองไม่เห็นจนกว่าจะมีการเรียกครั้งที่สองเกิดขึ้นจริง ซึ่งเป็นเหตุผลที่มันรอดจาก code review และการทดสอบเร็ว ๆ ได้ ทางแก้คือรูปแบบ **`None` sentinel**: ตั้งค่าเริ่มต้นเป็น `None` แล้วสร้าง mutable object ใหม่ภายใน body ของฟังก์ชันเมื่อไม่มีอะไรถูกส่งมา:
+
+```python
+def add_item_fixed(item, items=None):
+    if items is None:   # a brand-new list every call that doesn't supply one
+        items = []
+    items.append(item)
+    return items
+
+print(add_item_fixed("apple"))   # ['apple']
+print(add_item_fixed("banana"))  # ['banana']
+```
+
+กฎ "ประเมินครั้งเดียว" เดียวกันนี้ก็กัดค่าเริ่มต้นที่ตั้งใจให้เป็น "เวลาปัจจุบัน" หรือ "object ใหม่" ด้วย — `def log_event(message, at=datetime.now()):` จะ freeze `at` ไว้ตอนโมดูลถูก import ไม่ใช่ตอนเรียก ใช้ทางแก้แบบเดียวกันคือ `None` sentinel: `at=None` แล้วค่อย `at = at if at is not None else datetime.now()` ภายใน body
 
 ## การคืนหลายค่า
 
@@ -80,12 +142,12 @@ def add(a: int, b: int) -> int:
     return a + b
 ```
 
-## กฎ LEGB Scope
+## LEGB scope rules
 
-Python ค้นหาชื่อใน scope สี่ระดับ ตามลำดับ:
+Python resolve ชื่อผ่านสี่ scope ตามลำดับนี้:
 
-1. **L**ocal — ภายในฟังก์ชันปัจจุบัน
-2. **E**nclosing — ฟังก์ชันที่ครอบ (สำหรับฟังก์ชันซ้อน)
+1. **L**ocal — ภายใน function ปัจจุบัน
+2. **E**nclosing — function ที่ครอบอยู่ (สำหรับ nested function)
 3. **G**lobal — ระดับโมดูล
 4. **B**uilt-in — ชื่อ built-in ของ Python (`len`, `print` ฯลฯ)
 
@@ -102,8 +164,42 @@ def outer():
 print(outer())  # 60
 ```
 
-ใช้ `global name` เพื่อ rebind ตัวแปรระดับโมดูลจากภายในฟังก์ชัน
-ใช้ `nonlocal name` เพื่อ rebind ตัวแปรจาก scope ที่ครอบ (ที่ไม่ใช่ global)
+การ**อ่าน**ชื่อใช้แค่การค้นหาแบบ LEGB ก็พอ แต่การ**กำหนดค่า**ให้ชื่อภายใน function นั้นต่างกัน — Python ตัดสินใจตอน *compile* ว่าชื่อใดก็ตามที่ถูก assign ที่ไหนก็ตามใน body ของ function จะเป็น local สำหรับ *ทั้ง* function นั้น แม้แต่บรรทัดก่อนหน้าการ assign นั้นเอง นี่คือสิ่งที่ทำให้ `count += 1` อันตราย:
+
+```python
+counter = 0
+
+def increment_buggy():
+    counter += 1  # BUG: this assignment makes counter LOCAL for the whole function
+    return counter
+
+increment_buggy()  # UnboundLocalError: cannot access local variable 'counter'
+                    # where it is not associated with a value
+```
+
+`counter += 1` จริง ๆ แล้วคือ `counter = counter + 1` — ทั้งอ่าน *และ* assign เพราะ `counter` ถูก assign ที่ไหนสักแห่งใน function นี้ Python จึงถือว่า `counter` เป็น local ทุกที่ใน function รวมถึงการอ่านฝั่งขวาด้วย ซึ่งตอนนี้เกิดขึ้นก่อนที่ local `counter` จะเคยมีค่าเลย ใช้ `global name` เพื่อบอก Python ชัดเจนว่าการ reassign ควรผูกกับตัวแปรระดับโมดูล ใช้ `nonlocal name` สำหรับสิ่งเดียวกันในระดับ enclosing function (ที่ไม่ใช่ global):
+
+```python
+def increment_fixed():
+    global counter
+    counter += 1
+    return counter
+
+print(increment_fixed())  # 1
+print(increment_fixed())  # 2
+```
+
+## `callable`
+
+`callable(obj)` บอกว่า `obj` เรียกด้วย `()` ได้ไหม — จริงสำหรับ function, class, และ object ใด ๆ ที่ class ของมันนิยาม `__call__` ไว้ ผิดสำหรับข้อมูลธรรมดาอย่าง `int` หรือ `str`:
+
+```python
+print(callable(len))    # True
+print(callable(42))     # False
+print(callable(power))  # True -- functions are callable objects too
+```
+
+นี่เป็นวิธีตรวจสอบเร็ว ๆ ว่า "สิ่งนี้เป็น function ที่เรียกได้จริงไหม" ก่อนจะเรียกอะไรบางอย่างที่ถูกส่งเข้ามาเป็นพารามิเตอร์ — มีประโยชน์เวลาอ่านโค้ดที่รับ callback
 
 ## Demo ที่รันได้จริง
 
@@ -142,55 +238,198 @@ print(f"no_return() gives: {result}")
 
 <Playground code={functionsCode} />
 
-<Callout title="ฟังก์ชันคืน None โดยค่าเริ่มต้น">
-ถ้า body ของฟังก์ชันจบโดยไม่มี `return` statement หรือมีแค่ `return` เปล่าๆ โดยไม่มีค่า
-Python จะคืน `None` อัตโนมัติ
-นี่ไม่ใช่ข้อผิดพลาด — เป็นพฤติกรรมที่กำหนดไว้
-ข้อผิดพลาดที่พบบ่อยที่สุดคือการรับผลลัพธ์จากฟังก์ชันที่แก้ไขข้อมูล in-place
-(เช่น `list.sort()`): ตัวแปรจะได้รับ `None` ไม่ใช่ list ที่แก้ไขแล้ว
-ใช้ `sorted(lst)` (คืน list ใหม่) เมื่อต้องการค่าที่คืน
+Playground ที่สองเป็นทัวร์ของกับดักทุกอันด้านบน แสดงให้เห็นว่าพังตั้งใจแล้วค่อยแก้
+
+export const functionsDepthCode = `
+from datetime import datetime
+import time
+
+# 1. Mutable default argument: evaluated ONCE, at def time, then shared/reused.
+def add_item(item, items=[]):  # BUG: the same list object is reused across calls
+    items.append(item)
+    return items
+
+print("call 1:", add_item("apple"))
+print("call 2:", add_item("banana"))   # apple is still there -- shared default!
+
+def add_item_fixed(item, items=None):
+    if items is None:      # None sentinel: a fresh list every call
+        items = []
+    items.append(item)
+    return items
+
+print("fixed call 1:", add_item_fixed("apple"))
+print("fixed call 2:", add_item_fixed("banana"))
+
+# 2. A default value that looks dynamic but is frozen at def time.
+def log_event(message, at=datetime.now()):  # BUG: at is fixed once, at import time
+    return f"{at.isoformat()}: {message}"
+
+first = log_event("start")
+time.sleep(0.05)
+second = log_event("still running")
+print("same timestamp both calls:", first.split(":")[0:2] == second.split(":")[0:2])
+
+def log_event_fixed(message, at=None):
+    at = at if at is not None else datetime.now()
+    return f"{at.isoformat()}: {message}"
+
+# 3. *args / **kwargs and call-site unpacking.
+def total(*args, **kwargs):
+    print("args:", args, "kwargs:", kwargs)
+    return sum(args) + sum(kwargs.values())
+
+numbers = [1, 2, 3]
+extra = {"bonus": 10}
+print("total:", total(*numbers, **extra))
+
+# 4. Positional-only parameters.
+def power(base, /, exponent=2):
+    return base ** exponent
+
+print("power(3):", power(3))
+try:
+    power(base=3)  # base is positional-only -- keyword form rejected
+except TypeError as e:
+    print(f"power(base=3) -> TypeError: {e}")
+
+# 5. UnboundLocalError from count += 1 without global.
+counter = 0
+
+def increment_buggy():
+    counter += 1  # BUG: this makes counter a LOCAL name -- read before assignment
+    return counter
+
+try:
+    increment_buggy()
+except UnboundLocalError as e:
+    print(f"increment_buggy() -> UnboundLocalError: {e}")
+
+def increment_fixed():
+    global counter
+    counter += 1
+    return counter
+
+print("increment_fixed():", increment_fixed())
+print("increment_fixed():", increment_fixed())
+
+# 6. callable().
+print("callable(len):", callable(len))
+print("callable(42):", callable(42))
+print("callable(power):", callable(power))
+`.trim();
+
+<Playground code={functionsDepthCode} />
+
+## Mental Model
+
+การเรียก function หนึ่งครั้งสร้าง **frame** ใหม่ — namespace ส่วนตัวของมันเอง — แล้วทิ้งไปเมื่อ call จบ การค้นหาชื่อสำหรับการ*อ่าน*จะเดินออกด้านนอกผ่าน frame ตามลำดับ LEGB ส่วนการ*กำหนดค่า*ไม่เดินออกด้านนอกเองเลย — Python ตัดสินใจว่าชื่อนั้นเป็นของ frame ไหนตั้งแต่ก่อน function จะรันด้วยซ้ำ โดยดูว่ามีการ assign ชื่อนั้นที่ไหนใน body หรือไม่ — นี่คือเหตุผลที่ `counter += 1` แบบไม่ประกาศอะไรเลยสร้าง local `counter` ใหม่แทนที่จะไปถึงตัวข้างนอก
+
+<Mermaid code={legbDiagram} title="การอ่านชื่อค้นหาออกด้านนอกตาม LEGB; การกำหนดค่าจะเล็งไปที่ local frame เว้นแต่บอก global/nonlocal ไว้" />
+
+export const legbDiagram = `flowchart TB
+  L["Local: current function's frame"] --> E["Enclosing: any outer function's frame"]
+  E --> G["Global: the module namespace"]
+  G --> B["Built-in: len, print, callable, ..."]
+  L -.->|"assignment stays here unless declared global/nonlocal"| L`;
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| ค่าเริ่มต้นประเมินครั้งเดียวตอน def | เร็ว — ไม่ต้องประเมินซ้ำทุกครั้งที่เรียก | ค่าเริ่มต้นที่ mutable หรือ "ค่าปัจจุบัน" จะ freeze สถานะข้ามการเรียก |
+| `*args` / `**kwargs` | signature ยืดหยุ่น เหมาะกับการส่งต่อ | signature ไม่บอกอีกต่อไปว่า argument ไหนถูกคาดหวังจริง ๆ |
+| Positional-only `/` | library เปลี่ยนชื่อพารามิเตอร์นั้นทีหลังได้โดยไม่ทำผู้เรียกพัง | อ่านยากขึ้นเล็กน้อย ไม่คุ้นเคยสำหรับมือใหม่ |
+| คืน `None` โดยปริยาย | ทุก function มีค่าที่คืนแน่นอนและสม่ำเสมอ | บัง bug "ลืม return" ไว้เงียบ ๆ ใช้ผลลัพธ์ต่อโดยไม่ทันสังเกต |
+| LEGB กับ `global`/`nonlocal` ที่ต้องประกาศชัดเจน | การอ่านชื่อข้างนอกไม่ต้องมีอะไรพิเศษ | การ reassign ต้องประกาศ ลืมแล้วได้ UnboundLocalError |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"ค่าเริ่มต้น `[]` ให้ list เปล่าใหม่ทุกครั้งที่เรียก"** ไม่จริง — list ถูกสร้างครั้งเดียวตอน statement `def` รัน แล้ว object เดิมนั้นถูกใช้ซ้ำทุกครั้งที่เรียกโดยไม่ override
+- **"`items=None` เพียงอย่างเดียวทำให้พารามิเตอร์ optional และปลอดภัย"** `None` เป็นแค่ sentinel คุณยังต้องเขียน `if items is None: items = []` เองภายใน body
+- **"การอ่านตัวแปร global ภายใน function ต้องใช้ keyword `global`"** ไม่จริง — การอ่านไม่ต้องมีอะไรพิเศษ `print(counter)` ใน function ไม่ต้องประกาศอะไร แต่ `counter += 1` ต้อง
+- **"function ที่ไม่มี `return` statement คือ error หรือไม่คืนอะไรเลย"** มันคืน `None` — object ที่ถูกต้องจริง — ทุกครั้ง โดยไม่มี exception เกิดขึ้น
+- **"`*args` กับ `**kwargs` ต้องใช้ชื่อนี้เป๊ะ ๆ"** มีแค่ `*` กับ `**` เท่านั้นที่สำคัญ ชื่อเป็นแค่ธรรมเนียม ไม่ใช่ syntax — `def f(*values, **options):` ทำงานเหมือนกันทุกประการ
+
+## อ่านโค้ดที่ AI เขียน
+
+- ค่าเริ่มต้นใช้ mutable literal (`[]`, `{}`, `set()`) หรือการเรียกที่รันแค่ครั้งเดียว (`datetime.now()`, `time.time()`, `uuid.uuid4()`) หรือเปล่า? ทั้งคู่ freeze ตอน `def` ไม่ใช่ตอนเรียก
+- function reassign (ไม่ใช่แค่อ่าน) ชื่อที่มีอยู่ระดับโมดูลหรือเปล่า เช่น `count += 1` หรือ `cache[key] = value` ที่ `cache` เองถูก reassign? ดูว่าขาด `global`/`nonlocal` หรือไม่
+- ทุก code path จริง ๆ แล้ว `return` ค่าหรือเปล่า หรือปล่อยให้ execution ตกไปท้าย function แล้วคืน `None` เงียบ ๆ?
+- `*args`/`**kwargs` กลืนพารามิเตอร์ที่ควรจะชัดเจนและมี documentation หรือเปล่า จนซ่อนสิ่งที่ function รับจริง ๆ ไปจากทั้งผู้อ่านและ type checker?
+- ถ้า function ตั้งใจให้เรียกด้วย positional เท่านั้น (เพื่อเปลี่ยนชื่อทีหลังได้) มี `/` ใน signature หรือเปล่า หรือปล่อยให้เป็นแค่ธรรมเนียมกับ docstring?
+
+<SpotTheBug code={`def add_item(item, items=[]):
+    items.append(item)
+    return items`} lang="python">
+`items=[]` ถูกประเมินครั้งเดียวตอน statement `def` นี้รัน แล้ว list object เดียวนั้นถูกผูกกับ function และใช้ซ้ำทุกครั้งที่เรียกโดยไม่ส่ง `items` มา การเรียกครั้งแรกคืน `["apple"]` การเรียกครั้งที่สองด้วย item อื่นไม่ได้เริ่มจาก list เปล่า — มันต่อเข้าไปใน list เดิมจากครั้งก่อน สะสมสถานะข้ามการเรียกที่ไม่เกี่ยวข้องกันแบบเงียบ ๆ แก้ด้วยรูปแบบ `None` sentinel: `def add_item(item, items=None): items = items if items is not None else []` (หรือ `if items is None: items = []` ใน body) เพื่อให้ทุกการเรียกที่ไม่ส่ง `items` มาได้ list ใหม่เสมอ
+</SpotTheBug>
+
+<Callout title="Functions คืน None โดยปริยาย">
+ถ้า body ของ function จบโดยไม่มี `return` statement หรือมี `return` เปล่าที่ไม่มีค่า
+Python จะคืน `None` โดยอัตโนมัติ
+นี่ไม่ใช่ error เลย — เป็นพฤติกรรมที่นิยามไว้
+เรื่องแปลกใจที่พบบ่อยที่สุดคือการรับผลลัพธ์จาก function ที่แก้ไข object ในที่
+(เช่น `list.sort()`): ตัวแปรจะได้ `None` ไม่ใช่ list ที่แก้ไขแล้ว
+ใช้ `sorted(lst)` (คืน list ใหม่) เมื่อต้องการค่าที่คืนจริง ๆ
 </Callout>
 
 export const quizFunctions = [
   {
-    q: "ฟังก์ชัน Python คืนค่าอะไรถ้าไม่มี `return` statement?",
+    q: "```python\ndef add_item(item, items=[]):\n    items.append(item)\n    return items\n\nprint(add_item(\"a\"))\nprint(add_item(\"b\"))\n```\nโค้ดนี้พิมพ์อะไร?",
     options: [
-      "0",
-      "สตริงว่าง",
-      "None",
-      "จะ raise RuntimeError"
+      "['a']\n['b']",
+      "['a']\n['a', 'b']",
+      "raise TypeError ตอนเรียกครั้งที่สอง",
+      "['b']\n['a', 'b']"
     ],
-    answer: 2
+    answer: 1,
+    explain: "list ค่าเริ่มต้นถูกสร้างครั้งเดียวตอน def และใช้ร่วมกันทุกครั้งที่เรียกโดยไม่ส่ง items มา การเรียกครั้งที่สองต่อเข้าไปใน list เดิมที่ครั้งแรกแก้ไปแล้ว"
   },
   {
-    q: "ให้ `def f(a, b=5): ...`, การเรียกใดถูกต้อง?",
+    q: "```python\ncounter = 0\n\ndef increment():\n    counter += 1\n    return counter\n\nincrement()\n```\nจะเกิดอะไรขึ้น?",
     options: [
-      "f()",
-      "f(1)",
-      "f(b=3)",
-      "f(1, 2, 3)"
+      "คืนค่า 0",
+      "คืนค่า 1",
+      "raise UnboundLocalError",
+      "raise NameError"
     ],
-    answer: 1
+    answer: 2,
+    explain: "การ assign counter ที่ไหนก็ตามใน body ของ function ทำให้มันเป็น local สำหรับทั้ง function counter += 1 อ่าน local counter นั้นก่อนที่มันจะเคยมีค่าเลย -- UnboundLocalError ไม่ใช่ NameError"
   },
   {
-    q: "ใน LEGB rule, 'E' ย่อมาจากอะไร?",
+    q: "ค่าเริ่มต้นของพารามิเตอร์ใน Python ถูกประเมินเมื่อไหร่?",
     options: [
-      "External scope",
-      "Enclosing function scope",
-      "Exported module scope",
-      "Exception handler scope"
+      "ทุกครั้งที่เรียก function",
+      "ครั้งเดียว ตอน statement def รัน",
+      "ครั้งเดียว ตอนเรียก function ครั้งแรก",
+      "ไม่ถูกประเมินเลยจนกว่าจะถูกใช้จริง"
     ],
-    answer: 1
+    answer: 1,
+    explain: "ค่าเริ่มต้นถูกคำนวณครั้งเดียวตอน def รันและสร้าง function object ไม่ใช่ทุกครั้งที่เรียก -- นี่คือเหตุผลที่ mutable default และ default แบบ datetime.now() ถึง freeze"
   },
   {
-    q: "ผลลัพธ์ของ `low, high = min_max([3, 1, 4])` คืออะไร?",
+    q: "```python\ndef power(base, /, exponent=2):\n    return base ** exponent\n```\nการเรียกแบบไหน raise TypeError?",
     options: [
-      "low=3, high=4",
-      "low=1, high=4",
-      "low=1, high=3",
-      "tuple (1, 4) ถูกกำหนดให้กับ low"
+      "power(3)",
+      "power(3, 4)",
+      "power(base=3)",
+      "power(3, exponent=4)"
     ],
-    answer: 1
+    answer: 2,
+    explain: "เครื่องหมาย / ทำให้ base เป็น positional-only -- ส่งผ่าน keyword ไม่ได้เลย ดังนั้น power(base=3) ถูกปฏิเสธแม้ 3 จะเป็นค่าที่ถูกต้องก็ตาม"
+  },
+  {
+    q: "`callable(42)` คืนค่าอะไร?",
+    options: ["True", "False", "TypeError", "42"],
+    answer: 1,
+    explain: "int ไม่มี method __call__ จึงเรียกด้วย () ไม่ได้ callable() คืน False สำหรับข้อมูลธรรมดาอย่างตัวเลขหรือ string"
+  },
+  {
+    q: "```python\ndef total(*args, **kwargs):\n    return sum(args) + sum(kwargs.values())\n\nnumbers = [1, 2, 3]\nextra = {\"bonus\": 10}\nprint(total(*numbers, **extra))\n```\nโค้ดนี้พิมพ์อะไร?",
+    options: ["16", "TypeError", "6", "[1, 2, 3, 10]"],
+    answer: 0,
+    explain: "*numbers กระจาย [1, 2, 3] เป็น positional argument สามตัวที่ *args เก็บไว้ **extra กระจาย {'bonus': 10} เป็น keyword argument ที่ **kwargs เก็บไว้ sum((1,2,3)) + sum((10,)) เท่ากับ 16"
   }
 ];
 

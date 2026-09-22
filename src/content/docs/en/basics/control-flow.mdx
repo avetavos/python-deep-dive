@@ -1,6 +1,6 @@
 ---
 title: Control Flow
-description: 'if/elif/else, for loops over iterables, while, range, break/continue/else, and the walrus operator.'
+description: 'if/elif/else, match, the iterator protocol behind for, mutating a list while iterating, range laziness, late-binding closures, and chained comparisons in Python.'
 sidebar:
   order: 3
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Conditionals: `if` / `elif` / `else`
 
@@ -30,7 +32,31 @@ else:
 print(grade)   # B
 ```
 
-There is no `switch` statement in Python — use `if`/`elif` chains or, since Python 3.10, structural pattern matching (`match`/`case`).
+## Structural pattern matching: `match`
+
+Since Python 3.10, `match`/`case` matches a value's **shape**, not just its equality — a value, a type check, a sequence pattern, or a mapping pattern, tried top to bottom, with `_` as the catch-all:
+
+```python
+def describe(value):
+    match value:
+        case 0:
+            return "zero"
+        case int() if value < 0:
+            return "negative int"
+        case [x, y]:
+            return f"pair: {x}, {y}"
+        case {"kind": kind}:
+            return f"dict with kind={kind}"
+        case _:
+            return "something else"
+
+print(describe(0))              # zero
+print(describe(-5))             # negative int
+print(describe([1, 2]))         # pair: 1, 2
+print(describe({"kind": "widget"}))  # dict with kind=widget
+```
+
+`case [x, y]` also **binds** `x` and `y` if the pattern matches — this is destructuring, not just comparison, which is why `match` can replace a chain of `isinstance`/index checks far more concisely than a plain `if`/`elif` chain.
 
 ## `for` loops over iterables
 
@@ -53,6 +79,35 @@ for i, fruit in enumerate(fruits, start=1):
     print(f"{i}. {fruit}")
 ```
 
+## What `for` actually does: `iter()` and `next()`
+
+`for item in iterable:` is syntactic sugar. Underneath, Python calls `iter(iterable)` once to get an **iterator**, then calls `next()` on it repeatedly until it raises `StopIteration`, which the loop catches silently to end:
+
+```python
+nums = [10, 20, 30]
+it = iter(nums)
+print(next(it))   # 10
+print(next(it))   # 20
+print(next(it))   # 30
+next(it)           # StopIteration -- iterator exhausted
+```
+
+Knowing this explains behavior that otherwise looks magical: an iterator remembers its position between `next()` calls (it is **stateful**), and once exhausted it stays exhausted — calling `iter()` again on the *same iterator object* just returns itself, still empty. A fresh `for` loop over the same *iterable* (like a `list`) works again only because `iter(a_list)` builds a brand-new iterator each time; the same is not true of a generator, which is its own iterator.
+
+## Mutating a list while iterating over it
+
+A `for` loop tracks a numeric position into the sequence, not "the items I haven't visited yet." Removing an item from a list you are iterating over shifts every later item one slot earlier — which the loop's position counter does not know about, so it silently skips the item that slid into the position it already passed:
+
+```python
+values = [1, 2, 2, 3, 4, 5]
+for n in values:
+    if n % 2 == 0:
+        values.remove(n)
+print(values)   # [1, 2, 3, 5] -- the second 2 survived; 4 was removed instead
+```
+
+The loop visits index 0 (`1`), index 1 (`2`, removed — the list shrinks and everything shifts left), then index 2 — but the element now sitting at index 2 is the *second* `2`, which used to be at index 3. The loop has already "passed" that position and never revisits it, so that `2` survives while `4` (never actually even, in the pre-mutation sense the code intended) gets removed by coincidence of position. The fix is to iterate over a copy — `for n in values.copy():` or `for n in list(values):` — or build a new list with a comprehension instead of mutating in place: `values = [n for n in values if n % 2 != 0]`.
+
 ## `range()`
 
 `range(stop)`, `range(start, stop)`, and `range(start, stop, step)` generate integer sequences without building a list in memory.
@@ -64,6 +119,19 @@ for i in range(5):        # 0, 1, 2, 3, 4
 for i in range(2, 10, 2): # 2, 4, 6, 8
     print(i)
 ```
+
+`range` is **lazy** — a `range` object stores only its start, stop, and step, and computes each value on demand instead of materializing every integer up front:
+
+```python
+import sys
+
+r = range(1_000_000)
+print(type(r).__name__)              # range
+print(sys.getsizeof(r))              # 48 -- three integers, regardless of length
+print(sys.getsizeof(list(r)))        # 8000056 -- one million actual int objects
+```
+
+A `range` of a billion numbers costs the same 48 bytes as a `range` of three. This is why `for i in range(len(items)):` is memory-cheap even for huge `items`, and why you should reach for `range` (or a generator) instead of building a list purely to loop over it once.
 
 ## `while` loops
 
@@ -80,7 +148,7 @@ while count < 3:
 
 - `break` exits the innermost loop immediately.
 - `continue` skips the rest of the current iteration and moves to the next.
-- The `else` clause on a loop runs **only if the loop completed without hitting a `break`**.
+- The `else` clause on a loop runs **only if the loop completed without hitting a `break`** — this applies identically to `for...else` and `while...else`.
 
 ```python
 for n in [1, 3, 5, 7]:
@@ -91,6 +159,45 @@ else:
     print("no even number found")   # this runs
 ```
 
+`break` only exits the **innermost** loop — Python has no labeled `break` like some languages do. Breaking out of two nested loops needs a sentinel checked after the inner loop, or moving the whole thing into a function and using `return`:
+
+```python
+found = None
+for i in range(3):
+    for j in range(3):
+        if i * j == 4:
+            found = (i, j)
+            break        # only exits the inner `for j` loop
+    if found:
+        break            # this second break exits the outer loop
+print(found)             # (2, 2)
+```
+
+## Chained comparisons
+
+Python lets you chain comparisons: `a < b < c` means `a < b and b < c`, evaluating `b` only once. This reads naturally for range checks — but the same chaining rule applies to **any** comparison operator mixed together, including `in`, which is where it stops looking like ordinary math:
+
+```python
+x, y = 10, 5
+lst = [True, False]
+
+print(x < y in lst)     # (x < y) and (y in lst)  ->  False and False  ->  False
+print((x < y) in lst)   # bool(x < y) tested for membership -> False in lst -> True
+```
+
+`a < b in c` is **not** `(a < b) in c` — it is `a < b and b in c`, because Python treats `in` as just another comparison operator that can participate in chaining. If you actually meant "is the boolean result of `a < b` a member of `c`", you must parenthesize `(a < b) in c` explicitly.
+
+## `//` and `%` with negative numbers
+
+Floor division (`//`) always rounds **toward negative infinity**, not toward zero — and `%` is defined so that `a == (a // b) * b + (a % b)` always holds:
+
+```python
+print(-7 // 2, -7 % 2)   # -4 1
+print(7 // -2, 7 % -2)   # -4 -1
+```
+
+`-7 // 2` is `-4`, not `-3` — most languages with C-style truncating division give `-3` here, which is a common source of off-by-one bugs when porting code between languages. The sign of `%`'s result always matches the sign of the *divisor*, not the dividend.
+
 ## The walrus operator `:=`
 
 Introduced in Python 3.8, `:=` assigns a value and evaluates to that value in the same expression.
@@ -100,6 +207,22 @@ It is most useful in `while` and `if` conditions to avoid repeating an expressio
 data = [4, 7, 2, 9, 1]
 if (largest := max(data)) > 5:
     print(f"Largest value {largest} exceeds 5")
+```
+
+## Late-binding closures in loops
+
+A `lambda` (or nested `def`) created inside a loop does not capture the loop variable's *value at creation time* — it captures the **name**, looked up fresh every time the function actually runs. By the time any of the closures are called, the loop has finished and the name holds its final value:
+
+```python
+funcs = [lambda: i for i in range(3)]
+print([f() for f in funcs])          # [2, 2, 2] -- every closure reads the SAME i
+```
+
+All three lambdas share one enclosing scope and one variable `i`; none of them stored `0`, `1`, or `2` — they all look up `i` when called, by which point the loop has ended and `i` is `2`. The idiomatic fix binds the value at each iteration as a **default argument**, which *is* evaluated once, immediately, at function-definition time:
+
+```python
+funcs_fixed = [lambda i=i: i for i in range(3)]
+print([f() for f in funcs_fixed])    # [0, 1, 2] -- each default was bound at creation time
 ```
 
 ## Full runnable demo
@@ -145,6 +268,141 @@ if (largest := max(data)) > 5:
 
 <Playground code={controlFlowCode} />
 
+The second playground is a tour of the pitfalls above: the iterator protocol, mutating while iterating, range laziness, the chained-comparison trap, negative floor division, nested-loop break, and late-binding closures.
+
+export const controlFlowDepthCode = `
+import sys
+
+# 1. match (structural pattern matching)
+def describe(value):
+    match value:
+        case 0:
+            return "zero"
+        case int() if value < 0:
+            return "negative int"
+        case [x, y]:
+            return f"pair: {x}, {y}"
+        case {"kind": kind}:
+            return f"dict with kind={kind}"
+        case _:
+            return "something else"
+
+print(describe(0))
+print(describe(-5))
+print(describe([1, 2]))
+print(describe({"kind": "widget"}))
+print(describe("hello"))
+
+# 2. for runs on iter()/next().
+nums = [10, 20, 30]
+it = iter(nums)
+print(next(it))
+print(next(it))
+print(next(it))
+try:
+    next(it)
+except StopIteration:
+    print("StopIteration -- iterator exhausted")
+
+# 3. Mutating a list while iterating over it.
+values = [1, 2, 2, 3, 4, 5]
+for n in values:
+    if n % 2 == 0:
+        values.remove(n)
+print("after removing evens while iterating:", values)
+
+# 4. range() is lazy.
+r = range(1_000_000)
+print("type:", type(r).__name__)
+print("range size:", sys.getsizeof(r))
+print("list size:", sys.getsizeof(list(r)))
+
+# 5. Chained comparison and the "a < b in c" trap.
+x, y = 10, 5
+lst = [True, False]
+print("chained x < y in lst:", x < y in lst)          # (x < y) and (y in lst)
+print("(x < y) in lst:", (x < y) in lst)               # boolean tested for membership
+
+# 6. // and % with negative numbers.
+print(-7 // 2, -7 % 2)
+print(7 // -2, 7 % -2)
+
+# 7. while / else.
+count = 0
+while count < 3:
+    print("while count:", count)
+    count += 1
+else:
+    print("while/else: loop finished without break")
+
+# 8. break only exits the innermost loop.
+found = None
+for i in range(3):
+    for j in range(3):
+        if i * j == 4:
+            found = (i, j)
+            break
+    if found:
+        break
+print("found:", found)
+
+# 9. Late-binding closures in a loop.
+funcs = [lambda: i for i in range(3)]
+print("late binding:", [f() for f in funcs])
+
+funcs_fixed = [lambda i=i: i for i in range(3)]
+print("fixed with default arg:", [f() for f in funcs_fixed])
+`.trim();
+
+<Playground code={controlFlowDepthCode} />
+
+## Mental Model
+
+`for item in iterable:` is a small state machine, not a magic sweep over "the items." Python asks the iterable for one iterator (`iter()`), then repeatedly asks that iterator for the next value (`next()`) until it signals `StopIteration`. The iterator alone tracks position — the iterable itself is never asked "what's after the thing you gave me last time."
+
+<Mermaid code={forLoopDiagram} title="for desugars to: get an iterator once, then call next() until StopIteration" />
+
+export const forLoopDiagram = `flowchart LR
+  A["iter(iterable)"] --> B["iterator object"]
+  B --> C{"next(iterator)"}
+  C -->|"value"| D["run loop body"]
+  D --> C
+  C -->|"StopIteration"| E["loop ends"]`;
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| `for` built on `iter()`/`next()` | Works uniformly on lists, files, generators, custom objects | Mutating the container mid-iteration silently skips or repeats elements |
+| Lazy `range` | O(1) memory no matter how large the range | Not a `list` — no `.append()`, and slicing/indexing recompute rather than look up storage |
+| Chained comparisons | Concise range checks (`0 <= x < 10`) | Any comparison operator can chain, including `in`, which reads differently than expected |
+| Loop `else` | Replaces a manual "found" flag variable | Easy to misread as "runs when the loop ran zero times" — it does not mean that |
+| `match` structural patterns | Destructures and matches shape in one place, replacing nested `isinstance`/index checks | Newer syntax (3.10+); a `case` variable name always binds, it never compares against an existing variable's value by accident |
+
+## Common Misconceptions
+
+- **"You can safely remove items from a list while looping over it with `for`."** You cannot — removal shifts later elements into already-visited positions, silently skipping some of them. Iterate over a copy, or build a new list instead.
+- **"`range(1_000_000)` allocates a million integers immediately."** It does not — a `range` object stores only start/stop/step and computes values lazily; only `list(range(...))` allocates them all.
+- **"`a < b in c` means `(a < b) in c`."** It means `a < b and b in c` — `in` participates in Python's comparison chaining just like `<` does.
+- **"A `lambda` in a loop captures the loop variable's current value."** It captures the *name*, resolved when the lambda is *called*, not when it is created — by which time the loop has usually finished.
+- **"`for...else` runs the `else` block if the loop ran zero times."** It runs the `else` block whenever the loop finishes **without** hitting `break` — including when it ran zero times, but also every other time nothing broke it.
+
+## Reading AI-generated code
+
+- Does a loop call `.remove()`, `.pop()`, `del`, or `.append()` on the exact same list it is iterating over? That is almost always a bug — check whether it should iterate over a copy or build a new list instead.
+- Does a `lambda` or nested function defined inside a loop reference the loop variable directly, instead of capturing it as a default argument? That is late-binding waiting to surprise every caller.
+- Does a chained comparison include `in`, `is`, or mixed operators in a way that might not mean what it looks like it means?
+- Does integer division or modulo on a value that could be negative assume "toward zero" truncation instead of Python's "toward negative infinity" floor behavior?
+- Does a nested loop's `break` actually reach the outer loop, or does the code assume `break` exits everything at once?
+
+<SpotTheBug code={`def remove_duplicates(items):
+    for item in items:
+        if items.count(item) > 1:
+            items.remove(item)
+    return items`} lang="python">
+This loop mutates `items` — the exact list it is iterating over — every time it removes a duplicate. Removing an element shifts every later element one position earlier, but the loop's position counter has no idea that happened, so it can skip the very next element or revisit one it already handled. The result depends on the input in ways that are hard to predict, and duplicates can survive. Fix it by iterating over a copy while still mutating (or building) the real list: `for item in items.copy(): ...`, or better, build a fresh de-duplicated list without mutating the input at all, e.g. `list(dict.fromkeys(items))` to remove duplicates while preserving order.
+</SpotTheBug>
+
 <Callout title="for...else runs when there is no break">
 The `else` clause on a `for` or `while` loop is one of Python's most surprising features.
 It does not mean "if the loop ran zero times."
@@ -155,39 +413,65 @@ write the success branch inside the loop and the failure branch in `else`.
 
 export const quizControlFlow = [
   {
-    q: "When does the `else` clause of a `for` loop execute?",
+    q: "```python\nvalues = [1, 2, 2, 3, 4, 5]\nfor n in values:\n    if n % 2 == 0:\n        values.remove(n)\nprint(values)\n```\nWhat does this print?",
     options: [
-      "When the iterable is empty",
-      "When the loop completes without hitting a break",
-      "Always, after the loop body",
-      "When the loop body raises an exception"
+      "[1, 3, 5]",
+      "[1, 2, 3, 5]",
+      "[1, 2, 2, 3, 5]",
+      "RuntimeError: list changed size during iteration"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Removing 2 shifts every later element left by one, so the loop's position counter skips over the second 2 while it removes 4 instead. Lists (unlike dicts/sets) don't raise on this -- they just silently skip elements."
   },
   {
-    q: "What does `range(2, 10, 3)` produce?",
+    q: "```python\nfuncs = [lambda: i for i in range(3)]\nprint([f() for f in funcs])\n```\nWhat does this print?",
     options: [
-      "[2, 5, 8]",
-      "[2, 4, 6, 8, 10]",
-      "[2, 3, 4, 5, 6, 7, 8, 9]",
-      "[3, 6, 9]"
+      "[0, 1, 2]",
+      "[2, 2, 2]",
+      "[0, 0, 0]",
+      "A NameError, because i no longer exists"
     ],
-    answer: 0
+    answer: 1,
+    explain: "Every lambda captures the name i, not its value at creation time. By the time any lambda is called, the loop has finished and i holds its final value, 2."
   },
   {
-    q: "What does the walrus operator `:=` do?",
+    q: "What does `x < y in lst` actually evaluate as, for values x, y, and a list lst?",
     options: [
-      "Compares two values for equality",
-      "Assigns a value and evaluates to that value in one expression",
-      "Creates a new variable in a different scope",
-      "Converts a value to a boolean"
+      "(x < y) in lst",
+      "x < y and y in lst",
+      "x < (y in lst)",
+      "A SyntaxError -- comparisons cannot be chained with in"
     ],
-    answer: 1
+    answer: 1,
+    explain: "in is just another comparison operator to Python's grammar, so it chains the same way < does: a < b in c means a < b and b in c, evaluating b only once."
   },
   {
-    q: "Which statement immediately ends the current loop iteration and moves to the next one?",
-    options: ["break", "return", "continue", "pass"],
-    answer: 2
+    q: "What does `-7 // 2` evaluate to in Python?",
+    options: ["-3", "-4", "-3.5", "4"],
+    answer: 1,
+    explain: "Python's // always floors toward negative infinity, not toward zero, so -7 // 2 is -4 (and -7 % 2 is 1, since -4 * 2 + 1 == -7)."
+  },
+  {
+    q: "Why does `sys.getsizeof(range(1_000_000))` return a small, constant-looking number?",
+    options: [
+      "range precomputes all values but stores them compressed",
+      "range only stores start, stop, and step, and computes each value on demand",
+      "sys.getsizeof always returns 48 for any built-in type",
+      "range silently limits itself to the first few values"
+    ],
+    answer: 1,
+    explain: "A range object is lazy: it holds three integers (start, stop, step) and computes each value when asked, regardless of how many values it logically represents."
+  },
+  {
+    q: "When does the `else` clause of a `for` or `while` loop execute?",
+    options: [
+      "Only when the loop body never runs at all",
+      "Whenever the loop completes without hitting a break",
+      "Always, immediately after the loop body finishes",
+      "Only when the loop raises an exception"
+    ],
+    answer: 1,
+    explain: "Loop else runs whenever the loop finishes without break -- which includes zero iterations, but also every ordinary completion where nothing broke out early."
   }
 ];
 

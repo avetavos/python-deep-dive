@@ -1,6 +1,6 @@
 ---
 title: Strings
-description: 'String methods, slicing, f-strings, t-strings (Python 3.14), join/split, และ immutability ใน Python'
+description: 'String methods, slicing, bytes เทียบกับ str, f-strings, t-strings (Python 3.14), กับดัก strip() cutset, repr เทียบกับ str, และทำไม += ใน loop ถึงเป็น quadratic'
 sidebar:
   order: 5
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## String คือลำดับของ Unicode characters
 
@@ -54,6 +56,22 @@ print(s[-7:])    # Python!
 print(s[::-1])   # !nohtyP ,olleH  (reversed)
 print(s[::2])    # Hlo yhn
 ```
+
+## `bytes` เทียบกับ `str`
+
+`str` คือข้อความ — ลำดับ Unicode *code point* ที่เปลี่ยนแปลงไม่ได้ ไม่มีขนาด byte ในตัวเอง `bytes` คือข้อมูลดิบ — ลำดับจำนวนเต็ม 0–255 ที่เปลี่ยนแปลงไม่ได้ ทุกอย่างที่ผ่าน network socket, file ที่เปิดแบบ binary mode, หรือ API เข้ารหัส/hash ส่วนใหญ่ล้วนเป็น `bytes` ไม่ใช่ `str` `.encode()` แปลง `str` เป็น `bytes` โดยใช้ encoding ที่ระบุชื่อ `.decode()` แปลง `bytes` กลับเป็น `str` และ raise `UnicodeDecodeError` ถ้า byte นั้นไม่ถูกต้องสำหรับ encoding นั้น:
+
+```python
+s = "café"
+b = s.encode("utf-8")
+print(b)                    # b'caf\xc3\xa9'
+print(len(s), len(b))       # 4 5 -- "é" is one character but two UTF-8 bytes
+print(b.decode("utf-8"))    # café
+
+b.decode("ascii")   # UnicodeDecodeError: 'ascii' codec can't decode byte 0xc3 ...
+```
+
+`len(s)` นับ*ตัวอักษร*; `len(b)` นับ*byte* — มันจะเท่ากันก็ต่อเมื่อทุกตัวอักษรเป็น ASCII การ decode ด้วย encoding ผิดเป็นต้นเหตุของ crash ที่พบบ่อยเมื่อข้อมูลข้าม boundary (file, network response, subprocess) โดยไม่มี `encoding=` ที่ชัดเจนตรงกันทั้งสองฝั่ง
 
 ## f-strings (formatted string literals)
 
@@ -122,6 +140,19 @@ print(shout(t"hello {variety}, and {1 + 1} more"))
 ใช้ f-string เมื่อต้องการข้อความเดี๋ยวนี้ ใช้ t-string เมื่อมีอะไรปลายทางที่ต้องรู้ว่าส่วนไหนมาจากโปรแกรมของคุณ
 และส่วนไหนมาจากข้อมูล
 
+## เลือกใช้ `str.format`, f-string, หรือ t-string
+
+ทั้งสามแบบใช้ mini-language `{}`/format-spec เดียวกัน แต่ตอบคำถามต่างกัน:
+
+| รูปแบบ | evaluate เป็น | เมื่อไหร่ |
+|---|---|---|
+| `str.format(...)` | `str` ทันที | template string เป็นข้อมูล — อ่านจาก config file, ตารางแปลภาษา, หรือมาจากผู้ใช้ตอนรันไทม์ จึงเป็น f-string literal ใน source ไม่ได้ |
+| f-string | `str` ทันที | ต้องการข้อความที่เสร็จแล้วทันที ใน source code ของตัวเอง และไม่มีอะไรปลายทางต้องแยกค่าออกจากข้อความ literal |
+| t-string | `Template` แบบ lazy | ผลลัพธ์ต้องไปที่ที่ต้อง escape หรือ validate ค่าแยกจากข้อความ literal — SQL, HTML, คำสั่ง shell, logging framework ที่ redact field |
+
+ใช้ f-string เมื่อต้องการข้อความเดี๋ยวนี้ ใช้ t-string เมื่อมีอะไรปลายทางต้องรู้ว่าส่วนไหนมาจากโปรแกรมของคุณ
+ใช้ `str.format` เฉพาะเมื่อ template เองไม่ใช่ literal ใน source
+
 ## `join()` และ `split()`
 
 `str.split(sep)` แบ่ง string เป็น list
@@ -136,7 +167,57 @@ print(parts)
 print(rejoined)
 ```
 
+## การ concatenate string ใน loop เป็น quadratic
+
+`str` เปลี่ยนแปลงไม่ได้ ดังนั้น `result += "x"` ไม่ได้ขยาย `result` ในที่ — มันสร้าง string object ใหม่**ทั้งหมด** คัดลอกทุกตัวอักษรเดิมบวกตัวใหม่ แล้ว rebind `result` ไปที่มัน ทำแบบนี้ `n` ครั้งจะคัดลอกตัวอักษรรวมประมาณ `1 + 2 + ... + n` ตัว: O(n²) ส่วน `"".join(pieces)` คำนวณความยาวรวมครั้งเดียวแล้วคัดลอกแต่ละตัวอักษรครั้งเดียว: O(n)
+
+```python
+import time
+
+n = 20000
+start = time.perf_counter()
+result = ""
+for i in range(n):
+    result += "x"
+concat_time = time.perf_counter() - start
+
+start = time.perf_counter()
+joined = "".join("x" for _ in range(n))
+join_time = time.perf_counter() - start
+
+print(result == joined)                       # True
+print(concat_time > join_time)                # True (machine-dependent, but the trend holds)
+```
+
 ใช้ string method join เสมอ (`", ".join(items)`) ไม่ควร concatenate ใน loop — การ concatenate ใน loop สร้าง string กลางที่ไม่จำเป็น O(n²) ชิ้น
+
+## กับดัก cutset ของ `strip()`
+
+`s.strip(chars)` ไม่ได้ลบ literal prefix/suffix substring — `chars` ถูกตีความเป็น **set ของตัวอักษรแต่ละตัว** ที่ถูกลบจากทั้งสองฝั่งตราบเท่าที่ยังตรงกันอยู่:
+
+```python
+domain = "www.example.com"
+print(domain.strip("www."))          # "example.com" -- looks correct... but only by luck
+
+messy = "www.wow.com"
+print(messy.strip("www."))           # "ow.com" -- also eats the "w" that starts "wow"
+print(messy.removeprefix("www."))    # "wow.com" -- compares a literal substring instead
+```
+
+`strip("www.")` สร้าง cutset `{'w', '.'}` — ตัวอักษร `w` หรือ `.` ที่ต่อกันเป็นชุดตรงปลายด้านใดด้านหนึ่งจะถูกลบ ไม่ว่าจะเรียงลำดับยังไงหรือมีกี่ตัว มันบังเอิญให้คำตอบ "ถูกต้อง" สำหรับ `domain` เพราะตัวอักษรขอบของ `example.com` ไม่มีตัวไหนเป็น `w` หรือ `.` เลย ทันทีที่เนื้อหาจริงเริ่มด้วยตัวอักษรเหล่านั้น (`"wow.com"`) `strip` จะกินเข้าไปในเนื้อหาด้วย ใช้ `removeprefix()` / `removesuffix()` (Python 3.9+) เมื่อต้องการ "ลบ substring นี้เป๊ะ ๆ" และเก็บ `strip()` ไว้สำหรับ "ตัดตัวอักษรเหล่านี้ตัวไหนก็ได้" (เช่น whitespace)
+
+## `repr()` เทียบกับ `str()`
+
+`str(obj)` สร้างรูปแบบที่มนุษย์อ่านง่าย `repr(obj)` สร้างรูปแบบที่ชัดเจนไม่กำกวมสำหรับ developer — ในอุดมคติคือรูปแบบที่วางกลับเข้า Python แล้วสร้าง object เดิมได้ `print()` ใช้ `str()`; REPL และ container (การ print `list` ของ string) ใช้ `repr()`:
+
+```python
+text = "line1\nline2"
+print(str(text))    # line1
+                     # line2   (an actual newline)
+print(repr(text))   # 'line1\nline2'  (the escape sequence, visible, on one line)
+```
+
+นี่คือเหตุผลที่ `print(["a\n", "b"])` แสดง `['a\n', 'b']` โดยเห็น escape ชัดเจน แม้ `print("a\n")` เดี่ยว ๆ จะแสดงการขึ้นบรรทัดใหม่จริง — `str()` ของ list ตกกลับไปเรียก `repr()` กับแต่ละ element แม่นยำเพื่อให้ escape character และขอบเขต quote ยังมองเห็นได้ แทนที่จะปนกันในผลลัพธ์
 
 ## Demo ที่รันได้จริง
 
@@ -172,6 +253,98 @@ except TypeError as e:
 
 <Playground code={stringsCode} />
 
+Playground ที่สองเป็นทัวร์ของกับดักด้านบน: encoding/decoding, กับดัก cutset ของ `strip()`, `repr` เทียบกับ `str`, และต้นทุน quadratic ของการ concatenate ใน loop
+
+export const stringsDepthCode = `
+import time
+
+# 1. bytes vs str: encoding, decoding, and the errors that cross the boundary.
+s = "café"
+b = s.encode("utf-8")
+print("encoded:", b)
+print("len(str) vs len(bytes):", len(s), len(b))
+print("decoded back:", b.decode("utf-8"))
+try:
+    b.decode("ascii")
+except UnicodeDecodeError as e:
+    print(f"UnicodeDecodeError: {e}")
+
+# 2. The strip() cutset trap: the argument is a SET of characters, not a substring.
+domain = "www.example.com"
+print(domain.strip("www."))          # "example.com" -- looks correct, but only by luck
+
+messy = "www.wow.com"
+print(messy.strip("www."))           # over-strips: eats into "wow" too
+print(messy.removeprefix("www."))    # removeprefix compares a literal substring instead
+
+# 3. repr() vs str().
+text = "line1\\nline2"
+print(str(text))    # the actual two lines
+print(repr(text))   # one line, escape sequence visible
+
+# 4. += in a loop is O(n^2); "".join is O(n).
+n = 20000
+start = time.perf_counter()
+result = ""
+for i in range(n):
+    result += "x"
+concat_time = time.perf_counter() - start
+
+start = time.perf_counter()
+joined = "".join("x" for _ in range(n))
+join_time = time.perf_counter() - start
+
+print("same content:", result == joined)
+print("concatenation was slower than join:", concat_time > join_time)
+`.trim();
+
+<Playground code={stringsDepthCode} />
+
+## Mental Model
+
+`str` ไม่ใช่ buffer ของตัวอักษรที่แก้ไขได้ — ทุกการเรียก method, ทุกการ concatenate, และทุก slice สร้าง `str` object ใหม่ที่เป็นอิสระจากกัน สองชื่อชี้ไปที่ string เดียวกันได้อย่างปลอดภัย (ต่างจาก `list`) เพราะไม่มีอะไรแก้ไขมันได้จากใต้ชื่อไหนเลย `bytes` ก็ตามโมเดล immutable-value เดียวกัน แค่อยู่อีกชั้นหนึ่ง — ก่อนที่การ decode Unicode จะเกิดขึ้น
+
+<Mermaid code={strTransformDiagram} title="ทุก operation ของ string คืน object ใหม่; str กับ bytes แปลงกันผ่าน encoding ที่ชัดเจน" />
+
+export const strTransformDiagram = `flowchart LR
+  str1["str: 'café'"] -->|".encode('utf-8')"| bytesObj["bytes: b'caf\\xc3\\xa9'"]
+  bytesObj -->|".decode('utf-8')"| str2["str: 'café' (new object)"]
+  str1 -->|".upper()"| str3["str: 'CAFÉ' (new object)"]`;
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| `str` ที่ immutable | แชร์ข้ามชื่อ/thread ได้อย่างปลอดภัย ใช้เป็น dict key ได้ | ทุกการแปลงจอง string ใหม่ — รวมถึงตัวที่สร้างทีละตัวอักษร |
+| การแยก `bytes`/`str` | ไม่มีความกำกวมว่าข้อมูลถูก decode เป็นข้อความแล้วหรือยังเป็น byte ดิบ | ทุก I/O boundary ต้องมี `encoding=` ชัดเจน เดาผิดแล้ว raise `UnicodeDecodeError` |
+| f-string | เร็ว อ่านง่าย evaluate ตรงจุดที่เขียน | template เองเป็นข้อมูลภายนอก (ค่าใน config, การแปลภาษา) ไม่ได้ |
+| t-string | ค่ายังตรวจสอบและ escape ได้ก่อนประกอบ | ต้องเรียนรู้เพิ่มอีกหนึ่งแนวคิด ไม่มีอะไรใช้ `Template` เปล่า ๆ ได้โดยไม่มี library รองรับ |
+| ความหมาย cutset ของ `strip()` | method เดียวจัดการ "ตัดตัวอักษรเหล่านี้ตัวไหนก็ได้" มีประโยชน์กับ whitespace | เข้าใจผิดง่ายว่าเป็นการลบ literal prefix/suffix ซึ่งเป็นคนละ operation กัน (`removeprefix`/`removesuffix`) |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"`len(a_string)` กับ `len(a_string.encode())` เท่ากันเสมอ"** เท่ากันเฉพาะข้อความ ASCII ล้วนเท่านั้น — ตัวอักษร multi-byte ใด ๆ ทำให้ byte length มากกว่าจำนวนตัวอักษร
+- **"`s.strip("www.")` ลบ literal prefix `"www."`"** มันลบตัวอักษร `w` และ `.` ที่ต่อกันจากทั้งสองฝั่ง — เป็น *set* ของตัวอักษร ไม่ใช่ substring ใช้ `removeprefix`/`removesuffix` สำหรับการลบแบบ literal
+- **"`str(x)` กับ `repr(x)` พิมพ์เหมือนกันเสมอ"** มันตรงกันสำหรับตัวเลขธรรมดา แต่ต่างกันสำหรับ string (quote และ escape ปรากฏใน `repr`) และสำหรับ object ที่กำหนดเอง ซึ่งนิยามต่างกันได้เลย
+- **"สร้าง string ด้วย `+=` ใน loop เร็วพอ ๆ กับ `''.join()`"** ไม่จริง — `str` เปลี่ยนแปลงไม่ได้ ทุก `+=` คัดลอก string ทั้งหมดที่มีอยู่เข้า object ใหม่ ทำให้ loop ของการ concatenate `n` ครั้งเป็น O(n²) แทนที่จะเป็น O(n)
+- **"f-string กับ t-string ทำสิ่งเดียวกันแค่ prefix ต่างกัน"** f-string คือ `str` ที่เสร็จสมบูรณ์ทันทีที่เขียน ส่วน t-string คือ `Template` object ที่ยังเก็บส่วน literal กับส่วนที่แทรกค่าแยกจากกันให้อะไรบางอย่างปลายทางประมวลผลต่อ
+
+## อ่านโค้ดที่ AI เขียน
+
+- โค้ดสร้าง string ด้วย `+=` ใน loop โดยเฉพาะที่อาจวนหลายรอบ แทนที่จะรวบรวมชิ้นส่วนใน list แล้วเรียก `"".join(...)` ครั้งเดียวหรือเปล่า?
+- `.strip(...)`, `.lstrip(...)`, หรือ `.rstrip(...)` รับ argument หลายตัวอักษรที่ดูเหมือนตั้งใจ "ลบ prefix/suffix นี้" แทนที่จะเป็น "ลบตัวอักษรเหล่านี้ตัวไหนก็ได้" หรือเปล่า? นั่นควรเป็น `removeprefix`/`removesuffix`
+- โค้ดผสม `str` กับ `bytes` ใน expression เดียวกัน (เช่น concatenate ค่า `str` กับ `bytes`) หรือเรียก `.encode()`/`.decode()` โดยไม่มี `encoding=` ชัดเจนแล้วสมมติว่ามันสำเร็จเสมอหรือเปล่า?
+- log message หรือ debug print ใช้ `str()` (หรือ f-string) กับค่าที่รูปแบบเห็น escape ชัดเจนไม่กำกวมของ `repr()` จะมีประโยชน์กว่าในการวินิจฉัย bug จริง ๆ หรือเปล่า?
+- template string ถูกสร้างด้วยมือด้วย `%` หรือ `.format()` ทั้งที่ string ไม่ได้มาจากภายนอก source file — เป็น f-string ได้ไหม หรือต้องเป็น t-string เพราะผลลัพธ์ไปที่ที่มีความเสี่ยง injection?
+
+<SpotTheBug code={`def build_report(rows):
+    text = ""
+    for row in rows:
+        text += f"{row}\\n"
+    return text`} lang="python">
+function นี้ดูถูกต้อง — มันสร้าง string ที่ถูกต้องจริง ๆ — แต่สำหรับ `rows` ขนาดใหญ่มันเป็น O(n²) เงียบ ๆ: `str` เปลี่ยนแปลงไม่ได้ ดังนั้นทุก `text += ...` คัดลอก string *ทั้งหมด* ที่สร้างมาแล้วเข้า object ใหม่เพียงเพื่อเพิ่มอีกหนึ่งบรรทัด กับ rows พันแถวนั่นคือการคัดลอกตัวอักษรราวครึ่งล้านตัวแทนที่จะเป็นพันตัว ทางแก้คือรวบรวมชิ้นส่วนใน list แล้ว join ครั้งเดียว: `return "\n".join(str(row) for row in rows) + "\n"` ซึ่งคัดลอกแต่ละตัวอักษรครั้งเดียวไม่ว่าจะมีกี่ rows ก็ตาม
+</SpotTheBug>
+
 <Callout title="Strings เปลี่ยนแปลงไม่ได้">
 เมื่อสร้าง string object แล้ว ตัวอักษรของตัวเองไม่สามารถเปลี่ยนได้
 ทุก string method คืน **string ใหม่** — ต้นฉบับไม่ถูกแก้ไขเลย
@@ -182,6 +355,56 @@ except TypeError as e:
 
 export const quizStrings = [
   {
+    q: "```python\ns = \"café\"\nb = s.encode(\"utf-8\")\nprint(len(s), len(b))\n```\nโค้ดนี้พิมพ์อะไร?",
+    options: ["4 4", "4 5", "5 5", "5 4"],
+    answer: 1,
+    explain: "len(s) นับตัวอักษร Unicode สี่ตัว ใน UTF-8 'é' encode เป็น 2 byte ในขณะที่อีกสามตัวอักษรเป็น 1 byte ต่อตัว ดังนั้น len(b) จึงเป็น 5"
+  },
+  {
+    q: "```python\nmessy = \"www.wow.com\"\nprint(messy.strip(\"www.\"))\n```\nโค้ดนี้พิมพ์อะไร?",
+    options: [
+      "wow.com",
+      "www.wow.com",
+      "ow.com",
+      "raise ValueError"
+    ],
+    answer: 2,
+    explain: "strip ตีความ argument เป็น set ของตัวอักษร {'w', '.'} ไม่ใช่ literal prefix มันตัดตัวอักษร w/. ที่นำหน้าทุกตัวที่เจอ ซึ่งกินเข้าไปในตัว 'w' ที่ขึ้นต้น \"wow\" ด้วย เหลือ \"ow.com\""
+  },
+  {
+    q: "วิธี idiomatic ในการลบ literal prefix \"www.\" ออกจาก string เป๊ะ ๆ โดยไม่เสี่ยงพฤติกรรม cutset ของ strip() คืออะไร?",
+    options: [
+      "s.strip(\"www.\")",
+      "s.lstrip(\"www.\")",
+      "s.removeprefix(\"www.\")",
+      "s.replace(\"www.\", \"\")"
+    ],
+    answer: 2,
+    explain: "removeprefix (3.9+) เทียบ substring แบบ literal ที่จุดเริ่มต้นและลบก็ต่อเมื่อตรงกันเป๊ะ -- มันไม่เคยตีความ argument เป็น set ของตัวอักษรแบบที่ strip/lstrip ทำ"
+  },
+  {
+    q: "```python\nprint(str(\"a\\nb\"))\nprint(repr(\"a\\nb\"))\n```\nโค้ดนี้พิมพ์อะไร?",
+    options: [
+      "สองบรรทัดเหมือนกัน ทั้งคู่แสดง \\n แบบ literal",
+      "แรกแสดงการขึ้นบรรทัดจริง (a แล้ว b คนละบรรทัด) จากนั้น 'a\\nb' ที่เห็น escape ชัดเจน",
+      "ทั้งคู่ raise SyntaxError",
+      "ทั้งคู่พิมพ์เหมือนกันเป๊ะ: a\\nb"
+    ],
+    answer: 1,
+    explain: "str() (ที่ print ใช้) แสดงการขึ้นบรรทัดใหม่จริง ได้สองบรรทัดที่เห็นด้วยตา repr() แสดงรูปแบบที่ชัดเจนไม่กำกวมสำหรับ developer โดยเห็น escape \\n เป็นตัวอักษรที่มองเห็นได้ภายใน quote"
+  },
+  {
+    q: "ทำไมการสร้าง string ขนาดใหญ่ด้วย `result += piece` ใน loop ถึงถือว่าเป็น O(n²)?",
+    options: [
+      "เพราะ Python parse loop body ใหม่ทุกรอบ",
+      "เพราะทุก += คัดลอก string ทั้งหมดที่สร้างมาแล้วเข้า object ใหม่ และเกิดขึ้น n ครั้ง",
+      "เพราะการบวก string เรียก garbage collection เสมอ",
+      "มันไม่ใช่ O(n²) -- str เปลี่ยนแปลงได้ใน CPython ดังนั้น += คือ O(1) ต่อครั้ง"
+    ],
+    answer: 1,
+    explain: "str เปลี่ยนแปลงไม่ได้ ดังนั้น result += piece ขยาย result ในที่ไม่ได้ -- มันจองพื้นที่ string ใหม่และคัดลอกทุกอย่างที่มีอยู่บวก piece เข้าไป ทำแบบนี้ n ครั้งคัดลอกตัวอักษรรวมประมาณ 1+2+...+n ตัว ซึ่งคือ O(n²)"
+  },
+  {
     q: "t-string (Python 3.14) evaluate ออกมาเป็นอะไร?",
     options: [
       "`str` เหมือน f-string ทุกประการ",
@@ -189,47 +412,8 @@ export const quizStrings = [
       "regular expression ที่ compile แล้ว",
       "generator ของตัวอักษรที่ evaluate แบบ lazy"
     ],
-    answer: 1
-  },
-  {
-    q: "`\"Hello, World!\"[7:]` คืนค่าอะไร?",
-    options: [
-      "\"Hello, \"",
-      "\"World!\"",
-      "\"orld!\"",
-      "\"W\""
-    ],
-    answer: 1
-  },
-  {
-    q: "วิธีมาตรฐานในการ concatenate list ของ string คืออะไร?",
-    options: [
-      "str.concat(items)",
-      "sum(items, \"\")",
-      "\"\".join(items)",
-      "reduce(lambda a, b: a + b, items)"
-    ],
-    answer: 2
-  },
-  {
-    q: "prefix `f` ใน `f\"Hello {name}\"` ทำอะไร?",
-    options: [
-      "จัดรูปแบบ string เป็นตัวเลขทศนิยม",
-      "ประเมินนิพจน์ใน {} ขณะ runtime",
-      "สร้าง string constant ที่ frozen (เปลี่ยนแปลงไม่ได้)",
-      "เปิดใช้ไวยากรณ์ string หลายบรรทัด"
-    ],
-    answer: 1
-  },
-  {
-    q: "ทำไม string ใน Python จึงถูกเรียกว่า immutable?",
-    options: [
-      "ไม่สามารถส่งให้ฟังก์ชันได้",
-      "ตัวอักษรไม่สามารถเปลี่ยนได้หลังสร้าง; methods คืน string ใหม่",
-      "ไม่สามารถเก็บใน list ได้",
-      "ถูก compile เป็น bytecode และไม่สามารถอ่านขณะ runtime"
-    ],
-    answer: 1
+    answer: 1,
+    explain: "ต่างจาก f-string ที่เสร็จสมบูรณ์ทันทีที่เขียน t-string evaluate เป็น Template object ที่เก็บส่วน literal กับ Interpolation object แยกจากกัน ให้ library escape หรือ validate ค่าได้ก่อนประกอบเป็นข้อความสุดท้าย"
   }
 ];
 

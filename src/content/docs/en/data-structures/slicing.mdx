@@ -1,6 +1,6 @@
 ---
 title: Slicing
-description: 'seq[start:stop:step], negative indices, reverse with [::-1], and shallow copy via slice in Python 3.14.'
+description: 'seq[start:stop:step], slice assignment and deletion, slicing tuple/str/bytes/range, and the slice object in Python 3.14.'
 sidebar:
   order: 5
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Slice syntax
 
@@ -45,6 +47,8 @@ nums[:-3]    # [10, 20, 30, 40]  — everything except last three
 
 Negative indices make it easy to access the tail of a sequence without knowing its length.
 
+**There is one negative index that is not negative: `-0 == 0`.** `seq[-0:]` means `seq[0:]` — the *whole* sequence — never "the last zero elements." Any code that computes a negative stride/offset from a variable that might be `0` needs to handle that case explicitly; see the "Reading AI-generated code" section below for exactly this bug.
+
 ## Reversing a sequence
 
 `seq[::-1]` is the idiomatic Python way to reverse any sequence.
@@ -63,6 +67,13 @@ s = 'Hello, World!'
 print(s[::-1])   # !dlroW ,olleH
 ```
 
+A negative step other than `-1` walks backward with a stride — `[::-2]` reverses and also takes every other element:
+
+```python
+letters = ['a', 'b', 'c', 'd', 'e', 'f', 'g']
+print(letters[::-2])  # ['g', 'e', 'c', 'a']
+```
+
 ## Shallow copy via slice
 
 `seq[:]` (no start, stop, or step) returns a **shallow copy** of the sequence.
@@ -78,9 +89,67 @@ print(copy)      # [99, 2, 3, 4, 5]
 
 For nested structures (lists of lists), use `copy.deepcopy()` instead if you need independent inner lists.
 
-## Named slices
+## Slice assignment and deletion
 
-You can store a slice in a variable with `slice(start, stop, step)` for readability:
+Unlike reading, assigning to a slice mutates the list in place — and the replacement does not need to be the same length as the slice it replaces:
+
+```python
+nums = [10, 20, 30, 40, 50]
+nums[1:3] = [99, 98, 97]
+print(nums)  # [10, 99, 98, 97, 40, 50] — 2 elements replaced by 3, the list grew
+```
+
+```python
+nums2 = [10, 20, 30, 40, 50]
+nums2[1:4] = [0]
+print(nums2)  # [10, 0, 50] — 3 elements replaced by 1, the list shrank
+```
+
+`del seq[start:stop]` removes a slice entirely, shifting later elements down:
+
+```python
+nums3 = [10, 20, 30, 40, 50]
+del nums3[1:3]
+print(nums3)  # [10, 40, 50]
+```
+
+A **plain** slice (`step` omitted or `1`) tolerates a length mismatch — that is how it grows or shrinks the list. An **extended** slice (any other `step`) does not: the replacement must have exactly as many elements as the slice selects, because there is no ambiguity to resolve about which positions get which values.
+
+```python
+nums4 = [1, 2, 3, 4, 5]
+nums4[::2] = [10, 30, 50]   # exactly 3 elements for 3 selected positions
+print(nums4)  # [10, 2, 30, 4, 50]
+
+nums5 = [1, 2, 3, 4, 5]
+nums5[::2] = [100]
+# ValueError: attempt to assign sequence of size 1 to extended slice of size 3
+```
+
+## Slicing other sequence types: tuple, str, bytes, and range
+
+Slicing works identically across every built-in sequence type — you always get back an object of the *same type* you sliced, except for one: slicing a `range` returns another `range`, computed lazily, not a list.
+
+```python
+t = (10, 20, 30, 40, 50)
+print(t[1:4])   # (20, 30, 40) — a tuple
+
+s = 'abcdef'
+print(s[1:4])   # 'bcd' — a str
+
+b = b'abcdef'
+print(b[1:4])   # b'bcd' — bytes
+
+r = range(0, 20, 2)
+sub = r[2:5]
+print(sub)        # range(4, 10, 2) — still a range, not a list
+print(list(sub))  # [4, 6, 8] — only materialised when you ask
+```
+
+Tuple, str, and bytes are all immutable, so — unlike a list — none of them support slice *assignment*; `t[1:3] = (...)` raises `TypeError`.
+
+## Named slices and the `slice` object
+
+`seq[a:b:c]` is syntactic sugar: Python builds a `slice` object and passes it to `__getitem__`. You can build and store that object yourself with `slice(start, stop, step)`, which makes a slice reusable and self-documenting:
 
 ```python
 HEADER  = slice(None, 3)
@@ -91,6 +160,17 @@ data = b'HDR' + b'payload' + b'FT'
 print(data[HEADER])   # b'HDR'
 print(data[PAYLOAD])  # b'payload'
 print(data[FOOTER])   # b'FT'
+```
+
+A `slice` object's `.indices(length)` method resolves `start`/`stop`/`step` — including negative and out-of-range values — into concrete, clamped, always-forward-iterable values for a sequence of the given length. This is exactly what `__getitem__` does internally before walking the sequence:
+
+```python
+sl = slice(1, 10, 2)
+print(sl.indices(5))  # (1, 5, 2) — stop clamped from 10 down to 5
+
+nums6 = [0, 1, 2, 3, 4]
+start, stop, step = sl.indices(len(nums6))
+print([nums6[i] for i in range(start, stop, step)])  # [1, 3] — matches nums6[sl] exactly
 ```
 
 ## Full runnable demo
@@ -118,10 +198,118 @@ print('copy:', copy)
 
 <Playground code={slicingCode} />
 
-<Callout title="Slicing returns a new object; [::-1] reverses">
-Every slice expression creates a new list (or string, or tuple) — it never modifies the source.
+The playground below covers the depth topics above — slice assignment growing and shrinking a list, `del` on a slice, extended-slice length checking, `[::-2]`, slicing tuple/str/bytes/range, and the `slice` object's `.indices()`:
+
+export const slicingDepthCode = `
+# --- slice assignment: replace a range, can change length ---
+nums = [10, 20, 30, 40, 50]
+nums[1:3] = [99, 98, 97]
+print('after slice assignment (grows):', nums)
+
+nums2 = [10, 20, 30, 40, 50]
+nums2[1:4] = [0]
+print('after slice assignment (shrinks):', nums2)
+
+# --- slice deletion ---
+nums3 = [10, 20, 30, 40, 50]
+del nums3[1:3]
+print('after slice deletion:', nums3)
+
+# --- extended slice assignment must match length exactly ---
+nums4 = [1, 2, 3, 4, 5]
+nums4[::2] = [10, 30, 50]
+print('extended slice assign (matching length):', nums4)
+
+nums5 = [1, 2, 3, 4, 5]
+try:
+    nums5[::2] = [100]
+except ValueError as e:
+    print('ValueError:', e)
+
+# --- [::-2] ---
+letters = ['a', 'b', 'c', 'd', 'e', 'f', 'g']
+print('[::-2]:', letters[::-2])
+
+# --- slicing works the same on tuple, str, bytes ---
+t = (10, 20, 30, 40, 50)
+print('tuple slice:', t[1:4], type(t[1:4]).__name__)
+
+s = 'abcdef'
+print('str slice:', s[1:4], type(s[1:4]).__name__)
+
+b = b'abcdef'
+print('bytes slice:', b[1:4], type(b[1:4]).__name__)
+
+# --- slicing a range returns a NEW range, not a list ---
+r = range(0, 20, 2)
+sub = r[2:5]
+print('range slice:', sub, type(sub).__name__, list(sub))
+
+# --- slice object + .indices() ---
+sl = slice(1, 10, 2)
+print('slice object:', sl)
+print('indices() resolved against len=5:', sl.indices(5))
+
+nums6 = [0, 1, 2, 3, 4]
+start, stop, step = sl.indices(len(nums6))
+manual = [nums6[i] for i in range(start, stop, step)]
+print('manual walk using indices():', manual)
+print('direct slice result:', nums6[sl])
+`.trim();
+
+<Playground code={slicingDepthCode} />
+
+## Mental Model
+
+export const slicingMentalModel = `flowchart LR
+  Seq["seq[1:4]"] -->|excluded| A0["seq[0]"]
+  Seq -->|included| A1["seq[1]"]
+  Seq -->|included| A2["seq[2]"]
+  Seq -->|included| A3["seq[3]"]
+  Seq -->|excluded, this is stop| A4["seq[4]"]`;
+
+<Mermaid code={slicingMentalModel} title="stop is always one past the last included index -- seq[1:4] includes indices 1, 2, 3 and never touches index 4" />
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| slicing (`seq[a:b:c]`) | never raises `IndexError` — out-of-range bounds are silently clamped | that same clamping can hide an off-by-one bug instead of surfacing it |
+| plain-slice assignment (`step` omitted) | can grow or shrink the list in one statement | the new length only matches your intent if you actually meant "replace this whole range" |
+| extended-slice assignment (`step != 1`) | precise, positional replacement | strict — a length mismatch raises `ValueError` instead of silently truncating or padding |
+| slicing a `range` | stays lazy — a huge range slices in O(1), not O(n) | returns a `range`, not a `list` — code expecting list methods (`.append`, indexing by a `list`-only API) needs `list(...)` first |
+| `slice` object + `.indices()` | reusable, named, and resolves negative/out-of-range bounds for you | one more indirection to read compared to inline `[a:b:c]` |
+
+## Common Misconceptions
+
+- **"Out-of-range slice indices raise `IndexError`, like out-of-range plain indexing"** — fact: `a[100:]` on a 5-element list returns `[]`; slicing always clamps instead of raising.
+- **"`seq[-0:]` means the empty tail — zero elements"** — fact: `-0 == 0` in Python, so `seq[-0:]` is exactly `seq[0:]` — the whole sequence.
+- **"Slice assignment must replace with the same number of elements"** — fact: only true for extended slices (`step != 1`); a plain slice assignment can grow or shrink the list freely.
+- **"Slicing a `range` gives you a list"** — fact: it gives you another `range`, computed lazily; wrap it in `list(...)` if you need concrete elements.
+- **"`a[:]` and `a[::1]` and `list(a)` all behave identically in every context"** — fact: all three make a shallow copy of a list, but only `a[:]`/`a[::1]` work on any sequence type via `__getitem__`; some custom sequence classes implement one and not the other.
+
+## Reading AI-generated code
+
+- Does a function compute a negative slice bound from a variable that could be `0` (e.g. `items[-n:]` to "drop the last `n` items")? When `n == 0`, `-n` is `0`, not "no items" — `items[-0:]` returns the *whole* sequence, and if that result then gets deleted or discarded, the bug is silent and severe.
+- Does slice-assignment code assume the replacement is always the same length as the original slice? That is only guaranteed to matter for extended slices; for a plain slice, a shorter or longer replacement is valid and changes the list's length — check whether that length change was intended.
+- Is a `range` object sliced and then immediately used somewhere that expects a `list` (`.append()`, JSON serialization, an API that only accepts lists)? It needs `list(...)` first.
+- Does code slice a string or tuple and then try to mutate the result in place? Slicing a `str`, `tuple`, or `bytes` returns an object of the *same immutable type* — `s[1:3][0] = 'x'` fails the same way `s[0] = 'x'` would.
+- Does a reversed-with-stride slice (`[::-2]`, `[::-3]`, ...) appear where a plain reverse (`[::-1]`) was probably intended? A stray extra digit silently skips elements instead of erroring.
+
+<SpotTheBug code={`def drop_last_n(items, n):
+    del items[-n:]
+    return items
+
+
+print(drop_last_n([1, 2, 3, 4, 5], 0))
+print(drop_last_n([1, 2, 3, 4, 5], 2))`}>
+The function assumes `n=0` means "delete nothing," but `-n` when `n == 0` is `-0`, which Python treats as exactly `0` — not "negative zero" and not "no items from the end." So `items[-0:]` is `items[0:]`, the entire list, and `del items[0:]` empties it completely. Verified on Python 3.14: the first call prints `[]`, not the unchanged `[1, 2, 3, 4, 5]` the name `drop_last_n` promises; the second call (`n=2`) works as intended and prints `[1, 2, 3]`. No exception is raised for the `n=0` case, which is exactly what makes this bug easy to ship. The fix is an explicit guard: `if n: del items[-n:]`, or slicing with an explicit stop instead of a negative start: `del items[len(items) - n:]`.
+</SpotTheBug>
+
+<Callout title="Slicing returns a new object; [::-1] reverses; bounds are clamped, not checked">
+Every slice expression creates a new list (or string, tuple, or bytes) — it never modifies the source, except when you assign to a slice, which mutates in place.
 `a[::-1]` is the canonical idiom to reverse a sequence in a single expression.
-Out-of-range slice indices are silently clamped: `a[100:]` returns `[]` rather than raising `IndexError`.
+Out-of-range slice indices are silently clamped: `a[100:]` returns `[]` rather than raising `IndexError` — and `-0` is just `0`, so a negative bound computed from a value that might be zero needs an explicit check.
 </Callout>
 
 export const quizSlicing = [
@@ -133,22 +321,41 @@ export const quizSlicing = [
             "[30, 40, 50, 60]",
             "[20, 30, 40, 50]"
         ],
-        answer: 1
+        answer: 1,
+        explain: "Slicing includes index 2 up to (not including) index 5: indices 2, 3, 4 hold 30, 40, 50."
     },
     {
-        q: "What does `nums[-3:]` return for the same list?",
+        q: "What does this print?\n\nitems = [1, 2, 3, 4, 5]\nn = 0\ndel items[-n:]\nprint(items)",
         options: [
-            "[10, 20, 30]",
-            "[50, 60, 70]",
-            "[40, 50, 60]",
-            "[60, 70]"
+            "[1, 2, 3, 4, 5]",
+            "[]",
+            "[1, 2, 3, 4]",
+            "Raises IndexError"
         ],
-        answer: 1
+        answer: 1,
+        explain: "-n when n is 0 is just 0 (there is no negative zero for integers). items[-0:] is items[0:], the entire list, so del items[-n:] deletes everything. This is a real, silent footgun -- verified on Python 3.14."
     },
     {
-        q: "Which slice expression reverses a sequence?",
-        options: ["seq[0:-1]", "seq[-1:0]", "seq[::-1]", "seq[::1]"],
-        answer: 2
+        q: "What does this print?\n\nnums = [1, 2, 3, 4, 5]\nnums[::2] = [100]",
+        options: [
+            "[100, 2, 3, 4, 5]",
+            "[100]",
+            "Raises ValueError: attempt to assign sequence of size 1 to extended slice of size 3",
+            "[100, 2, 100, 4, 100]"
+        ],
+        answer: 2,
+        explain: "nums[::2] selects 3 positions (indices 0, 2, 4). Extended-slice assignment (step != 1) requires the replacement to have exactly as many elements as the slice selects -- 1 element for 3 positions raises ValueError. A plain slice (nums[1:3] = [...]) would not have this restriction."
+    },
+    {
+        q: "What does `range(0, 20, 2)[2:5]` evaluate to?",
+        options: [
+            "[4, 6, 8]",
+            "range(4, 10, 2)",
+            "range(2, 5)",
+            "Raises TypeError -- range objects cannot be sliced"
+        ],
+        answer: 1,
+        explain: "Slicing a range returns another range, computed lazily -- not a list. range(4, 10, 2) represents the same three values (4, 6, 8) but stays a range until you wrap it in list(...)."
     },
     {
         q: "Does `original[:]` create a deep copy or a shallow copy?",
@@ -158,7 +365,19 @@ export const quizSlicing = [
             "No copy — it returns the same list object",
             "It raises TypeError for nested lists"
         ],
-        answer: 1
+        answer: 1,
+        explain: "original[:] builds a new outer list, but every element inside it is the same object as before -- nested mutable elements (like an inner list) are still shared, exactly like any other shallow copy."
+    },
+    {
+        q: "A `slice` object is `slice(1, 10, 2)`. What does `.indices(5)` return, and why?",
+        options: [
+            "(1, 10, 2) -- unchanged, since .indices() just echoes its arguments",
+            "(1, 5, 2) -- stop is clamped down to the sequence length",
+            "IndexError -- 10 is out of range for a sequence of length 5",
+            "(1, 4, 2) -- the last valid index, not the length"
+        ],
+        answer: 1,
+        explain: ".indices(length) resolves a slice's start/stop/step into concrete values valid for a sequence of the given length, clamping out-of-range bounds rather than raising. Here stop=10 is clamped to 5 (the length), giving (1, 5, 2) -- exactly what nums[sl] would walk internally."
     }
 ];
 

@@ -8,6 +8,8 @@ sidebar:
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 pytest คือมาตรฐานโดยพฤตินัยสำหรับการทดสอบโค้ด Python ต่างจากโมดูล `unittest` ที่มีอยู่ในตัว pytest ไม่ต้องการการสืบทอดคลาส ไม่ต้องการเมธอด assertion พิเศษ และไม่มี boilerplate — คุณเขียนแค่ฟังก์ชันธรรมดาและคำสั่ง `assert` ธรรมดา ระบบค้นหาเทส ผลลัพธ์เมื่อเกิดความล้มเหลวที่ละเอียด ระบบ fixture และระบบนิเวศปลั๊กอินทำให้ pytest เป็นเครื่องมือแรกที่ควรหยิบใช้ในทุกโปรเจกต์ Python
 
@@ -107,22 +109,558 @@ def test_add_parametrized(a, b, expected):
     assert add(a, b) == expected
 ```
 
-## conftest.py — shared fixtures
+## fixture ในตัวสำหรับงาน I/O ทั้งสี่: `monkeypatch`, `tmp_path`, `capsys`, `caplog`
 
-การวาง fixture ไว้ในไฟล์ `conftest.py` ทำให้ fixture นั้นใช้ได้กับไฟล์ทดสอบทั้งหมดในไดเรกทอรีเดียวกันและไดเรกทอรีย่อย โดยไม่ต้อง import เพิ่มเติม
+โค้ดจริงต้องแตะ environment variable, filesystem, stdout และ logger pytest มี fixture ที่ทำให้ทั้งสี่อย่างนี้ปลอดภัยและตรวจสอบได้ในเทส โดยไม่ต้อง cleanup เอง
 
 ```python
-# conftest.py  (place in project root or test dir)
+"""app.py -- exercises an env var, a file, stdout, and a logger."""
+import logging
+import os
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+def greeting() -> str:
+    user = os.environ.get("USER_NAME", "stranger")
+    return f"Hello, {user}!"
+
+def write_report(path: Path, lines: list[str]) -> None:
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"wrote {len(lines)} lines to {path}")
+    logger.info("report written to %s", path)
+```
+
+```python
+"""test_fixtures.py"""
+import logging
+from pathlib import Path
+
+import app
+
+def test_monkeypatch_env_var(monkeypatch):
+    monkeypatch.setenv("USER_NAME", "Ada")
+    assert app.greeting() == "Hello, Ada!"
+
+def test_monkeypatch_missing_env_var_uses_default(monkeypatch):
+    monkeypatch.delenv("USER_NAME", raising=False)
+    assert app.greeting() == "Hello, stranger!"
+
+def test_write_report_uses_tmp_path(tmp_path: Path, capsys):
+    report = tmp_path / "out.txt"           # a real, isolated, auto-cleaned directory
+    app.write_report(report, ["line one", "line two"])
+    assert report.read_text(encoding="utf-8") == "line one\nline two\n"
+
+    captured = capsys.readouterr()          # captured print() output
+    assert "wrote 2 lines" in captured.out
+
+def test_write_report_logs_at_info(tmp_path: Path, caplog):
+    report = tmp_path / "out.txt"
+    with caplog.at_level(logging.INFO):
+        app.write_report(report, ["x"])
+    assert "report written to" in caplog.text
+```
+
+รันจริง ผ่านทั้งสี่:
+
+```text
+$ uv run pytest test_fixtures.py -v
+test_fixtures.py::test_monkeypatch_env_var PASSED                        [ 25%]
+test_fixtures.py::test_monkeypatch_missing_env_var_uses_default PASSED   [ 50%]
+test_fixtures.py::test_write_report_uses_tmp_path PASSED                 [ 75%]
+test_fixtures.py::test_write_report_logs_at_info PASSED                  [100%]
+4 passed in 0.12s
+```
+
+`monkeypatch` คืนค่าทุกอย่างที่เปลี่ยน (env var, attribute, dict item, `sys.path`) กลับอัตโนมัติตอน teardown — ห้าม mutate `os.environ` ตรง ๆ ในเทส `tmp_path` ให้ไดเรกทอรีจริงที่ว่างเปล่าและถูกลบอัตโนมัติแยกต่อเทส (scope ระดับ function; มี `tmp_path_factory` สำหรับ scope ที่กว้างกว่า) `capsys` จับ `print()`/stdout+stderr ส่วน `caplog` จับ record ของโมดูล `logging` ไม่ใช่ `print()` — ความผิดพลาดที่พบบ่อยในเทสที่ AI เขียนคือใช้ `capsys` ตรวจเนื้อหา log หรือใช้ `caplog` ตรวจเนื้อหา print
+
+## Marks: `skip`, `xfail` และ mark ที่กำหนดเอง
+
+```python
+import sys
+import pytest
+import app
+
+@pytest.mark.skip(reason="Windows path handling not implemented yet")
+def test_windows_only_behavior():
+    assert False  # never runs
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions only")
+def test_posix_permissions():
+    assert True
+
+@pytest.mark.xfail(reason="Account.withdraw does not support negative amounts yet")
+def test_negative_withdraw_is_rejected():
+    acc = app.Account(balance=100)
+    acc.withdraw(-50)  # currently just increases the balance -- a real bug
+    assert acc.balance == 100  # the assertion we WANT to hold
+
+@pytest.mark.slow
+def test_large_transfer_batch():
+    src, dst = app.Account(1_000_000), app.Account(0)
+    for _ in range(10_000):
+        app.transfer(src, dst, 1)
+    assert dst.balance == 10_000
+```
+
+mark ที่กำหนดเองอย่าง `slow` ต้องลงทะเบียนก่อน ไม่งั้น pytest จะถือว่าเป็นการพิมพ์ผิด:
+
+```toml
+# pyproject.toml
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+```
+
+รันจริง mark ที่ไม่ได้ลงทะเบียนถูกปฏิเสธทันที:
+
+```text
+$ uv run pytest --strict-markers -q
+ERROR test_marks_and_raises.py - Failed: 'totally_unregistered_mark' not found in `markers` configuration option
+```
+
+หลังลงทะเบียนแล้ว ทุกอย่างรันได้ (`skip`, `posix`, `xfail`, `slow` และเทส `match=` ด้านล่าง):
+
+```text
+$ uv run pytest test_marks_and_raises.py -v
+test_marks_and_raises.py::test_windows_only_behavior SKIPPED (Window...) [ 20%]
+test_marks_and_raises.py::test_posix_permissions PASSED                  [ 40%]
+test_marks_and_raises.py::test_negative_withdraw_is_rejected XFAIL (...) [ 60%]
+test_marks_and_raises.py::test_large_transfer_batch PASSED               [ 80%]
+test_marks_and_raises.py::test_withdraw_message_matches_exactly PASSED   [100%]
+3 passed, 1 skipped, 1 xfailed in 0.10s
+
+$ uv run pytest test_marks_and_raises.py -m "not slow" -q
+s.x.                                                                     [100%]
+2 passed, 1 skipped, 1 deselected, 1 xfailed in 0.09s
+```
+
+เทสที่ทำ `xfail` แล้วดัน**ผ่าน**โดยไม่คาดคิดจะถูกรายงานเป็น `XPASS` — สัญญาณที่มีประโยชน์ว่า bug ที่รู้จักถูกแก้แล้ว และควรเอา mark ออก
+
+## ความล้มเหลวที่แม่นยำด้วย `pytest.raises(match=)`
+
+`match=` รัน `re.search` กับ `str(exception)` — มันจับ exception ที่ *ถูกต้อง* ด้วยเหตุผลที่ *ถูกต้อง* ไม่ใช่แค่ exception ประเภทเดียวกันตัวไหนก็ได้
+
+```python
+def test_withdraw_message_matches_exactly():
+    acc = app.Account(balance=10)
+    with pytest.raises(ValueError, match="^insufficient funds$"):
+        acc.withdraw(50)
+```
+
+ถ้าไม่มี `match=` การเขียน `pytest.raises(ValueError)` เฉย ๆ จะผ่านแม้โค้ด raise `ValueError("something unrelated")` — ประเภทของ exception ถูกต้อง แต่*สาเหตุ*อาจไม่ใช่
+
+## Fixture scope: function → class → module → session
+
+โดย default fixture จะรันใหม่ทุกเทส (`scope="function"`) scope ที่กว้างกว่าแลกความ isolation กับความเร็ว — setup ครั้งเดียว ใช้ซ้ำกับหลายเทส
+
+```python
 import pytest
 
 @pytest.fixture(scope="session")
-def app_config():
-    return {"debug": True, "db_url": "sqlite:///:memory:"}
+def session_fixture():
+    print("\n  [setup]    session   (once for the whole test run)")
+    yield "session-value"
+    print("  [teardown] session")
+
+@pytest.fixture(scope="module")
+def module_fixture():
+    print("\n  [setup]    module    (once per test file)")
+    yield "module-value"
+    print("  [teardown] module")
+
+@pytest.fixture(scope="function")
+def function_fixture():
+    print("\n  [setup]    function  (before every test)")
+    yield "function-value"
+    print("  [teardown] function")
+
+def test_one(session_fixture, module_fixture, function_fixture):
+    assert function_fixture == "function-value"
+
+def test_two(session_fixture, module_fixture, function_fixture):
+    assert module_fixture == "module-value"
 ```
+
+ลำดับจริง ยืนยันด้วย `-s` (ปิดการ capture output เพื่อให้เห็น `print`):
+
+```text
+$ uv run pytest test_fixture_scope.py -v -s
+test_fixture_scope.py::test_one
+  [setup]    session   (once for the whole test run)
+  [setup]    module    (once per test file)
+  [setup]    function  (before every test)
+PASSED  [teardown] function
+
+test_fixture_scope.py::test_two
+  [setup]    function  (before every test)
+PASSED  [teardown] function
+  [teardown] module
+  [teardown] session
+```
+
+fixture ระดับ session และ module setup ครั้งเดียวก่อนเทสแรกที่ต้องใช้ และ teardown ครั้งสุดท้ายหลังเทสสุดท้ายใน scope ของมัน fixture ระดับ session ที่ถือ state ที่*เปลี่ยนแปลงได้*แล้วเทสหนึ่ง mutate มัน จะรั่วไหลไปยังทุกเทสถัดไปในรันนั้น — เป็น bug ที่แนบเนียนเมื่อ fixture ที่ AI สร้างตั้ง `scope="session"` "เพื่อความเร็ว" โดยไม่ตรวจว่า object นั้นถูกแชร์อย่างปลอดภัยหรือไม่
+
+## `unittest.mock.patch` — patch ที่ที่ name ถูก lookup ไม่ใช่ที่ที่มันถูกนิยาม
+
+นี่คือความผิดพลาดในการ mock ที่พบบ่อยที่สุด ทั้งในเทสที่ AI เขียนและที่คนเขียนเอง `patch(target)` แทนที่ attribute *บนโมดูลที่ถือ reference นั้นตอนเรียกจริง* — โมดูลไหนขึ้นอยู่กับ**วิธีที่โค้ดที่ถูกทดสอบ import name นั้นเข้ามา**
+
+```python
+"""weather.py -- two ways to import requests.get."""
+import requests
+
+def get_temperature_direct(city: str) -> float:
+    # import requests; requests.get(...) -- requests.get is looked up on
+    # the requests module EVERY call, so patching requests.get works.
+    resp = requests.get(f"https://api.example.com/weather/{city}", timeout=5)
+    return resp.json()["temp_c"]
+
+from requests import get as _get
+
+def get_temperature_wrong_target(city: str) -> float:
+    # from requests import get -- weather._get is now a name in THIS
+    # module's namespace, bound once at import time.
+    resp = _get(f"https://api.example.com/weather/{city}", timeout=5)
+    return resp.json()["temp_c"]
+```
+
+```python
+"""test_patch_location.py"""
+from unittest.mock import MagicMock, patch
+import pytest
+import requests
+import weather
+
+def test_patching_requests_get_works_when_the_caller_did_import_requests():
+    fake_response = MagicMock()
+    fake_response.json.return_value = {"temp_c": 21.5}
+    with patch("requests.get", return_value=fake_response) as mock_get:
+        assert weather.get_temperature_direct("bangkok") == 21.5
+    mock_get.assert_called_once()
+
+def test_patching_requests_get_is_a_NO_OP_after_a_from_import():
+    # weather._get was bound at import time -- patching the attribute on the
+    # requests module never touches weather's own reference to it. The
+    # "mocked" function never runs; the real call fires and hits the network.
+    with patch("requests.get", return_value=MagicMock()) as mock_get:
+        with pytest.raises(requests.exceptions.ConnectionError):
+            weather.get_temperature_wrong_target("bangkok")
+    mock_get.assert_not_called()  # proof the patch never intercepted the call
+
+def test_the_correct_target_is_the_importing_modules_own_name():
+    fake_response = MagicMock()
+    fake_response.json.return_value = {"temp_c": 99.0}
+    with patch("weather._get", return_value=fake_response) as mock_get:
+        assert weather.get_temperature_wrong_target("bangkok") == 99.0
+    mock_get.assert_called_once()
+```
+
+รันจริง — ผ่านทั้งสาม และเทสตรงกลางคือหลักฐาน ไม่ใช่แค่สมมติฐาน:
+
+```text
+$ uv run pytest test_patch_location.py -v
+test_patch_location.py::test_patching_requests_get_works_when_the_caller_did_import_requests PASSED
+test_patch_location.py::test_patching_requests_get_is_a_NO_OP_after_a_from_import PASSED
+test_patch_location.py::test_the_correct_target_is_the_importing_modules_own_name PASSED
+3 passed in 0.22s
+```
+
+กฎง่าย ๆ: patch name **ตามที่มันถูกเขียนไว้ในคำสั่ง `import` ของโค้ดที่ถูกทดสอบ** เช่น `patch("weather._get")` สำหรับ `from requests import get as _get` หรือ `patch("weather.requests.get")` / `patch("requests.get")` สำหรับ `import requests` ธรรมดา
+
+## `autospec=True` — `MagicMock` ธรรมดาซ่อนการพิมพ์ผิด autospec จับได้
+
+`MagicMock()` เปล่า ๆ จะสร้าง attribute อะไรก็ได้ที่คุณเรียก — รวมถึงชื่อที่พิมพ์ผิดจากเมธอดจริง `autospec=True` สร้าง mock จาก signature จริงของ object นั้น ทำให้ attribute หรือ signature ที่ผิดล้มเหลวดัง ๆ แทนที่จะผ่านเงียบ ๆ
+
+```python
+from unittest.mock import MagicMock, create_autospec, patch
+import app
+
+def send_notification(account: app.Account, message: str) -> None:
+    # BUG: Account has withdraw/deposit, not notify() -- a typo an AI
+    # assistant can introduce as easily as a human can.
+    account.notify(message)
+
+def test_plain_magicmock_hides_the_typo():
+    fake_account = MagicMock()
+    send_notification(fake_account, "hi")               # MagicMock invents .notify() on the fly
+    fake_account.notify.assert_called_once_with("hi")   # passes -- proves nothing
+
+def test_autospec_catches_the_typo():
+    fake_account = create_autospec(app.Account, instance=True)
+    with pytest.raises(AttributeError, match="notify"):
+        send_notification(fake_account, "hi")
+
+@patch("app.Account", autospec=True)
+def test_patch_autospec_true_also_validates_call_signatures(MockAccount):
+    instance = MockAccount(balance=10)
+    instance.withdraw(5)                       # fine -- real signature
+    with pytest.raises(TypeError):
+        instance.withdraw(amount=5, extra=1)   # wrong signature, rejected
+```
+
+รันจริง ผ่านทั้งสาม — ตัวแรกที่ "ผ่าน" คือกับดักตัวจริง:
+
+```text
+$ uv run pytest test_autospec.py -v
+test_autospec.py::test_plain_magicmock_hides_the_typo PASSED
+test_autospec.py::test_autospec_catches_the_typo PASSED
+test_autospec.py::test_patch_autospec_true_also_validates_call_signatures PASSED
+3 passed in 0.09s
+```
+
+ใช้ `create_autospec`/`autospec=True` เป็นค่าเริ่มต้นสำหรับ object ที่มีคลาสจริงอยู่เบื้องหลัง เก็บ `MagicMock()` เปล่า ๆ ไว้ใช้กับ object ใช้แล้วทิ้งที่ไม่มี interface ต้องปกป้อง
+
+## เทส async: ตัวอย่างเบื้องต้นของ `pytest-asyncio`
+
+pytest ธรรมดาไม่ await coroutine ให้คุณ — `async def test_...` โดยไม่มีปลั๊กอินจะแค่คืน coroutine object ที่ไม่ได้ await และเทส "ผ่าน" เงียบ ๆ ทั้งที่ไม่ได้ทดสอบอะไรเลย `@pytest.mark.asyncio` ของ `pytest-asyncio` แก้ปัญหานี้
+
+```python
+import asyncio
+import pytest
+
+async def fetch_value() -> int:
+    await asyncio.sleep(0)
+    return 42
+
+@pytest.mark.asyncio
+async def test_fetch_value():
+    assert await fetch_value() == 42
+```
+
+```text
+$ uv add --dev pytest-asyncio
+$ uv run pytest test_asyncio_teaser.py -v
+test_asyncio_teaser.py::test_fetch_value PASSED
+1 passed in 0.08s
+```
+
+ปลั๊กอิน pytest ของ `anyio` (`anyio.pytest_plugin`) ให้แนวคิดเดียวกันแต่รันแต่ละเทส async กับหลาย backend (`asyncio`, `trio`) — ใช้เมื่อไลบรารีต้องรองรับทั้งคู่ โมดูล Async & Concurrency สอน `asyncio` เองแบบลึกกว่านี้
+
+## `pytest-cov` — และทำไม coverage 100% จึงพิสูจน์อะไรได้น้อย
+
+Coverage วัดว่าบรรทัดไหน*ถูกรัน* ไม่เคยวัดว่า assertion ตรวจสิ่งที่*ถูกต้อง*หรือไม่
+
+```python
+"""pricing.py"""
+def apply_discount(price: float, percent: float) -> float:
+    if percent < 0 or percent > 100:
+        raise ValueError("percent must be between 0 and 100")
+    # BUG: divides by 100 twice -- the discount is 100x too small
+    return price - (price * percent / 100 / 100)
+```
+
+```python
+"""test_pricing.py -- 100% coverage, weak assertions, real bug survives"""
+import pytest
+import pricing
+
+def test_apply_discount_runs_without_error():
+    result = pricing.apply_discount(100.0, 20.0)
+    assert isinstance(result, float)   # never checks the actual number
+
+def test_apply_discount_rejects_bad_percent():
+    with pytest.raises(ValueError):
+        pricing.apply_discount(100.0, 150.0)
+```
+
+```text
+$ uv run pytest test_pricing.py --cov=pricing --cov-report=term-missing -v
+test_pricing.py::test_apply_discount_runs_without_error PASSED
+test_pricing.py::test_apply_discount_rejects_bad_percent PASSED
+
+Name         Stmts   Miss  Cover   Missing
+------------------------------------------
+pricing.py       4      0   100%
+------------------------------------------
+2 passed in 0.10s
+```
+
+coverage 100% เทสผ่านทั้งคู่ — แต่ `apply_discount(100.0, 20.0)` คืนค่าจริง `99.8` ไม่ใช่ `80.0` ที่ส่วนลด 20% ที่ถูกต้องควรได้ Coverage เป็น**พื้นล่าง** (โค้ดที่ไม่ถูกรันแน่นอนว่าไม่ถูกทดสอบ) ไม่ใช่**เพดานบน** (โค้ดที่ถูกรันไม่ได้แปลว่าถูกต้อง) — AI assistant ที่ถูกขอให้ "ทำ coverage ให้ถึง 100%" จะเขียน assertion ที่อ่อนแบบนี้อย่างเต็มใจ เว้นแต่จะถูกบอกว่า assertion ต้องตรวจค่าจริง
+
+## ตัวอย่าง `hypothesis` หนึ่งตัว: property-based testing
+
+แทนที่จะเลือกตัวอย่างเองด้วยมือ `hypothesis` สร้างตัวอย่างให้และย่อ (shrink) ความล้มเหลวใด ๆ ให้เหลือ reproducer ที่เล็กที่สุด
+
+```python
+"""clamp -- forgot to enforce the upper bound."""
+from hypothesis import given, strategies as st
+
+def clamp(value: int, low: int, high: int) -> int:
+    # BUG: only enforces the lower bound
+    return max(value, min(low, high))
+
+@given(st.integers(), st.integers(), st.integers())
+def test_clamp_result_is_always_within_bounds(value, low, high):
+    if low > high:
+        return  # not a valid range, skip
+    result = clamp(value, low, high)
+    assert low <= result <= high
+```
+
+ความล้มเหลวจริง ถูกย่อลงจนเหลือกรณีที่เล็กที่สุดโดยอัตโนมัติ:
+
+```text
+$ uv run pytest test_hypothesis_demo.py -v
+FAILED test_hypothesis_demo.py::test_clamp_result_is_always_within_bounds
+    assert low <= result <= high
+E   assert 1 <= 0
+E   Failing test case: test_clamp_result_is_always_within_bounds(
+E       value=1, low=0, high=0,
+E   )
+1 failed in 0.16s
+```
+
+การแก้ (`min(max(value, low), high)`) ทำให้ผ่านทั้ง 100 กรณีที่ hypothesis สร้างตาม default เทสแบบ example-based ที่เลือกตัวเลขเองไม่กี่ตัวพลาด `value=1, low=0, high=0` ได้ง่าย — หน้าที่ของ hypothesis คือหา input ที่มนุษย์ไม่คิดจะลองโดยเฉพาะ
+
+## `doctest`: เทสที่อาศัยอยู่ใน docstring ของคุณเอง
+
+บรรทัด `>>>` ใน docstring คือตัวอย่างที่รันได้ซึ่ง pytest รันเป็นเทสได้ — มีประโยชน์ในการรักษาให้เอกสารตรงกับความจริง ไม่ใช่ตัวแทนของ test suite จริง
+
+```python
+"""strings_util.py"""
+def shout(text: str) -> str:
+    """Uppercase and add three exclamation marks.
+
+    >>> shout("hello")
+    'HELLO!!!'
+    >>> shout("")
+    '!!!'
+    """
+    return text.upper() + "!!!"
+```
+
+```text
+$ uv run pytest --doctest-modules strings_util.py -v
+strings_util.py::strings_util.shout PASSED
+1 passed in 0.09s
+```
+
+## การซ้อนชั้นของ `conftest.py`
+
+Fixture ใน `conftest.py` มองเห็นได้จากทุกไฟล์ทดสอบในไดเรกทอรีนั้นและไดเรกทอรีย่อย และ `conftest.py` ที่ซ้อนอยู่ข้างในสามารถต่อยอดจาก fixture ของ conftest ระดับบนได้โดยไม่ต้อง import
+
+```python
+# conftest.py (project root)
+import pytest
+
+@pytest.fixture
+def base_config():
+    return {"env": "test"}
+```
+
+```python
+# subpkg/conftest.py
+import pytest
+
+@pytest.fixture
+def extra_config(base_config):   # layers on the ROOT conftest's fixture
+    return {**base_config, "region": "th"}
+```
+
+```python
+# subpkg/test_layered.py
+def test_uses_both_conftest_layers(extra_config):
+    assert extra_config == {"env": "test", "region": "th"}
+```
+
+```text
+$ uv run pytest subpkg/test_layered.py -v
+subpkg/test_layered.py::test_uses_both_conftest_layers PASSED
+1 passed in 0.09s
+```
+
+## flag ของ CLI ที่มีประโยชน์: `-x`, `-k`, `--lf`, `-q`
+
+```text
+$ uv run pytest -x -q          # stop at the first failure
+$ uv run pytest -k withdraw    # run only tests whose name matches "withdraw"
+$ uv run pytest --lf           # re-run only the tests that failed last time
+$ uv run pytest -q             # quiet: dots instead of one line per test
+```
+
+จริง: หลังเทส hypothesis ด้านบนล้มเหลว `--lf` รันซ้ำ*เฉพาะ*เทสตัวนั้น:
+
+```text
+$ uv run pytest --lf -q
+FAILED test_hypothesis_demo.py::test_clamp_result_is_always_within_bounds - assert 1 <= 0
+1 failed in 0.12s
+```
+
+`-k withdraw` กับทั้ง suite เลือกที่ตรงกันหนึ่งตัวและ deselect ที่เหลือทั้งหมด:
+
+```text
+$ uv run pytest -k withdraw -q
+x.                                                                       [100%]
+1 passed, 10 deselected, 1 xfailed in 0.14s
+```
+
+`-x` หยุดทั้งรันที่ความล้มเหลวแรก — มีประโยชน์ในลูป edit-run ที่ไว แต่อันตรายใน CI ที่ปกติอยากเห็นทุกความล้มเหลวพร้อมกัน
 
 <Callout title="assert แบบธรรมดาของ pytest ฉลาดกว่าที่คิด">
 pytest เขียนใหม่คำสั่ง `assert` ในขั้นตอน collection เมื่อ assertion ล้มเหลว pytest จะแสดงค่าจริงเทียบกับค่าที่คาดหวัง diff สำหรับ collection และ expression เต็มรูปแบบ — โดยที่คุณไม่ต้องเขียน `assertEqual(a, b)` นี่คือเหตุผลหลักที่ควรเลือกใช้ pytest แทน `unittest`
 </Callout>
+
+## Mental Model
+
+<Mermaid code={`flowchart TD
+  Collect["Collection: pytest scans test_*.py / *_test.py for test_* functions"] --> Order["Fixtures requested by parameter name are resolved and ordered by scope"]
+  Order --> Setup["Setup runs widest scope first: session -> module -> class -> function"]
+  Setup --> Run["Test function body runs with fixture values injected"]
+  Run --> Teardown["Teardown runs in reverse: function -> class -> module -> session"]
+  Teardown -->|"next test in same scope"| Order`} title="วงจรชีวิตของ test discovery และ fixture ใน pytest" />
+
+pytest ไม่เคยเรียกฟังก์ชันทดสอบของคุณโดยไม่มี argument ตรง ๆ — มันตรวจชื่อพารามิเตอร์ของฟังก์ชัน จับคู่แต่ละชื่อกับ fixture ที่ชื่อตรงกัน (ค้นหาในไฟล์ทดสอบก่อน แล้วไล่ทุก `conftest.py` จากไดเรกทอรีของเทสขึ้นไปจนถึง rootdir) แล้วสร้างกราฟ dependency fixture ที่หลายเทสใน scope เดียวกันต้องการจะถูกคำนวณครั้งเดียวแล้วใช้ซ้ำ scope ที่คุณประกาศบน `@pytest.fixture` คือตัวควบคุมว่า*แชร์มากแค่ไหน*และ*teardown เมื่อไร* ไม่ใช่ลำดับที่ fixture ถูกเขียนในไฟล์
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| ฟังก์ชันธรรมดา + `assert` | ไม่มี boilerplate ผลลัพธ์เมื่อล้มเหลวอ่านง่าย | มีโครงสร้างน้อยกว่า `unittest.TestCase` สำหรับคนที่ต้องการมัน |
+| fixture scope กว้างขึ้น (`module`/`session`) | test suite เร็วขึ้นมาก | state ที่เปลี่ยนแปลงได้ที่ถูกแชร์อาจรั่วไหลข้ามเทสถ้าไม่ระวัง |
+| `autospec=True` | จับการพิมพ์ผิดและ signature ที่ไม่ตรง | setup ช้ากว่าและมากกว่า `MagicMock()` เปล่า ๆ เล็กน้อย |
+| `pytest-cov` | ชี้บรรทัดที่ไม่ถูกทดสอบเลย | 100% ไม่บอกอะไรเกี่ยวกับคุณภาพของ assertion |
+| `hypothesis` | หา edge case ที่คุณไม่คิดจะลอง | พื้นที่ input ไม่แน่นอน; ความล้มเหลวต้องอ่านผ่านการ shrink แบบ `min(max(...))` |
+| `--lf` / `-k` ในลูปพัฒนา | วนซ้ำได้เร็ว | `-x`/`-k` ใน CI อาจซ่อนความล้มเหลวที่การรันเต็มจะจับได้ |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"coverage 100% แปลว่าโค้ดถูกทดสอบดีแล้ว"** Coverage พิสูจน์แค่ว่าบรรทัด*ถูกรัน* — ตัวอย่าง `pricing.py` ด้านบนมี coverage 100% และมี bug จริง (`99.8` แทนที่จะเป็น `80.0`) เพราะ assertion ไม่เคยตรวจค่าที่คืนมาจริง ๆ
+- **`mock.patch("requests.get")` ใช้ได้เสมอถ้าโค้ด import `requests`** ขึ้นอยู่กับ*วิธี*: `import requests` (lookup attribute ตอนเรียกจริง) patch แบบนี้ได้; `from requests import get` ผูกชื่อเข้ากับโมดูลของผู้เรียกเอง ต้อง patch *ชื่อนั้น*เท่านั้นถึงจะได้ผล
+- **`MagicMock()` เปล่า ๆ เป็นตัวแทนที่ปลอดภัยสำหรับ object ใดก็ได้** มันรับ attribute หรือเมธอดชื่ออะไรก็ได้ รวมถึงที่พิมพ์ผิด — `create_autospec`/`autospec=True` จำกัดให้เหลือแค่ interface จริงของ object นั้น
+- **`caplog` จับ output ของ `print()` หรือ `capsys` จับ record ของ `logging`** ทั้งสองครอบคลุมคนละเรื่อง: `capsys` คือ stdout/stderr ส่วน `caplog` คือ record ของโมดูล `logging`
+- **fixture scope ที่กว้างเป็นการเพิ่มความเร็วที่ปลอดภัยเสมอ** fixture ระดับ `session` ที่คืน object ที่เปลี่ยนแปลงได้ (list, dict, fake DB) สามารถพา state จากเทสหนึ่งไปยังเทสถัดไปได้ถ้ามีเทสใด mutate มัน — scope ระดับ function คือค่าเริ่มต้นที่ปลอดภัย ขยายอย่างตั้งใจเท่านั้น
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อไฟล์เทสที่ถูกสร้างขึ้น ให้ตรวจ:
+
+- `mock.patch("some.library.function")` ในขณะที่โค้ดที่ถูกทดสอบทำ `from some.library import function` — เป้าหมาย patch ไม่ตรงกับวิธี import name นั้น mock จึงไม่เคย intercept อะไรเลย
+- เทสที่ไม่มี `assert` เลย หรือ assertion ที่อ่อนมากจนผ่านได้กับค่าที่คืนเกือบทุกแบบ (`assert result is not None`, `assert isinstance(result, float)`)
+- `MagicMock()` ที่เป็นตัวแทนของคลาสจริงโดยไม่มี `autospec` — การเรียกเมธอดที่เปลี่ยนชื่อหรือพิมพ์ผิดบนมันจะไม่มีวันล้มเหลว
+- `@pytest.mark.xfail` หรือ `@pytest.mark.skip` ที่ถูกเพิ่มเพื่อทำให้ suite "ผ่าน" โดยไม่มี `reason=` อธิบายเหตุผล หรือไม่มี issue เชื่อมโยง
+- mark ที่กำหนดเองถูกใช้แต่ไม่เคยลงทะเบียนใน `pyproject.toml` — ผ่านในเครื่องวันนี้ แต่พังทันทีที่ `--strict-markers` ถูกเปิดใน CI
+
+<SpotTheBug code={`from unittest.mock import MagicMock, patch
+
+import requests
+
+
+def fetch_price(item_id: str) -> float:
+    resp = requests.get(f"https://api.example.com/price/{item_id}")
+    return resp.json()["price"]
+
+
+# elsewhere: from requests import get as http_get -- pricing.py imports it directly
+import pricing
+
+
+def test_fetch_price():
+    with patch("requests.get") as mock_get:
+        mock_get.return_value = MagicMock(json=lambda: {"price": 9.99})
+        assert pricing.fetch_price("abc") == 9.99`} lang="python">
+`pricing.py` ทำ `from requests import get as http_get` ดังนั้น `pricing.http_get` เป็นชื่อของตัวเองที่ผูกไว้ตอน import — patch `requests.get` ไม่มีวันแตะมันได้ เทสนี้ผ่านที่นี่เพียงเพราะมันเผลอเรียก*ฟังก์ชันอื่น* (`fetch_price` ที่นิยามในไฟล์นี้เอง ซึ่งทำ `import requests` ตรง ๆ) แทนที่จะทดสอบ `pricing.fetch_price` เลย เป้าหมายที่ถูกต้องสำหรับ `pricing.fetch_price` จริง ๆ คือ `patch("pricing.http_get")` ยืนยันแล้ว: การ patch `requests.get` ขณะเรียกฟังก์ชันที่ใช้ from-import ที่ถูกทดสอบ จะ raise `requests.exceptions.ConnectionError` จริง แทนที่จะไปถึง mock เลย
+</SpotTheBug>
 
 export const quizPytest = [
     {
@@ -134,6 +672,7 @@ export const quizPytest = [
             "ไฟล์ต้องชื่อว่า tests.py",
         ],
         answer: 1,
+        explain: "กฎ discovery ค่าเริ่มต้นของ pytest: ไฟล์ test_*.py หรือ *_test.py และภายในนั้น ฟังก์ชัน/เมธอดชื่อ test_* ไม่จำเป็นต้องสืบทอด TestCase — นั่นเป็นข้อกำหนดของ unittest ไม่ใช่ของ pytest",
     },
     {
         q: "`@pytest.fixture` ทำอะไร?",
@@ -144,6 +683,7 @@ export const quizPytest = [
             "แทนที่ assert ด้วย assertEqual",
         ],
         answer: 1,
+        explain: "เทสขอ fixture ได้ง่าย ๆ โดยตั้งชื่อมันเป็นพารามิเตอร์ — pytest resolve และส่งค่าที่ fixture return (หรือ yield) เข้าไปให้อัตโนมัติ",
     },
     {
         q: "`@pytest.mark.parametrize` ทำอะไรได้?",
@@ -154,6 +694,51 @@ export const quizPytest = [
             "ทำเครื่องหมายการทดสอบว่าช้า",
         ],
         answer: 1,
+        explain: "parametrize สร้าง test invocation หนึ่งตัวต่อหนึ่ง tuple ของ argument ที่ให้มา ทำให้ตัวเทสกระชับในขณะที่ครอบคลุมหลายกรณี",
+    },
+    {
+        q: "```python\nwith patch(\"requests.get\", return_value=fake):\n    weather.get_temperature_wrong_target(\"bkk\")\n```\n`weather.py` มี `from requests import get as _get` และเรียก `_get(...)` เกิดอะไรขึ้นจริง?",
+        options: [
+            "mock intercept การเรียกตามปกติ",
+            "เกิด ConnectionError -- requests.get ตัวจริงถูกเรียก เพราะ patch requests.get ไม่เคยแตะ _get ของ weather เอง",
+            "เกิด AttributeError ทันที",
+            "pytest ข้ามเทสนี้แบบเงียบ ๆ",
+        ],
+        answer: 1,
+        explain: "from requests import get as _get ผูกชื่อเข้ากับ namespace ของ weather เองตอน import การ patch attribute บนโมดูล requests ทีหลังไม่เปลี่ยน weather._get -- การเรียกเครือข่ายจริง (ที่ไม่ได้ถูก mock) จึงทำงานและเชื่อมต่อไม่สำเร็จ ยืนยันแล้ว: pytest.raises(requests.exceptions.ConnectionError) ผ่านที่นี่",
+    },
+    {
+        q: "```python\ndef test_plain_magicmock_hides_the_typo():\n    fake_account = MagicMock()\n    send_notification(fake_account, \"hi\")   # calls fake_account.notify(...)\n    fake_account.notify.assert_called_once_with(\"hi\")\n```\n`Account` มีแค่ `withdraw`/`deposit` ไม่มี `notify` เทสนี้ผ่านไหม?",
+        options: [
+            "ไม่ -- MagicMock raise AttributeError สำหรับเมธอดที่ไม่ได้นิยาม",
+            "ผ่าน -- MagicMock ธรรมดาสร้าง attribute อะไรก็ได้ที่ถูกเข้าถึง จึงไม่มีวันจับการพิมพ์ผิดได้",
+            "ไม่ -- pytest raise collection error",
+            "ผ่าน แต่เพราะ pytest.ini ปิด strict mode เท่านั้น",
+        ],
+        answer: 1,
+        explain: "MagicMock() เปล่า ๆ สร้าง attribute อัตโนมัติเมื่อถูกเข้าถึง รวมถึงชื่อเมธอดที่พิมพ์ผิดหรือไม่มีอยู่จริง create_autospec(app.Account, instance=True) จะ raise AttributeError('notify') แทน เพราะมันถูกสร้างจาก interface จริงของคลาสนั้น",
+    },
+    {
+        q: "test suite ได้ line coverage 100% ด้วย `pytest-cov` สิ่งนี้รับประกันอะไร?",
+        options: [
+            "ทุกบรรทัดถูกตรวจสอบความถูกต้องด้วย assertion แล้ว",
+            "แค่ว่าทุกบรรทัดถูกรันอย่างน้อยหนึ่งครั้ง -- assertion อาจยังอ่อนเกินกว่าจะจับ bug จริงได้",
+            "โค้ดไม่มี bug เลย",
+            "ทุก edge case ถูกทดสอบแล้ว",
+        ],
+        answer: 1,
+        explain: "Coverage วัดการรัน ไม่ใช่การตรวจสอบ ตัวอย่าง pricing.py ในบทนี้มี coverage 100% และมี bug จริง (ส่วนลดถูกคำนวณน้อยไป 100 เท่า) เพราะเทสทั้งสองใช้ assertion ที่อ่อนเกินกว่าจะสังเกตค่าตัวเลขที่ผิด",
+    },
+    {
+        q: "```python\n@given(st.integers(), st.integers(), st.integers())\ndef test_clamp_result_is_always_within_bounds(value, low, high):\n    if low > high:\n        return\n    result = clamp(value, low, high)\n    assert low <= result <= high\n```\nhypothesis ทำอะไรเมื่อเทสนี้ล้มเหลว?",
+        options: [
+            "รายงานความล้มเหลวด้วย input สุ่มขนาดใหญ่แล้วหยุด",
+            "ย่อ (shrink) input ที่ล้มเหลวลงเหลือกรณีที่เล็กที่สุดที่ยัง reproduce ได้โดยอัตโนมัติ",
+            "ลองใหม่ด้วย input เดิมสูงสุด 3 ครั้ง",
+            "ทำเครื่องหมายเทสเป็น xfail อัตโนมัติ",
+        ],
+        answer: 1,
+        explain: "ขั้นตอน shrinking ของ hypothesis ลด input ที่ล้มเหลวลงเรื่อย ๆ จนเหลือ input ที่ง่ายที่สุดที่ยังล้มเหลว ยืนยันแล้ว: clamp(value, low, high) = max(value, min(low, high)) ที่มี bug ถูกย่อลงเหลือ value=1, low=0, high=0",
     },
 ];
 

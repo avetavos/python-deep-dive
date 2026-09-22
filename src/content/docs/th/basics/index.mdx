@@ -1,6 +1,6 @@
 ---
 title: 'พื้นฐานและไวยากรณ์'
-description: 'ปรัชญาการออกแบบ Python, หลักการอ่านง่าย, และสคริปต์แรกที่รันได้จริง'
+description: 'ปรัชญาการออกแบบ Python, thesis ที่ว่าทุกอย่างคือ object, หลักการอ่านง่าย, และสคริปต์แรกที่รันได้จริง'
 sidebar:
   order: 1
 ---
@@ -9,6 +9,7 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## ปรัชญาการออกแบบของ Python
 
@@ -44,14 +45,32 @@ for i in range(5):
 การผสม tab กับ space จะทำให้เกิด `TabError`
 มาตรฐานของชุมชน (PEP 8) คือ **4 ช่องว่าง** — ตั้งค่า editor ครั้งเดียวแล้วลืมได้เลย
 
+## Thesis ที่ว่า "ทุกอย่างคือ object"
+
+นี่คือแนวคิดเดียวที่บทเรียนที่เหลือในคอร์สนี้จะย้อนกลับมาซ้ำ ๆ: ใน Python *ทุกอย่างที่คุณตั้งชื่อได้คือ object* — ไม่ใช่แค่สิ่งที่ดูเหมือนข้อมูล ตัวเลข, function, class, module, และแม้แต่ type เองล้วนมี identity (`id()`), type (`type()`), และชุด attribute:
+
+```python
+print(type(42))            # <class 'int'>
+print((42).bit_length())   # 6 -- an int has methods, because it's an object
+print(type(print))         # <class 'builtin_function_or_method'>
+print(type(int))           # <class 'type'> -- int itself is an instance of type
+print(type(type))          # <class 'type'> -- type is an instance of itself
+```
+
+`int` ไม่ใช่ primitive keyword พิเศษ — มันคือ object ของ type `type` (class หนึ่ง) เหมือนกับที่ `Dog` จะเป็นถ้าคุณนิยามมันเอง `print` ก็ไม่ใช่ syntax พิเศษเหมือนกัน — มันคือ object ที่เรียกได้ (callable) ดึงมาเก็บได้, กำหนดให้ชื่ออื่นได้, และส่งเป็น argument ได้เหมือน value ทั่วไป ข้อเท็จจริงเดียวนี้คือเหตุผลที่เกือบทุกบทเรียนหลังจากนี้อธิบายได้ด้วย "ชื่อนี้อ้างถึง object ไหน และเกิดอะไรขึ้นเมื่อเรียก method หรือ operator กับมัน" — ไม่มีกฎแยกต่างหากสำหรับ "primitive" กับ "object"
+
+## คอร์สนี้สอนให้คุณอ่านโค้ดที่ AI เขียนอย่างไร
+
+ทุกบทเรียนตั้งแต่นี้ไปจะจบด้วยสองอย่างที่มุ่งเป้าไปที่โค้ดที่คุณไม่ได้เขียนเอง: checklist สั้น ๆ **"อ่านโค้ดที่ AI เขียน"** และแบบฝึกหัด **`<SpotTheBug>`** อย่างน้อยหนึ่งอันที่มีโค้ดที่ดูสมเหตุสมผลแต่พังจริงพร้อมคำอธิบายซ่อนอยู่ bug ในแบบฝึกหัดเหล่านั้นไม่ได้แต่งขึ้นลอย ๆ — มันคือรูปแบบเดิม ๆ ไม่กี่แบบ (mutable default argument, `is` เทียบกับ `==`, aliasing, ลืม `is None`, การ shadow builtin) ที่พบซ้ำ ๆ ในโค้ด Python ที่ AI สร้าง เพราะ language model สร้าง*รูปร่าง*ของโค้ดที่คุ้นเคยซ้ำ โดยไม่จำเป็นต้องผ่าน object model และ scoping semantics เฉพาะของ Python จริง ๆ ให้ใช้ทุก checklist เป็นรายการ "สิ่งที่ต้อง grep หา" ก่อนเชื่อ diff ไหนก็ตาม ไม่ใช่แค่เนื้อหาสอบ
+
 ## เนื้อหาในโมดูลนี้
 
 | บทเรียน | แนวคิดหลัก |
 |---|---|
-| **Variables & Types** | Dynamic typing, ชนิดข้อมูลพื้นฐาน, truthiness |
-| **Control Flow** | `if`/`elif`/`else`, `for`, `while`, walrus `:=` |
-| **Functions** | `def`, พารามิเตอร์, ค่าที่คืน, LEGB scope |
-| **Strings** | Methods, slicing, f-strings, immutability |
+| **Variables & Types** | Name เทียบกับ object, `is` เทียบกับ `==`, mutability, truthiness |
+| **Control Flow** | `if`/`elif`/`else`, `match`, iterator protocol, `for`, `while` |
+| **Functions** | `def`, mutable default, `*args`/`**kwargs`, LEGB scope |
+| **Strings** | Methods, slicing, `bytes` เทียบกับ `str`, f-strings, immutability |
 
 แต่ละบทเรียนเป็นอิสระและจบด้วย playground ที่รันได้, callout, แบบทดสอบ, และจุดตรวจสอบความก้าวหน้า
 
@@ -81,6 +100,71 @@ print("First program complete.")
 
 <Playground code={basicsIndexCode} />
 
+Playground ที่สองแสดง thesis "ทุกอย่างคือ object" ในทางปฏิบัติ รวมถึงรูปแบบการตรวจสอบที่ดูสมเหตุสมผลแต่พังทันทีที่มี subclass เข้ามาเกี่ยวข้อง
+
+export const basicsIndexDepthCode = `
+# 1. Everything is an object -- including functions, types, and type itself.
+print(type(42))
+print((42).bit_length())
+print(type(print))
+print(type(int))
+print(type(type))
+
+# 2. type(x) == SomeClass vs isinstance(x, SomeClass) with a subclass.
+class Animal:
+    pass
+
+class Dog(Animal):
+    pass
+
+fido = Dog()
+print(type(fido) == Animal)     # BUG-prone check: False, even though Dog IS an Animal
+print(isinstance(fido, Animal)) # True -- respects subclassing
+`.trim();
+
+<Playground code={basicsIndexDepthCode} />
+
+## Mental Model
+
+```text
+name "x"  ---->  object (id, type, value)
+name "describe"  ---->  function object (also has id, type, value)
+name "int"  ---->  class object, itself an instance of type
+name "type"  ---->  the class of every class, an instance of itself
+```
+
+กล่องทุกกล่องทางขวามือคือสิ่งเดียวกัน — object ที่มี identity และ type — ไม่ว่าชื่อทางซ้ายจะอ้างถึงสิ่งที่เรียกกันทั่วไปว่า "ข้อมูล" หรือ "โค้ด" การอ่าน Python ให้คล่องคือการถามสำหรับทุกชื่อว่า "ตอนนี้มันอ้างถึง object ไหน" แทนที่จะแยกชื่อออกเป็นหมวดความคิดคนละกลุ่มระหว่าง primitive กับ object
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| Object model แบบเดียวกันทั้งหมด | mental model เดียวครอบคลุมตัวเลข, function, class, และ module | ไม่มี "fast path" พิเศษสำหรับ primitive — ทุกอย่างมี overhead ของ object |
+| `type()` เผยชนิดที่แน่นอน | introspection ที่แม่นยำไม่กำกวม | การเทียบ `type(x) == SomeClass` ปฏิเสธ subclass ที่ถูกต้องแบบเงียบ ๆ |
+| ปรัชญาเน้นความอ่านง่าย (PEP 20) | มีวิธีที่ยอมรับกันและค้นหาได้สำหรับเกือบทุกอย่าง | บางครั้งแลกประสิทธิภาพดิบหรือความกระชับเพื่อความชัดเจน |
+| การเยื้อง 4 ช่องว่างเป็น syntax | บังคับโครงสร้าง block ที่อ่านง่ายสม่ำเสมอทั้ง codebase | ผสม tab กับ space เป็น error จริง (`TabError`) ไม่ใช่แค่ข้อบกพร่องด้าน style |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"ตัวเลข, string, และ boolean เป็น primitive; มีแต่ class ที่กำหนดเองเท่านั้นที่เป็น object"** ทั้งหมดล้วนเป็น object — `type(42)` คือ `int` ซึ่งเป็น class จริง และ `(42).bit_length()` พิสูจน์ว่ามัน methods เหมือน object อื่น
+- **"`type(x) == SomeClass` เหมือนกับ `isinstance(x, SomeClass)`"** ไม่จริง — `type(x) == SomeClass` เป็น `False` สำหรับ instance ของ subclass ใด ๆ ในขณะที่ `isinstance` เคารพลำดับชั้น class ทั้งหมด
+- **"กฎความอ่านง่ายของ Python (PEP 8/PEP 20) เป็นแค่ความชอบด้าน style ไม่มีผลจริง"** มันกำหนดว่าอะไร "ดูถูกต้อง" มากพอจนความเบี่ยงเบนมักเป็นจุดที่ bug ซ่อนอยู่ — codebase ที่ทำตามวิธีเดียวที่ชัดเจนอ่านหา bug ได้ง่ายกว่า ไม่ว่าจะเป็นมนุษย์หรือ AI เขียน
+- **"function หรือ class ไม่ใช่ value จริง ๆ เหมือนตัวเลข"** ทั้งคู่เป็น object ที่กำหนดให้ตัวแปรได้, เก็บใน list ได้, หรือส่งเป็น argument ได้ — `type(print)` และ `type(int)` พิสูจน์ว่าไม่มีตัวไหนเป็น syntax พิเศษ
+
+## อ่านโค้ดที่ AI เขียน
+
+- การตรวจ type ใช้ `type(x) == SomeClass` ทั้งที่ตั้งใจจะใช้ `isinstance(x, SomeClass)` หรือเปล่า? แบบแรกปฏิเสธ subclass ที่ถูกต้องแบบเงียบ ๆ
+- โค้ดสมมติว่า "primitive" (ตัวเลข, boolean, string) ทำงานต่างจาก "object จริง" หรือเปล่า เช่นสมมติว่ามันไม่มี methods หรือ subclass ไม่ได้?
+- ทุกครั้งที่บทเรียนตั้งแต่นี้ไปให้ checklist มา โค้ดที่กำลังตรวจจริง ๆ ถูกเช็คกับมันหรือเปล่า หรือหยุดแค่ "มันรันได้ไหม"?
+- function หรือ class ถูกปฏิบัติเหมือนไม่ใช่ value ธรรมดาหรือเปล่า เช่นไม่เคยถูกกำหนดให้ตัวแปรหรือส่งเป็น argument ทั้งที่ทำแบบนั้นจะทำให้โค้ดง่ายขึ้น?
+
+<SpotTheBug code={`def is_valid_item(item):
+    if type(item) == dict:
+        return "id" in item
+    return False`} lang="python">
+`type(item) == dict` รับเฉพาะค่าที่ type ตรง*เป๊ะ*กับ `dict` เท่านั้น — subclass ของ `dict` ที่สมเหตุสมผล (เช่นที่ library คืนมา, หรือ `collections.UserDict`, หรือ `class Config(dict): ...` ที่ developer นิยามเอง) จะไม่ผ่านการตรวจนี้ ทั้งที่มันทำตัวเหมือน dict ทุกอย่างที่สำคัญตรงนี้ `isinstance(item, dict)` ตรวจลำดับชั้น class ทั้งหมดและรับ subclass ด้วย ทางแก้: `if isinstance(item, dict): return "id" in item`
+</SpotTheBug>
+
 <Callout title="Python เป็น Object-Oriented อย่างสมบูรณ์">
 ทุกสิ่งใน Python คือออบเจกต์ — ตัวเลขจำนวนเต็ม, สตริง, ฟังก์ชัน, คลาส, และแม้แต่โมดูล
 หมายความว่าทุกค่ามีชนิดข้อมูล (`type(42)` คืนค่า `int`), ชุด attributes, และชุด methods
@@ -89,6 +173,28 @@ print("First program complete.")
 
 export const quizBasicsIndex = [
   {
+    q: "```python\nclass Animal:\n    pass\n\nclass Dog(Animal):\n    pass\n\nfido = Dog()\nprint(type(fido) == Animal)\nprint(isinstance(fido, Animal))\n```\nโค้ดนี้พิมพ์อะไร?",
+    options: [
+      "True\nTrue",
+      "False\nTrue",
+      "True\nFalse",
+      "False\nFalse"
+    ],
+    answer: 1,
+    explain: "type(fido) คือ Dog เป๊ะ ๆ ไม่ใช่ Animal ดังนั้น type(fido) == Animal จึงเป็น False isinstance เดินไล่ลำดับชั้น class ทั้งหมด จึง isinstance(fido, Animal) เป็น True เพราะ Dog สืบทอดจาก Animal"
+  },
+  {
+    q: "```python\nprint(type(int))\nprint(type(type))\n```\nโค้ดนี้พิมพ์อะไร?",
+    options: [
+      "<class 'int'>\n<class 'int'>",
+      "<class 'type'>\n<class 'type'>",
+      "<class 'object'>\n<class 'object'>",
+      "raise TypeError เพราะ int กับ type ไม่ใช่ value"
+    ],
+    answer: 1,
+    explain: "int เองก็เป็น object -- instance ของ class type เหมือนกับ class ที่คุณกำหนดเอง type เป็น instance ของตัวเอง: class ของทุก class"
+  },
+  {
     q: "PEP 20 หรือ 'The Zen of Python' เน้นอะไรมากที่สุด?",
     options: [
       "ประสิทธิภาพสูงสุดเหนือความชัดเจน",
@@ -96,7 +202,8 @@ export const quizBasicsIndex = [
       "ความเข้ากันได้กับ C และ C++",
       "การกำหนดชนิดข้อมูลแบบ static ตลอดเวลา"
     ],
-    answer: 1
+    answer: 1,
+    explain: "บรรทัดที่ถูกยกมาบ่อยที่สุดของ The Zen of Python ('Beautiful is better than ugly,' 'There should be one -- and preferably only one -- obvious way to do it') ให้ความสำคัญกับความอ่านง่ายและวิธีที่ยอมรับกันเหนือเรื่องอื่น"
   },
   {
     q: "Python กำหนดขอบเขตของบล็อกโค้ด เช่น ฟังก์ชันและ if-statement อย่างไร?",
@@ -106,12 +213,8 @@ export const quizBasicsIndex = [
       "การเยื้องบรรทัดที่สม่ำเสมอ",
       "เครื่องหมายเซมิโคลอนท้ายบรรทัด"
     ],
-    answer: 2
-  },
-  {
-    q: "PEP ใดกำหนด style guide ของชุมชน Python (เยื้อง 4 ช่องว่าง, ความยาวบรรทัด ฯลฯ)?",
-    options: ["PEP 8", "PEP 20", "PEP 3000", "PEP 484"],
-    answer: 0
+    answer: 2,
+    explain: "Python ใช้การเยื้องเป็น syntax กำหนดขอบเขต block เอง การผสม tab กับ space แบบไม่สม่ำเสมอทำให้เกิด TabError แทนที่จะ parse ผิดแบบเงียบ ๆ"
   },
   {
     q: "ใน Python, ข้อใดถูกต้องเกี่ยวกับจำนวนเต็ม, สตริง, และฟังก์ชัน?",
@@ -121,7 +224,8 @@ export const quizBasicsIndex = [
       "เฉพาะฟังก์ชันเท่านั้นที่เป็นออบเจกต์; จำนวนเต็มเป็น primitive",
       "ต้องประกาศก่อนใช้งาน"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Python ไม่มีการแยก primitive/object -- int, str, และ function ล้วนเป็น object ที่มี type, attribute, และ method ของตัวเอง"
   }
 ];
 

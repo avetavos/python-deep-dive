@@ -1,6 +1,6 @@
 ---
 title: Generators
-description: 'yield, generator functions, lazy evaluation, generator expressions, and StopIteration in Python.'
+description: 'yield, generator functions, lazy evaluation, yield from, .send(), StopIteration.value, and generator expressions in Python.'
 sidebar:
   order: 5
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## What is a generator?
 
@@ -64,6 +66,164 @@ def three_words():
 # Equivalent — for loop handles next() and StopIteration for you
 for word in three_words():
     print(word)
+```
+
+## Generators are exhausted once
+
+A generator **object** is a one-shot iterator: once every `yield` has run and the function returns, that object is permanently empty. Calling the generator *function* again produces a brand-new generator object — but iterating the same, already-exhausted object a second time silently produces nothing at all, with no error:
+
+```python
+def three_words():
+    yield "Python"
+    yield "is"
+    yield "expressive"
+
+gen = three_words()
+print([w for w in gen])   # ['Python', 'is', 'expressive']
+print([w for w in gen])   # []  — same object, already exhausted, no error raised
+```
+
+This is different from a `list`, which you can loop over any number of times. If a function needs to iterate a value more than once, either pass a `list` (or re-call the generator function to get a fresh generator), not a spent generator object.
+
+## `yield from`: delegating to a sub-generator
+
+`yield from` hands control to another iterable, forwarding every value it yields as if the outer generator had `yield`ed them directly — and it also evaluates to the sub-generator's `return` value:
+
+```python
+def inner():
+    yield 1
+    yield 2
+    return "inner done"
+
+def outer():
+    result = yield from inner()   # forwards 1, then 2
+    print("inner returned:", result)
+    yield 3
+
+print(list(outer()))
+# inner returned: inner done
+# [1, 2, 3]
+```
+
+`yield from` is the idiomatic way to compose generators — it is shorter and correctly forwards `.send()`, `.throw()`, and the sub-generator's return value, none of which a manual `for x in inner(): yield x` loop does for you.
+
+## `.send()`: two-way communication
+
+`yield` is not just an exit — it is also an expression that receives whatever value is passed to `.send()`. The first `next()` (or `.send(None)`) is required to advance the generator to its first `yield`, priming it, before any real value can be sent in:
+
+```python
+def echo_upper():
+    received = None
+    while True:
+        received = yield received       # yield is an expression here
+        if received is not None:
+            received = received.upper()
+
+gen = echo_upper()
+print(next(gen))             # None — priming call, runs up to the first yield
+print(gen.send("hello"))     # HELLO
+print(gen.send("world"))     # WORLD
+```
+
+## `return` inside a generator and `StopIteration.value`
+
+A `return` statement inside a generator function does not produce a value the normal way — it still raises `StopIteration`, but attaches the returned value to that exception's `.value` attribute. A plain `for` loop never sees it (it just stops), but manual iteration or `yield from` can retrieve it:
+
+```python
+def summing():
+    total = 0
+    while True:
+        x = yield
+        if x is None:
+            return total
+        total += x
+
+gen = summing()
+next(gen)
+gen.send(10)
+gen.send(20)
+try:
+    gen.send(None)
+except StopIteration as e:
+    print(e.value)   # 30
+```
+
+## `.close()` and `finally`
+
+Calling `.close()` on a generator raises `GeneratorExit` inside it at the point where it is currently paused — this is exactly what lets a `try`/`finally` block around a `yield` run its cleanup, the same guarantee a `with` block gives a context manager:
+
+```python
+def resource_gen():
+    print("acquiring resource")
+    try:
+        yield 1
+        yield 2
+    finally:
+        print("releasing resource")
+
+gen = resource_gen()
+print(next(gen))   # acquiring resource \n 1
+gen.close()         # releasing resource
+```
+
+A generator that is garbage-collected before being exhausted also has `.close()` called on it automatically, so `finally` blocks still run — but relying on garbage collection timing for cleanup is fragile; call `.close()` explicitly (or drive the generator through a `with contextlib.closing(gen):` block) when early termination is expected.
+
+## Type hints for generators
+
+A generator used only for its yielded values can be annotated as `Iterator[YieldType]`. When `.send()` or a return value matter too, the full three-parameter `Generator[YieldType, SendType, ReturnType]` says exactly what flows in both directions:
+
+```python
+from typing import Generator, Iterator
+
+def count_up(start: int, stop: int) -> Iterator[int]:
+    current = start
+    while current <= stop:
+        yield current
+        current += 1
+
+def echo_typed() -> Generator[str, str, str]:
+    received = ""
+    while True:
+        received = yield received.upper()
+        if received == "STOP":
+            return "done"
+```
+
+`Iterator[int]` is shorthand for "yields `int`, does not care what is sent in, does not care about the return value" — use it unless the generator genuinely uses `.send()` or a meaningful `return`.
+
+## Generators vs lists: memory
+
+A generator does not materialize its values — it holds only enough state to produce the *next* one. `sys.getsizeof` makes the difference concrete: a generator's footprint stays constant no matter how many values it will eventually produce, while a list's footprint grows with every element:
+
+```python
+import sys
+
+big_list = [x for x in range(100_000)]
+big_gen = (x for x in range(100_000))
+print(sys.getsizeof(big_list))   # 800984 (bytes; grows with element count)
+print(sys.getsizeof(big_gen))    # 200 (bytes; constant, regardless of range size)
+```
+
+This is why `sum(x * x for x in range(10_000_000))` does not need to build a ten-million-element list first — the generator expression feeds `sum()` one value at a time.
+
+## `itertools.chain` and `itertools.islice`
+
+`itertools.islice` takes a bounded slice of any iterable — including an infinite generator — without ever calling `list()` on it first, which would never return. `itertools.chain` iterates several iterables back to back as if they were one, without concatenating them into a new sequence:
+
+```python
+from itertools import islice, chain
+
+def fibonacci():
+    a, b = 0, 1
+    while True:        # infinite loop — but never blocks
+        yield a
+        a, b = b, a + b
+
+first_5 = list(islice(fibonacci(), 5))
+print(first_5)   # [0, 1, 1, 2, 3]
+
+combined = list(chain([1, 2], (3, 4), range(5, 7)))
+print(combined)  # [1, 2, 3, 4, 5, 6]
 ```
 
 ## Generator expressions
@@ -142,6 +302,131 @@ except StopIteration:
 
 <Playground code={generatorsCode} />
 
+## Depth demo: `yield from`, `.send()`, `.close()`, and memory
+
+export const generatorsDepthCode = `
+import sys
+from itertools import islice, chain
+from typing import Generator, Iterator
+
+
+# --- exhausted once: second loop is empty ---
+def three_words():
+    yield "Python"
+    yield "is"
+    yield "expressive"
+
+gen = three_words()
+print("--- exhausted once ---")
+print("first pass:", [w for w in gen])
+print("second pass:", [w for w in gen])
+
+# --- yield from ---
+def inner():
+    yield 1
+    yield 2
+    return "inner done"
+
+def outer_yield_from():
+    result = yield from inner()
+    print("inner returned:", result)
+    yield 3
+
+print("\\n--- yield from ---")
+print(list(outer_yield_from()))
+
+# --- .send() ---
+def echo_upper():
+    received = None
+    while True:
+        received = yield received
+        if received is not None:
+            received = received.upper()
+
+print("\\n--- .send() ---")
+gen2 = echo_upper()
+print(next(gen2))          # prime the generator, prints None
+print(gen2.send("hello"))  # HELLO
+print(gen2.send("world"))  # WORLD
+
+# --- return value via StopIteration.value ---
+def summing():
+    total = 0
+    while True:
+        x = yield
+        if x is None:
+            return total
+        total += x
+
+print("\\n--- return + StopIteration.value ---")
+gen3 = summing()
+next(gen3)
+gen3.send(10)
+gen3.send(20)
+try:
+    gen3.send(None)
+except StopIteration as e:
+    print("StopIteration.value:", e.value)
+
+# --- .close() / finally ---
+def resource_gen():
+    print("acquiring resource")
+    try:
+        yield 1
+        yield 2
+    finally:
+        print("releasing resource")
+
+print("\\n--- .close() / finally ---")
+gen4 = resource_gen()
+print(next(gen4))
+gen4.close()
+try:
+    next(gen4)
+except StopIteration:
+    print("StopIteration after close()")
+
+# --- type hints: Iterator[int] / Generator[Y, S, R] ---
+def count_up(start: int, stop: int) -> Iterator[int]:
+    current = start
+    while current <= stop:
+        yield current
+        current += 1
+
+def echo_typed() -> Generator[str, str, str]:
+    received = ""
+    while True:
+        received = yield received.upper()
+        if received == "STOP":
+            return "done"
+
+print("\\n--- typed generators still run the same ---")
+print(list(count_up(1, 3)))
+
+# --- generator vs list memory ---
+print("\\n--- memory: list vs generator ---")
+big_list = [x for x in range(100_000)]
+big_gen = (x for x in range(100_000))
+print("list getsizeof:", sys.getsizeof(big_list))
+print("generator getsizeof:", sys.getsizeof(big_gen))
+
+# --- itertools.chain / islice ---
+print("\\n--- itertools.chain / islice ---")
+def fibonacci():
+    a, b = 0, 1
+    while True:
+        yield a
+        a, b = b, a + b
+
+first_5 = list(islice(fibonacci(), 5))
+print("first 5 fib:", first_5)
+
+combined = list(chain([1, 2], (3, 4), range(5, 7)))
+print("chained:", combined)
+`.trim();
+
+<Playground code={generatorsDepthCode} />
+
 <Callout title="Generators are lazy and single-use">
 Two important properties to remember:
 
@@ -159,6 +444,61 @@ print(list(gen))   # []  — already exhausted
 ```
 </Callout>
 
+## Mental Model
+
+A generator is a tiny state machine with exactly these states — it starts `Created`, and every `next()`/`.send()` moves it forward until it reaches `Returned` (raising `StopIteration` with the return value) or `Closed` (via `.close()`, running any `finally` block on the way):
+
+export const generatorsMentalModel = `stateDiagram-v2
+  [*] --> Created: call the generator function
+  Created --> Suspended: first next()/send(None)
+  Suspended --> Suspended: next()/send(v) resumes to the next yield
+  Suspended --> Returned: function body reaches return or falls off the end
+  Suspended --> Closed: .close() raises GeneratorExit at the paused yield
+  Returned --> [*]: StopIteration(value=...)
+  Closed --> [*]: finally blocks have already run`;
+
+<Mermaid code={generatorsMentalModel} title="Generator lifecycle: Created -> Suspended (looping on yield) -> Returned or Closed" />
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Generator (lazy) | Constant memory regardless of how many values are produced (`sys.getsizeof` stays ~200 bytes) | Single-use — a second iteration silently produces nothing, no error |
+| List (eager) | Re-iterable any number of times, supports indexing and `len()` | Memory grows with every element — must fit in memory all at once |
+| `yield from` | Forwards values, `.send()`, and the sub-generator's return value correctly | Only meaningful when delegating to another generator/iterable, not a plain loop body |
+| `.send()` two-way generators | Lets a generator receive values, not just produce them (coroutine-style) | Requires a priming `next()` first, and the flow is harder to follow than a plain producer generator |
+| `itertools.islice`/`chain` on generators | Take a bounded slice of, or combine, infinite/lazy sequences without materializing them | Consumes the underlying generator — you cannot "rewind" past what `islice` already pulled |
+
+## Common Misconceptions
+
+- **"Iterating an exhausted generator raises an error"** — fact: it silently produces zero values and no exception — no `StopIteration` leaks out of a `for` loop or list comprehension either way, so this is easy to miss in code review.
+- **"`yield from inner()` is the same as `for x in inner(): yield x`"** — fact: `yield from` additionally forwards `.send()`/`.throw()` into `inner()` and evaluates to `inner()`'s `return` value; a manual loop does neither.
+- **"A generator's `return value` is what a `for` loop gets at the end"** — fact: a `for` loop never sees it — the value is attached to `StopIteration.value`, retrievable only via manual iteration or `yield from`.
+- **"`.close()` just stops the generator with no cleanup"** — fact: it raises `GeneratorExit` at the paused `yield`, so any `try`/`finally` around it still runs, exactly like closing a context manager.
+- **"A generator expression is basically a list, just written with `()`"** — fact: `sys.getsizeof` shows the generator's footprint stays constant (~200 bytes) no matter the range size, while the list's footprint scales with element count — the generator has not computed or stored any of the values yet.
+
+## Reading AI-generated code
+
+- Is a generator (not a list) iterated more than once — in two separate loops, or passed to two functions that each loop over it? The second consumer silently gets nothing.
+- Does code delegate to a sub-generator with a manual `for x in sub(): yield x` where the sub-generator's return value or `.send()` behavior actually matters? That should be `yield from sub()`.
+- Does a generator's `return <value>` look like it is supposed to reach a `for` loop? It only reaches `StopIteration.value` — a plain `for` loop discards it silently.
+- Is a resource (file, lock, connection) acquired before a `yield` with no `try`/`finally`? If the generator is abandoned early, `.close()` (or garbage collection) still raises `GeneratorExit` at that `yield`, and without `finally` the resource is never released.
+- Is `list(...)` called on an infinite generator, or on one with no upper bound in practice? It should be wrapped in `itertools.islice(..., n)` first.
+
+<SpotTheBug code={`def read_lines(path):
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            yield line.strip()
+
+
+def process(path):
+    lines = read_lines(path)
+    total_lines = sum(1 for _ in lines)
+    non_empty = [line for line in lines if line]
+    print(f"{path}: {total_lines} lines, {len(non_empty)} non-empty")`}>
+`lines` is a generator, and `sum(1 for _ in lines)` fully consumes it while counting. By the time the list comprehension `[line for line in lines if line]` runs, `lines` is already exhausted, so `non_empty` is always `[]` regardless of the file's contents — no exception is raised, so this bug ships silently and only shows up as a wrong count. Verified on Python 3.14: printing `list(lines)` a second time after the `sum(...)` call returns `[]`. The fix is to only iterate the generator once — read it into a `list` first (`lines = list(read_lines(path))`) if it must be scanned more than once, or compute both `total_lines` and `non_empty` in a single pass over the generator.
+</SpotTheBug>
+
 export const quizGenerators = [
   {
     q: "What happens when Python encounters `yield` inside a function?",
@@ -168,32 +508,63 @@ export const quizGenerators = [
       "The function pauses, emits the value, and resumes on the next next() call",
       "The function runs in a separate thread"
     ],
-    answer: 2
+    answer: 2,
+    explain: "yield pauses the function's execution at that exact point, hands the value to the caller, and freezes all local state. The next call to next() (or .send()) resumes execution immediately after the yield."
   },
   {
-    q: "What exception signals that a generator has no more values to produce?",
-    options: ["GeneratorExit", "StopIteration", "IndexError", "RuntimeError"],
-    answer: 1
-  },
-  {
-    q: "What is the main advantage of a generator expression over a list comprehension?",
+    q: "What does this print?\n\ndef words():\n    yield \"a\"\n    yield \"b\"\n\ngen = words()\nfirst = list(gen)\nsecond = list(gen)\nprint(first, second)",
     options: [
-      "Generator expressions run faster in all cases",
-      "Generator expressions produce values lazily, using much less memory",
-      "Generator expressions support more Python syntax",
-      "Generator expressions can be iterated multiple times"
+      "['a', 'b'] ['a', 'b']",
+      "['a', 'b'] []",
+      "[] ['a', 'b']",
+      "Raises StopIteration on the second list(gen)"
     ],
-    answer: 1
+    answer: 1,
+    explain: "gen is a single-use iterator. The first list(gen) drains it completely, running the generator to its end. The second list(gen) iterates the same, already-exhausted object, which silently produces no values — no exception is raised either."
   },
   {
-    q: "After iterating a generator to exhaustion, what does iterating it again produce?",
+    q: "What does this print?\n\ndef gen():\n    x = yield 1\n    y = yield x\n    return y\n\ng = gen()\nprint(next(g))\nprint(g.send(\"A\"))\ntry:\n    g.send(\"B\")\nexcept StopIteration as e:\n    print(e.value)",
     options: [
-      "It restarts from the beginning",
-      "It raises RuntimeError",
-      "It produces no values — the generator stays exhausted",
-      "It repeats the last value indefinitely"
+      "1, A, B",
+      "1, None, B",
+      "1, A, None",
+      "TypeError on the first send()"
     ],
-    answer: 2
+    answer: 0,
+    explain: "next(g) runs to the first yield, printing 1. g.send(\"A\") resumes with x=\"A\", runs to the second yield 1x, printing \"A\". g.send(\"B\") resumes with y=\"B\" and hits return y, which raises StopIteration whose .value is \"B\"."
+  },
+  {
+    q: "Why is `yield from inner()` generally preferred over `for x in inner(): yield x`?",
+    options: [
+      "It runs measurably faster in every case",
+      "It also forwards .send()/.throw() into inner() and evaluates to inner()'s return value, which the manual loop does not",
+      "The manual loop form is a SyntaxError in Python 3.14",
+      "yield from can only be used with infinite generators"
+    ],
+    answer: 1,
+    explain: "A manual for loop only forwards yielded values. yield from additionally forwards values sent via .send() and exceptions via .throw() into the sub-generator, and the yield from expression itself evaluates to the sub-generator's return value — none of which the manual loop provides."
+  },
+  {
+    q: "A generator has a `try: ... yield ... finally: cleanup()` block. If the generator is garbage-collected before being fully iterated, what happens to `cleanup()`?",
+    options: [
+      "It never runs — finally blocks are skipped when a generator is abandoned",
+      "Python raises GeneratorExit at the paused yield (via an implicit .close()), so finally still runs",
+      "It only runs if the generator was iterated with a for loop, not manually",
+      "It raises a ResourceWarning instead of running cleanup()"
+    ],
+    answer: 1,
+    explain: "Garbage collection calls .close() on an abandoned generator, which raises GeneratorExit exactly at the point where it is paused. This unwinds through any try/finally around the yield, so cleanup() still runs — the same guarantee an explicit .close() call gives."
+  },
+  {
+    q: "What does `sys.getsizeof` show about `[x for x in range(1_000_000)]` versus `(x for x in range(1_000_000))`?",
+    options: [
+      "They are the same size, since both eventually visit the same number of elements",
+      "The list's size scales with the number of elements; the generator's size stays roughly constant regardless of range size",
+      "The generator is always larger because it stores extra state for lazy evaluation",
+      "sys.getsizeof cannot measure generator objects"
+    ],
+    answer: 1,
+    explain: "The list comprehension materializes all one million elements up front, so its size scales with the element count. The generator expression stores only enough state to produce the next value on demand, so its footprint (about 200 bytes) stays constant no matter how large the range is."
   }
 ];
 

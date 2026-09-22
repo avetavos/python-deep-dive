@@ -1,6 +1,6 @@
 ---
 title: 'Args, Kwargs และ Parameter'
-description: 'positional args, keyword args, ค่า default, *args, **kwargs และ parameter แบบ keyword-only ใน Python'
+description: 'positional-only /, keyword-only *, *args/**kwargs, unpacking ที่ call site และกับดัก mutable/datetime default ใน Python'
 sidebar:
   order: 2
 ---
@@ -9,10 +9,12 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Parameter และ argument
 
-Python แยกความแตกต่างระหว่าง **parameter** (ชื่อที่อยู่ในนิยามของ function) กับ **argument** (ค่าที่ส่งเข้าไปตอนเรียกใช้)
+Python แยกความแตกต่างระหว่าง **parameter** (ชื่อที่อยู่ในนิยามของ function) กับ **argument** (ค่าที่ส่งเข้าไปตอนเรียกใช้จริง)
 Python ให้เราควบคุมได้อย่างละเอียดว่าผู้เรียกจะส่งค่าเหล่านั้นเข้ามาได้อย่างไร
 
 ## Positional และ keyword argument
@@ -65,6 +67,22 @@ log_event("login", user_id=42, ip="127.0.0.1")
 # event=login, user_id=42, ip=127.0.0.1
 ```
 
+`**kwargs` เป็น **dict ใหม่ในทุกการเรียก** — มันไม่เคยถูกใช้ร่วมกันข้ามการเรียก แม้แต่การ mutate มันภายใน function ก็ไม่มีผลกับการเรียกครั้งถัดไป:
+
+```python
+def collect(**kwargs):
+    kwargs["seen"] = True
+    return kwargs
+
+first = collect(a=1)
+second = collect(b=2)
+print(first)               # {'a': 1, 'seen': True}
+print(second)              # {'b': 2, 'seen': True}
+print(first is second)     # False — two different dict objects
+```
+
+นี่เป็นกฎคนละอันกับกับดัก mutable default argument ที่จะพูดถึงในบทนี้ต่อไป: *ค่า default* อย่าง `items=[]` จะถูกสร้างครั้งเดียวตอน definition time แล้วถูกใช้ร่วมกัน แต่ `**kwargs` เองถูก Python สร้างขึ้นใหม่ทุกครั้งที่เรียก ไม่ว่าจะมี default หรือไม่ก็ตาม
+
 ## Parameter แบบ keyword-only
 
 parameter ใด ๆ ที่อยู่ **หลัง `*` เปล่า ๆ** (หรือหลัง `*args`) จะส่งค่าได้ผ่าน keyword เท่านั้น ส่งแบบ positional ไม่ได้
@@ -78,14 +96,65 @@ send_email("alice@example.com", "Hello", cc="bob@example.com")
 # Calling send_email("a@b.com", "Hi", "c@d.com") would raise TypeError
 ```
 
+## Parameter แบบ positional-only: `/`
+
+parameter ใด ๆ ที่อยู่ **ก่อน `/` เปล่า ๆ** จะส่งค่าได้ผ่าน positional เท่านั้น ส่งแบบระบุชื่อ keyword ไม่ได้ นี่คือภาพสะท้อนของ keyword-only `*` และมีอยู่ด้วยเหตุผลเดียวกัน คือให้ผู้เขียน library เปลี่ยนชื่อ parameter ภายในทีหลังได้ โดยไม่ทำให้ผู้เรียกที่ไม่เคยพึ่งพาชื่อนั้นพัง
+
+```python
+def divide(numerator, denominator, /, *, round_to=2):
+    return round(numerator / denominator, round_to)
+
+print(divide(10, 4))              # 2.5 — positional, as required
+print(divide(10, 4, round_to=0))  # 2.0 — round_to is keyword-only, after *
+
+divide(numerator=10, denominator=4)
+# TypeError: divide() got some positional-only arguments passed as keyword arguments: 'numerator, denominator'
+```
+
+ทุกอย่างก่อน `/` เป็น positional-only ทุกอย่างหลัง `*` เปล่า ๆ เป็น keyword-only และอะไรที่อยู่ตรงกลาง (ไม่มี `/` หรือ `*` ล้อมรอบ) ส่งได้ทั้งสองแบบ ซึ่งก็คือพฤติกรรม default ที่ทุก parameter มีอยู่แล้วก่อนบทนี้จะแนะนำ `/` กับ `*`
+
+## Unpacking ที่ call site: `*` และ `**`
+
+syntax `*`/`**` ตัวเดียวกันที่ *รวบ* argument ในนิยามของ function ก็ *กระจาย* sequence หรือ mapping ออกเป็น argument แยกกันได้ที่ call site ด้วยเช่นกัน:
+
+```python
+def connect(host: str, port: int, timeout: int = 30) -> str:
+    return f"{host}:{port} (timeout={timeout}s)"
+
+args = ("localhost", 5432)
+kwargs = {"timeout": 60}
+print(connect(*args, **kwargs))
+# localhost:5432 (timeout=60s) — same as connect("localhost", 5432, timeout=60)
+```
+
+`*args` ใน **นิยาม** แปลว่า "รวบ positional argument ส่วนเกินเข้าเป็น tuple ชื่อ `args`" `*args` ที่ **call site** แปลว่า "กระจาย iterable นี้ออกเป็น positional argument แยกกัน" สัญลักษณ์เหมือนกัน แต่ว่าเรากำลังนิยามหรือกำลังเรียกใช้จะบอกว่ามันไปทางไหน
+
+## Pattern การ forward: `def wrapper(*a, **kw)`
+
+การรวม "รวบ" (ใน signature) เข้ากับ "กระจาย" (ใน body) ทำให้ wrapper function หนึ่งรับ call รูปแบบไหนก็ได้ แล้ว forward มันต่อไปยัง function อีกตัวโดยไม่เปลี่ยนแปลง — นี่คือกลไกเดียวกับที่ `wrapper` ของทุก decorator ใน[บท Decorators](/th/functions-deep/decorators/) ใช้เพื่อให้เข้ากันได้กับ function ที่มันห่ออยู่ไม่ว่าจะมี signature แบบไหน:
+
+```python
+def base(a, b, *, c=10):
+    return a + b + c
+
+def wrapper(*a, **kw):
+    print("forwarding", a, kw)
+    return base(*a, **kw)
+
+print(wrapper(1, 2, c=3))
+# forwarding (1, 2) {'c': 3}
+# 6
+```
+
 ## ลำดับ parameter ทั้งหมด
 
 ลำดับของชนิด parameter ในนิยามจะต้องเป็นแบบนี้เสมอ:
 
-1. Positional-or-keyword (`x`, `y`)
-2. `*args` (หรือ `*` เปล่า ๆ)
-3. Keyword-only (`key=value` หลัง `*`)
-4. `**kwargs`
+1. Positional-only (`x`, `y`, ตามด้วย `/`)
+2. Positional-or-keyword (`x`, `y`)
+3. `*args` (หรือ `*` เปล่า ๆ)
+4. Keyword-only (`key=value` หลัง `*`)
+5. `**kwargs`
 
 export const argsKwargsCode = `
 def describe(
@@ -109,10 +178,151 @@ print(describe("Python", "fast", separator=" + ", version="3.11", typed=True))
 
 <Playground code={argsKwargsCode} />
 
+## เดโมเจาะลึก: `/`, unpacking, `**kwargs` ที่สดใหม่ และกับดัก default `datetime.now()`
+
+playground ด้านล่างรันหัวข้อเจาะลึกทั้งหมดข้างบน รวมถึงสองความล้มเหลวจริง ได้แก่ การเรียก positional-only parameter ผ่าน keyword และกับดักสไตล์ mutable ด้วย `datetime.now()` เป็นค่า default:
+
+export const argsKwargsDepthCode = `
+from datetime import datetime
+import time
+
+
+# --- positional-only parameters with / ---
+def divide(numerator, denominator, /, *, round_to=2):
+    return round(numerator / denominator, round_to)
+
+print("--- positional-only / ---")
+print(divide(10, 4))
+print(divide(10, 4, round_to=0))
+try:
+    divide(numerator=10, denominator=4)
+except TypeError as e:
+    print(type(e).__name__ + ":", e)
+
+# --- unpacking at call sites: * and ** ---
+print("\\n--- unpacking at call sites ---")
+
+def connect(host: str, port: int, timeout: int = 30) -> str:
+    return f"{host}:{port} (timeout={timeout}s)"
+
+args = ("localhost", 5432)
+kwargs = {"timeout": 60}
+print(connect(*args, **kwargs))
+
+# --- **kwargs is a fresh dict every call ---
+print("\\n--- **kwargs is a fresh dict each call ---")
+
+def collect(**kwargs):
+    kwargs["seen"] = True
+    return kwargs
+
+first = collect(a=1)
+second = collect(b=2)
+print("first:", first)
+print("second:", second)
+print("same dict object?", first is second)
+
+# --- datetime.now() as a default is evaluated once ---
+print("\\n--- datetime.now() default trap ---")
+
+def log_event_broken(message, when=datetime.now()):
+    return f"{when.isoformat()}: {message}"
+
+first_call = log_event_broken("first")
+time.sleep(0.05)
+second_call = log_event_broken("second")
+print("same timestamp both calls:", first_call.split(":")[0:2] == second_call.split(":")[0:2])
+
+def log_event_fixed(message, when=None):
+    when = when if when is not None else datetime.now()
+    return f"{when.isoformat()}: {message}"
+
+fixed_first = log_event_fixed("first")
+time.sleep(0.05)
+fixed_second = log_event_fixed("second")
+print("fixed version differs:", fixed_first != fixed_second)
+
+# --- forwarding pattern def wrapper(*a, **kw) ---
+print("\\n--- forwarding pattern ---")
+
+def base(a, b, *, c=10):
+    return a + b + c
+
+def wrapper(*a, **kw):
+    print("forwarding", a, kw)
+    return base(*a, **kw)
+
+print(wrapper(1, 2, c=3))
+
+# --- positional-only rejects the keyword form ---
+print("\\n--- positional-only rejects keyword form ---")
+def area(width, height, /):
+    return width * height
+try:
+    area(width=3, height=4)
+except TypeError as e:
+    print(type(e).__name__ + ":", e)
+`.trim();
+
+<Playground code={argsKwargsDepthCode} />
+
+## Mental Model
+
+การอ่าน signature จากซ้ายไปขวาแสดงชัดเจนว่า argument ตัวไหนเป็น positional ได้, ตัวไหนเป็นได้ทั้งสองแบบ, และตัวไหนต้องระบุชื่อ — `/` กับ `*` คือตัวแบ่งสองตัวนั้น:
+
+export const argsKwargsMentalModel = `flowchart LR
+  A["positional-only\\n(before /)"] --> B["positional-or-keyword\\n(the default, no marker)"]
+  B --> C["*args\\n(extra positionals -> tuple)"]
+  C --> D["keyword-only\\n(after * or *args)"]
+  D --> E["**kwargs\\n(extra keywords -> dict)"]`;
+
+<Mermaid code={argsKwargsMentalModel} title="ลำดับ parameter: positional-only -> positional-or-keyword -> *args -> keyword-only -> **kwargs" />
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| Positional-only (`/`) | ผู้เขียนเปลี่ยนชื่อ parameter ทีหลังได้ โดยไม่ทำให้ผู้เรียกพัง | ผู้เรียกอธิบายตัว call ด้วย `divide(numerator=10, denominator=4)` ไม่ได้ |
+| Keyword-only (`*`) | ผู้เรียกต้องระบุชื่อ argument — อธิบายตัวเองได้ในตัว กันความผิดพลาดเรื่องลำดับ | ต้องจำ `*` เพิ่มใน signature; ผู้เรียกที่ส่งแบบ positional จะได้ `TypeError` |
+| forward ด้วย `*args`/`**kwargs` | wrapper ใช้ได้กับ signature อะไรก็ได้ที่ function ที่ถูกห่อรับ | `inspect.signature` บน wrapper เพียงลำพังจะเห็นแค่ `(*args, **kwargs)` ซ่อน parameter จริง (ดู[บท Decorators](/th/functions-deep/decorators/) สำหรับทางแก้ด้วย `functools.wraps`) |
+| Unpacking (`*`/`**`) ที่ call site | สร้าง argument list/dict แบบ dynamic ได้ เช่นจาก config หรือ return value ของ function อื่น | ความไม่ตรงกันระหว่างโครงสร้างที่ unpack กับ signature จะพังแค่ตอนเรียกใช้ ไม่ใช่ตอนนิยาม |
+| Mutable default (`items=[]`) / default `datetime.now()` | ดูเหมือนจะเป็น "ค่าว่าง/ค่าปัจจุบันใหม่ทุกครั้งที่เรียก" | ถูกประเมินครั้งเดียวตอน definition time — ทุก call ที่ไม่ override จะใช้ object เดียวกันร่วมกัน (หรือค่าเดิมที่ถูกแช่แข็งไว้) |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"positional-only parameter เป็นแค่เรื่อง style ชอบไม่ชอบ ยังไงก็ส่งผ่านชื่อได้เสมอ"** — ข้อเท็จจริง: `/` ทำให้การส่ง parameter เหล่านั้นผ่าน keyword เป็น `TypeError` จริง ๆ ที่ call site ไม่ใช่แค่ lint warning
+- **"`**kwargs` มีพฤติกรรมเหมือน mutable default การ mutate มันจะรั่วไปถึงการเรียกครั้งถัดไป"** — ข้อเท็จจริง: `**kwargs` เป็น dict ใหม่ที่ Python สร้างขึ้นทุกครั้งที่เรียก มีแค่*ค่า default* จริง ๆ (`items=[]`) เท่านั้นที่ถูกสร้างครั้งเดียวแล้วใช้ร่วมกัน อย่าสับสนสองอย่างนี้
+- **"`def f(when=datetime.now())` ให้ทุก call ได้ timestamp สดใหม่"** — ข้อเท็จจริง: `datetime.now()` รันแค่ครั้งเดียว ตอนที่ statement `def` ทำงาน ดังนั้น `when` จึงเป็นค่าเดียวกันที่แช่แข็งไว้ในทุก call ที่ไม่ override — bug กลุ่มเดียวกับ mutable default เพียงแต่ค่าเป็นแบบไม่ mutable ที่เห็นชัด
+- **"`*args` และ `**kwargs` ใน signature กับที่ call site ทำสิ่งเดียวกัน"** — ข้อเท็จจริง: ใน signature มันจะ *รวบ* argument ส่วนเกินเข้า tuple/dict ที่ call site syntax เดียวกันนี้จะ *กระจาย* tuple/dict ออกเป็น argument แยกกัน — ทิศทางตรงข้ามกัน แต่สัญลักษณ์เหมือนกัน
+- **"`TypeError` เรื่อง positional-only argument แปลว่า function นี้ไม่รับ argument นั้นเลย"** — ข้อเท็จจริง: มันยังรับค่านั้นอยู่ — แค่ไม่รับผ่านชื่อ keyword นั้นเท่านั้น การส่งแบบ positional ในตำแหน่งที่ถูกต้องยังใช้ได้ปกติ
+
+## อ่านโค้ดที่ AI เขียน
+
+- default argument หน้าตาเหมือน `def f(x, when=datetime.now())` หรือ function call อื่นใดเป็น default (ไม่ใช่แค่ `[]`/`{}`) หรือเปล่า? มันรันแค่ครั้งเดียวตอน definition time เหมือน mutable default เป๊ะ ๆ
+- wrapper function `def wrapper(*a, **kw)` forward argument *ทุกตัว* ไปยัง call ที่ถูกห่อจริงหรือเปล่า (`func(*a, **kw)`) หรือมันทิ้งหรือสลับลำดับบางตัว?
+- parameter ถูก document ไว้ว่า "ต้องส่งผ่านชื่อ" แต่ signature ไม่มี `*` อยู่ข้างหน้าหรือเปล่า? ไม่มีอะไรบังคับ contract นั้นจริง — ผู้เรียกยังส่งแบบ positional ได้อยู่
+- code unpack dict เข้าเป็น keyword argument (`f(**config)`) โดยที่ key ของ `config` ไม่ได้ถูกรับประกันว่าจะตรงกับชื่อ parameter ของ `f` หรือเปล่า? key ที่พิมพ์ผิดหรือมีเกินจะ raise `TypeError: f() got an unexpected keyword argument`
+- `*args`/`**kwargs` ถูกใช้ใน signature ที่ function คาดหวัง parameter ชุดคงที่และรู้แน่ชัดอยู่แล้วหรือเปล่า? parameter ที่ตั้งชื่อชัดเจน (พร้อม `/`/`*` ตามความเหมาะสม) จะ document contract ได้ดีกว่า และให้ type checker จับความไม่ตรงกันได้
+
+<SpotTheBug code={`from datetime import datetime
+
+
+def create_ticket(title: str, opened_at: datetime = datetime.now()) -> dict:
+    return {"title": title, "opened_at": opened_at}
+
+
+ticket_a = create_ticket("Server down")
+# ... hours later, in the same long-running process ...
+ticket_b = create_ticket("Disk full")
+
+print(ticket_a["opened_at"] == ticket_b["opened_at"])`}>
+`datetime.now()` ในค่า default ถูกประเมิน **ครั้งเดียว** ตอนที่ statement `def create_ticket(...)` ทำงาน — ไม่ใช่ทุกครั้งที่เรียก ทุก ticket ที่ถูกสร้างโดยไม่ระบุ `opened_at` เองจะได้ timestamp ที่แช่แข็งไว้ตัวเดียวกันเป๊ะ ๆ ไม่ว่าเวลาจริงจะผ่านไปเท่าไหร่ระหว่าง call ใน process ที่รันอยู่นาน (web server, worker process) บรรทัดที่พิมพ์ออกมาคือ `True` ซึ่งแทบจะแน่นอนว่าไม่ใช่ความตั้งใจสำหรับ field ที่ชื่อ `opened_at` นี่คือ bug กลุ่มเดียวกับกับดัก mutable default argument เพียงแต่ default เป็นแบบไม่ mutable ที่เห็นชัด ทางแก้คือ pattern เดียวกันคือใช้ `None` เป็น sentinel: `def create_ticket(title, opened_at=None): opened_at = opened_at if opened_at is not None else datetime.now()`
+</SpotTheBug>
+
 <Callout title="กับดักของ mutable default argument">
-อย่าใช้ mutable object (list, dict, set) เป็นค่า default argument เด็ดขาด
+อย่าใช้ mutable object (list, dict, set) — หรือ function call ใดก็ตามที่ผลลัพธ์เปลี่ยนไปตามเวลาอย่าง `datetime.now()` — เป็นค่า default argument เด็ดขาด
 ค่า default จะถูกประเมิน (evaluate) **เพียงครั้งเดียว** ตอนนิยาม function ไม่ใช่ทุกครั้งที่เรียก
-ผู้เรียกทุกคนจึงใช้ object ตัวเดียวกันร่วมกัน:
+ผู้เรียกทุกคนจึงใช้ object ตัวเดียวกันร่วมกัน (หรือค่าเดิมที่ถูกแช่แข็งไว้):
 
 ```python
 # WRONG — all calls share the same list
@@ -128,44 +338,70 @@ def add_item(item, container=None):
     return container
 ```
 
-pattern การใช้ `None` เป็นค่า sentinel คือสำนวนมาตรฐานของ Python สำหรับจัดการ mutable default
+pattern การใช้ `None` เป็นค่า sentinel คือสำนวนมาตรฐานของ Python ทั้งสำหรับ mutable default และ default แบบ "ประเมินสดใหม่ทุกครั้งที่เรียก" อย่าง timestamp
 </Callout>
 
 export const quizArgsKwargs = [
   {
     q: "*args รวบ argument เข้ามาเป็น type อะไร?",
     options: ["list", "tuple", "dict", "set"],
-    answer: 1
+    answer: 1,
+    explain: "*args รวบ positional argument ส่วนเกินเข้ามาเป็น tuple ตามลำดับที่ถูกส่งเข้ามา"
   },
   {
     q: "parameter ที่นิยามไว้หลัง `*` เปล่า ๆ ใน signature ของ function คือ:",
     options: [
       "variadic positional parameter",
       "keyword-only parameter",
-      "variadic keyword parameter",
+      "positional-only parameter",
       "parameter ที่จำเป็นต้องใส่ (required)"
     ],
-    answer: 1
+    answer: 1,
+    explain: "ทุกอย่างที่อยู่หลัง * เปล่า ๆ (หรือหลัง *args) ต้องส่งผ่านชื่อ keyword เท่านั้น Python จะ raise TypeError ถ้าผู้เรียกพยายามส่งแบบ positional"
   },
   {
-    q: "ทำไม `def f(items=[])` ถึงอันตราย?",
+    q: "โค้ดนี้พิมพ์อะไร?\n\ndef divide(numerator, denominator, /):\n    return numerator / denominator\n\ntry:\n    print(divide(numerator=10, denominator=2))\nexcept TypeError as e:\n    print(type(e).__name__)",
     options: [
-      "list ไม่ใช่ค่า default ที่ใช้ได้ใน Python",
-      "list ที่เป็น default ถูกใช้ร่วมกันในทุกการเรียก เพราะถูกสร้างเพียงครั้งเดียว",
-      "function จะไม่สามารถรับ argument อื่นได้เลย",
-      "Python จะ copy list ใหม่ทุกครั้งที่เรียก ทำให้เปลือง memory"
+      "5.0",
+      "TypeError",
+      "None",
+      "SyntaxError — / ใช้ตรงนี้ไม่ได้"
     ],
-    answer: 1
+    answer: 1,
+    explain: "numerator และ denominator เป็น positional-only เพราะอยู่ก่อน / เปล่า ๆ การเรียก divide(numerator=10, denominator=2) ส่งค่าผ่าน keyword ซึ่งจะ raise TypeError: divide() got some positional-only arguments passed as keyword arguments"
   },
   {
-    q: "ลำดับของชนิด parameter ที่ถูกต้องใน signature ของ function ใน Python คืออะไร?",
+    q: "โค้ดนี้พิมพ์อะไร?\n\ndef collect(**kwargs):\n    kwargs['seen'] = True\n    return kwargs\n\na = collect(x=1)\nb = collect(y=2)\nprint(a, b, a is b)",
     options: [
-      "**kwargs, *args, keyword-only, positional",
-      "positional, keyword-only, *args, **kwargs",
-      "positional, *args, keyword-only, **kwargs",
-      "*args, positional, **kwargs, keyword-only"
+      "{'x': 1, 'seen': True} {'x': 1, 'y': 2, 'seen': True} True",
+      "{'x': 1, 'seen': True} {'y': 2, 'seen': True} False",
+      "{'seen': True} {'seen': True} True",
+      "TypeError — kwargs mutate ไม่ได้"
     ],
-    answer: 2
+    answer: 1,
+    explain: "**kwargs ถูกสร้างเป็น dict ใหม่ทุกครั้งที่เรียก — ไม่เคยถูกใช้ร่วมกันข้าม call ต่างจาก mutable default argument a และ b คือ dict สองตัวที่เป็นอิสระจากกัน ดังนั้น a is b จึงเป็น False"
+  },
+  {
+    q: "ทำไม `def f(x, when=datetime.now())` ถึงเป็น bug ใน process ที่รันอยู่นาน?",
+    options: [
+      "datetime.now() ใช้เป็นค่า default ไม่ได้ — มันจะ raise TypeError",
+      "datetime.now() รันแค่ครั้งเดียวตอน definition time ดังนั้นทุก call ที่ไม่ระบุ when จะได้ timestamp เดียวกันที่แช่แข็งไว้",
+      "มันทำงานถูกต้อง แต่เฉพาะใน Python เวอร์ชันก่อน 3.14",
+      "when จะกลายเป็น keyword-only parameter โดยอัตโนมัติ"
+    ],
+    answer: 1,
+    explain: "เหมือนค่า default อื่น ๆ datetime.now() ถูกประเมินแค่ครั้งเดียว ตอนที่ statement def ทำงาน — ไม่ใช่ทุกครั้งที่เรียก ทุก call ที่ไม่ส่ง when เองจะใช้ช่วงเวลาเดียวกันที่ถูกแช่แข็งไว้ ซึ่งแทบไม่ใช่พฤติกรรมที่ตั้งใจไว้สำหรับ default ของ timestamp"
+  },
+  {
+    q: "ทำไม `def wrapper(*a, **kw): return base(*a, **kw)` ถึง forward call รูปแบบไหนก็ได้ที่ `base` รับได้อย่างถูกต้อง?",
+    options: [
+      "*a, **kw ใน signature รวบ positional/keyword argument ใด ๆ และ *a, **kw ที่ call site กระจายมันกลับออกมาเป็น argument แยกกันให้ base",
+      "Python จับคู่ชื่อ parameter ของ wrapper กับชื่อ parameter ของ base ให้อัตโนมัติ",
+      "มันทำงานได้ก็ต่อเมื่อ base ใช้ *args, **kwargs ใน signature ของตัวเองด้วย",
+      "wrapper ต้องถูก decorate ด้วย @functools.wraps การ forward ถึงจะทำงานได้ตอน runtime"
+    ],
+    answer: 0,
+    explain: "syntax */** ตัวเดียวกันแปลว่า 'รวบ' ในนิยาม และ 'กระจาย' ในการเรียก wrapper(*a, **kw) รวบทุกอย่างที่ถูกเรียกด้วยเข้าเป็น tuple a และ dict kw จากนั้น base(*a, **kw) จึงกระจาย tuple และ dict เดียวกันนั้นกลับออกมาเป็น positional และ keyword argument แยกกันให้ base — สอง function ไม่จำเป็นต้องมี signature ตรงกันเป๊ะ ๆ แค่เข้ากันได้ก็พอ"
   }
 ];
 

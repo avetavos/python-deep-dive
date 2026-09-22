@@ -1,6 +1,6 @@
 ---
 title: 'Async & Concurrency'
-description: 'ภาพรวมของ Concurrency ใน Python: asyncio สำหรับงาน I/O-bound, threads ที่ถูกจำกัดด้วย GIL และ multiprocessing สำหรับงาน CPU-bound'
+description: 'ภาพรวมของ Concurrency ใน Python: asyncio สำหรับงาน I/O-bound, threads ที่ถูกจำกัดด้วย GIL และ multiprocessing หรือ free-threading สำหรับงาน CPU-bound'
 sidebar:
   order: 1
 ---
@@ -8,6 +8,7 @@ sidebar:
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## เครื่องมือสามตัว สำหรับสามปัญหา
 
@@ -89,14 +90,37 @@ if __name__ == "__main__":        # required on every platform
 
 > รันเฉพาะในเครื่องเท่านั้น — ไม่มี process จริงใน browser sandbox ต้องใส่ guard `if __name__ == "__main__":` เสมอทุกแพลตฟอร์ม: หากไม่มี, macOS/Windows (`spawn`) จะ import module นี้ใหม่ในทุก child process และสร้าง process ไม่สิ้นสุด ดูรายละเอียด guard/start-method ทั้งหมดได้ในบทเรียน Multiprocessing
 
+## ตารางตัดสินใจ: เครื่องมือไหนเหมาะกับงานไหน
+
+| Workload | ตัวเลือกแรก | ตัวเลือกรอง | เครื่องมือผิด |
+|---|---|---|---|
+| I/O-bound, มี async-native library (`httpx`, `asyncpg`) | `asyncio` | — | `threading` (ใช้ได้ แต่ overhead ต่อ connection มากกว่า) |
+| I/O-bound, มีแค่ library แบบ blocking/synchronous (`requests`, `boto3`, `psycopg2`) | `threading` หรือ `asyncio.to_thread` | — | เรียก blocking library ตรงๆ ภายใน coroutine |
+| CPU-bound, dependency รองรับ free-threading | Free-threaded `python3.14t` กับ `threading` | `multiprocessing` | `threading` บน default build (ไม่เร็วขึ้น) |
+| CPU-bound, dependency ผูกกับ GIL เท่านั้น (ส่วนใหญ่ของ ecosystem วันนี้) | `multiprocessing` / `ProcessPoolExecutor` | `concurrent.interpreters` (3.14, startup ถูกกว่า) | `threading` (ไม่เร็วขึ้น) |
+| งาน CPU สั้นๆ จำนวนมากที่ startup ของ process ครองเวลา | `concurrent.interpreters` (3.14) | `ProcessPoolExecutor` ที่มี pool อายุยืน | สร้าง `Pool()` ใหม่ทุกงาน |
+| ผสม: มีทั้ง I/O และ CPU | `asyncio` + `run_in_executor`/`to_thread` สำหรับส่วน blocking, `ProcessPoolExecutor` สำหรับส่วน CPU | — | เลือกเครื่องมือเดียวแล้วยัดทุกอย่างผ่านมัน |
+
+คำถามเดียวที่ตัดสินสามแถวแรก: **workload นี้ใช้เวลาส่วนใหญ่ไปกับการรอ หรือการคำนวณ?** การรอ (network, disk, database round trip) หมายความว่า GIL ไม่เกี่ยวข้อง — เลือก `asyncio` ถ้า library รองรับ ไม่งั้นใช้ `threading` การคำนวณ (parsing, คำนวณตัวเลข, ประมวลผลภาพ) หมายความว่า GIL คือคอขวด — เลือก `multiprocessing`, `concurrent.interpreters`, หรือ free-threaded build
+
+## `-X dev` เผยให้เห็น bug ที่การรันปกติซ่อนไว้
+
+Bug pattern ของ async/threading/multiprocessing ในโมดูลนี้ทุกตัว — coroutine ที่ไม่เคย await, `ResourceWarning` จาก resource ที่ไม่ปิด, exception ในเธรดที่หายไปเฉยๆ — มีคุณสมบัติร่วมกันหนึ่งอย่าง: มัน fail แบบ**เงียบๆ**ภายใต้การรัน `python3.14 script.py` ปกติ โหมด `-X dev` เปลี่ยนหลายๆ อย่างนี้ให้เป็น warning ที่มองเห็นได้โดยไม่ต้องแก้โค้ดเลย:
+
+```bash
+python3.14 -X dev script.py
+```
+
+นี่คือเหตุผลที่ playground ทุกอันในโมดูลนี้ถูกตรวจสอบด้วย `python3.14 -X dev -W error::RuntimeWarning` แทนที่จะเป็น `python3.14` เปล่าๆ — `-W error::RuntimeWarning` ไปไกลกว่า `-X dev` อีกขั้นโดยเปลี่ยน warning "coroutine was never awaited" ให้เป็น exception จริง ซึ่งเป็นพฤติกรรมที่ต้องการพอดีใน test suite หรือ CI pipeline: `await` ที่ลืมใส่ควรทำให้ build fail ไม่ใช่แค่พิมพ์ warning ที่ไหลผ่าน log ที่ไม่มีใครอ่าน
+
 ## สิ่งที่โมดูลนี้ครอบคลุม
 
 | บทเรียน | แนวคิดหลัก |
 |---|---|
-| **asyncio Basics** | Event loop, `async def`, `await`, `asyncio.run`, `asyncio.gather` |
-| **Async / Await** | Tasks, `create_task`, การทำงานแบบ sequential vs concurrent |
-| **GIL & Threads** | GIL, `threading`, `ThreadPoolExecutor`, I/O vs CPU-bound |
-| **Multiprocessing** | Processes vs threads, `ProcessPoolExecutor`, `Pool.map` |
+| **asyncio Basics** | Event loop, `async def`, `await`, `asyncio.run`, `asyncio.gather`, `async with`/`async for` |
+| **Async / Await** | `TaskGroup` เทียบ `gather`, `Semaphore`, `Queue`, `Lock` races, pattern retry/rate-limit/shutdown |
+| **GIL & Threads** | GIL ปกป้องอะไร (และไม่ปกป้องอะไร), `ThreadPoolExecutor`, daemon threads, free-threaded 3.14t |
+| **Multiprocessing** | Processes vs threads, `ProcessPoolExecutor`, picklability, subinterpreters |
 
 แต่ละบทเรียนสามารถเรียนได้อิสระ เริ่มด้วย asyncio หากสร้าง network services หรือข้ามไปที่ multiprocessing หากต้องการ parallelize งาน CPU-bound
 
@@ -112,6 +136,53 @@ async with asyncio.TaskGroup() as tg:
 ```
 </Callout>
 
+## Mental Model
+
+ลองนึกภาพสามโมเดลนี้เป็นสามวิธีจัดคนทำงาน: `asyncio` คือพนักงานคนเดียวที่จัดระเบียบเก่งมาก ไม่เคยนั่งว่างเลย — ขณะรออะไรบางอย่าง เขาหยิบงานถัดไปที่พร้อมทันที แล้วสลับกลับทันทีที่งานแรกพร้อม `threading` คือพนักงานหลายคนแชร์โต๊ะเดียวกันที่มีเครื่องมือใช้ครั้งละคนเดียว (GIL) — มีแค่คนเดียวแตะเครื่องมือได้ในเวลาหนึ่ง ดังนั้นพวกเขาจะนำหน้าพนักงานคนเดียวได้ก็ต่อเมื่อใช้เวลาส่วนใหญ่ทำอะไรที่ไม่ต้องใช้เครื่องมือ (รอ I/O) `multiprocessing` คือพนักงานหลายคนที่มีโต๊ะแยกกันสนิทและไม่มีเครื่องมือร่วมเลย — ขนานกันจริง แต่ทุกอย่างที่ส่งต่อกันต้องผ่านไปรษณีย์ (`pickle`) ซึ่งเสียเวลาและห้ามส่งอะไรที่ระบุที่อยู่ไม่ได้
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| `asyncio` | การรอ I/O พร้อมกันนับพันบนเธรดเดียว หน่วยความจำน้อยมาก | ทุก library ใน call chain ต้องเป็น async-native ไม่งั้นกลับไป block loop |
+| `threading` | ใช้แทนที่ library แบบ synchronous/blocking เดิมได้ทันที | ไม่เร็วขึ้นเชิง CPU บน default build; ต้องใช้ `Lock` สำหรับ shared state |
+| `multiprocessing` | parallelism ของ CPU จริง แยก crash ระหว่าง worker | ต้นทุน process startup เต็ม; ข้ามได้แค่ data และ callable ที่ pickle ได้ |
+| Free-threaded 3.14t | parallelism ของ CPU จริงพร้อมความง่ายของ shared-memory แบบ thread | binary แยกต่างหาก; ระบบนิเวศ C extension ยังตามไม่ทัน |
+| เลือกเครื่องมือเดียวสำหรับทุกอย่าง | codebase ง่ายกว่า mental model เดียว | บังคับงาน I/O-bound และ CPU-bound ผ่านเครื่องมือที่ไม่เหมาะกับทั้งคู่ |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"asyncio เร็วที่สุดเสมอ"** มันเป็นตัวเลือกที่ดีที่สุดสำหรับงาน I/O-bound ที่มี library แบบ async-native สำหรับงาน CPU-bound มันไม่ช่วยอะไรเลย — tight loop ภายใน coroutine ยัง block ทั้ง event loop เหมือนที่มัน block เธรดหนึ่ง
+- **"Threads กับ processes เป็นวิธีขนานกันแบบใช้แทนกันได้"** Threads แชร์ memory และถูกจำกัดด้วย GIL สำหรับงาน CPU-bound; processes ข้าม GIL แต่ไม่แชร์ memory ดังนั้น argument และผลลัพธ์ทุกตัวเดินทางเป็น pickled data Free-threaded Python ลดช่องว่างนี้สำหรับ workload แบบ pure-Python แต่แค่บน `python3.14t` เท่านั้น
+- **"ถ้าไม่แน่ใจ ใช้ `asyncio` เป็นค่า default ที่ปลอดภัย"** มันปลอดภัยก็ต่อเมื่อทุก library ใน call path เป็น async-native หรือถูก offload อย่างชัดเจน (`to_thread`, `run_in_executor`) การเพิ่ม synchronous blocking call แค่ตัวเดียวใน coroutine ทำให้ coroutine อื่นทั้งหมดบน loop แข็งแบบเงียบๆ
+- **"bug เงียบๆ ในโปรแกรม threading/asyncio หมายความว่าเครื่องมือใช้ไม่ได้"** เกือบจะตรงข้ามเลย: `-X dev` และ `-W error::RuntimeWarning` มีอยู่ก็เพราะ bug เหล่านี้ (coroutine ที่ไม่เคย await, resource ที่ไม่ปิด, exception ที่ถูกกลืนในเธรด) เป็นเรื่องจริงและพบบ่อย — เปิดใช้ในทุก test suite แทนที่จะ debug ด้วยการลองผิดลองถูกใน production
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อโค้ด concurrency ที่ AI สร้างในโมดูลนี้ ให้ถาม:
+
+- เครื่องมือที่เลือก (`asyncio`/`threading`/`multiprocessing`) ตรงกับว่า workload เป็น I/O-bound หรือ CPU-bound จริงหรือไม่? โค้ดที่สร้างมักเลือก `asyncio` เป็นค่า default โดยไม่สนใจ
+- มี coroutine ที่เรียกฟังก์ชัน synchronous แบบ blocking (`requests.get`, `time.sleep`, การคำนวณหนัก) ตรงๆ แทนที่จะผ่าน `to_thread`/`run_in_executor`/process pool หรือไม่?
+- โค้ด — หรือ test suite ของมัน — รันภายใต้ `-X dev` / `-W error::RuntimeWarning` หรือไม่? bug pattern ส่วนใหญ่ในโมดูลนี้ (coroutine ที่ไม่เคย await, `CancelledError` ที่ถูกกลืน, update ที่หายไปบน shared state) ไม่มีอาการที่มองเห็นได้ภายใต้การรันปกติที่ไม่มี flag
+- มี `lambda` หรือ local closure ถูกส่งเข้า `multiprocessing`/`ProcessPoolExecutor` หรือไม่? มัน fail ด้วย `PicklingError` จริงตอนที่รันจริงบน worker ครั้งแรก ไม่ใช่ตอนที่เขียน
+
+<SpotTheBug code={`import asyncio
+import time
+
+async def fetch_user(user_id: int) -> dict:
+    time.sleep(0.2)  # "quick" call to a synchronous ORM
+    return {"id": user_id, "name": f"user-{user_id}"}
+
+async def fetch_all_users(ids: list[int]) -> list[dict]:
+    return await asyncio.gather(*[fetch_user(i) for i in ids])
+`} lang="python">
+โค้ดนี้ดูเหมือน asyncio แบบ idiomatic — `async def`, `await`, `gather` เพื่อความ concurrent — และมันก็คืน list ของ user dict ที่ถูกต้องจริง แต่ `fetch_user` เรียก `time.sleep` ซึ่ง block จริงๆ ตรงๆ ภายใน coroutine แทนที่จะเป็น async-native ORM call หรือ `asyncio.to_thread` เพราะ `time.sleep` ไม่คืนการควบคุมให้ event loop `gather` จึงไม่ให้ concurrency จริงเลยตรงนี้: ทุก "concurrent" fetch ยังรันทีละตัวบน event-loop thread เดียว ใช้เวลารวม `0.2 * len(ids)` วินาทีแทนที่จะเป็นประมาณ `0.2` วินาที bug นี้ไม่มี exception และไม่มี warning — มีแค่ runtime ที่ไม่ scale แบบเงียบๆ ซึ่งเป็นเหตุผลพอดีที่การ profile ว่า "coroutine ตัวไหนคืนการควบคุมจริง" สำคัญกว่าการอ่าน keyword `async`/`await` แล้วสมมติว่า concurrency กำลังเกิดขึ้น
+</SpotTheBug>
+
+<Callout title="เลือกเครื่องมือให้ตรงกับที่เวลาไปจริงๆ">
+ก่อนหยิบ asyncio, threading, หรือ multiprocessing ให้ profile หรือคิดให้ออกว่าเวลาของ workload ไปอยู่ที่ไหน เวลาที่ใช้รอ (I/O) ต้องการ asyncio หรือ threading; เวลาที่ใช้คำนวณ (CPU) ต้องการ multiprocessing หรือ free-threaded build เดาผิดจะได้โค้ดที่ดู concurrent แต่ไม่ใช่ โดยไม่มี error ชี้ไปที่ความผิดพลาดเลย
+</Callout>
+
 export const quizIndex = [
   {
     q: "โมเดล concurrency ใดของ Python เหมาะที่สุดสำหรับงาน CPU-bound เช่น การคำนวณเชิงตัวเลข?",
@@ -121,7 +192,8 @@ export const quizIndex = [
       "multiprocessing — separate processes ข้าม GIL ได้",
       "ทั้งสามแบบเทียบเท่ากันสำหรับงาน CPU-bound"
     ],
-    answer: 2
+    answer: 2,
+    explain: "multiprocessing สร้าง OS process แยกกัน แต่ละตัวมี interpreter และ GIL ของตัวเอง ดังนั้นงาน CPU-bound จึงรัน parallel ข้าม core ได้จริง asyncio ไม่ช่วยงาน CPU-bound เลย (เธรดเดียว) และ threading ไม่เร็วขึ้นบน default GIL build"
   },
   {
     q: "เหตุใด asyncio จึงจัดการการรอ I/O พร้อมกันหลายพันรายการได้อย่างมีประสิทธิภาพใน single thread?",
@@ -131,7 +203,8 @@ export const quizIndex = [
       "ใช้ GIL ในการ time-slice ระหว่าง coroutines",
       "แต่ละ coroutine รันใน subprocess ของตัวเอง"
     ],
-    answer: 1
+    answer: 1,
+    explain: "ทุกครั้งที่ coroutine เจอ await บน I/O มันจะหยุดและ event loop รัน coroutine อื่นที่พร้อมทันที ไม่มีการสร้าง OS thread หรือ process ใหม่เลย -- การสลับเกิดขึ้นทั้งหมดภายใน event loop ของเธรดเดียว"
   },
   {
     q: "Global Interpreter Lock (GIL) คืออะไร?",
@@ -141,7 +214,8 @@ export const quizIndex = [
       "Global variable ที่ติดตามจำนวน threads ที่กำลังรัน",
       "C extension ที่เร่งความเร็วโค้ด Python แบบ I/O-bound"
     ],
-    answer: 0
+    answer: 0,
+    explain: "GIL คือ mutex ภายใน CPython ที่มีแค่เธรดเดียวถือได้ในเวลาหนึ่ง การถือมันเป็นเงื่อนไขในการรัน Python bytecode นี่คือเหตุผลที่เธรด CPU-bound ไม่รัน parallel บน default build ในขณะที่เธรด I/O-bound ยังได้ประโยชน์เพราะ I/O ปล่อย GIL"
   },
   {
     q: "ข้อความใดเกี่ยวกับ threading และงาน CPU-bound ใน Python ที่ถูกต้อง?",
@@ -151,7 +225,41 @@ export const quizIndex = [
       "การเพิ่ม threads ใน CPU-bound loop แทบไม่ได้ความเร็วเพิ่มขึ้นเพราะ GIL",
       "GIL ใช้กับ I/O operations เท่านั้น ไม่ใช่การคำนวณ"
     ],
-    answer: 2
+    answer: 2,
+    explain: "เนื่องจากมีแค่เธรดเดียวที่ถือ GIL และรัน Python bytecode ได้ในเวลาหนึ่ง การแบ่ง CPU-bound loop ข้ามหลายเธรดบน default build จึงไม่เพิ่มความสามารถคำนวณแบบ parallel -- benchmark ที่วัดจริงในบท GIL & Threads แสดงประมาณ 1.0x ไม่ใช่ speedup"
+  },
+  {
+    q: "```python\nasync def fetch_user(uid):\n    time.sleep(0.2)\n    return {\"id\": uid}\n\nasync def fetch_all(ids):\n    return await asyncio.gather(*[fetch_user(i) for i in ids])\n```\nสำหรับ 5 ID ใช้เวลาประมาณเท่าไหร่ และเพราะอะไร?",
+    options: [
+      "~0.2s -- gather รันทุกอย่างแบบ concurrent ตามที่ตั้งใจ",
+      "~1.0s (5 x 0.2s) -- time.sleep block event loop ดังนั้น gather ไม่ให้ concurrency จริงตรงนี้",
+      "~0.04s -- asyncio ขนานกันข้าม CPU core",
+      "raise RuntimeError เพราะ time.sleep ไม่ถูก await"
+    ],
+    answer: 1,
+    explain: "time.sleep เป็น blocking call จริงๆ ที่ไม่คืนการควบคุมให้ event loop แบบที่ asyncio.sleep ทำ แม้โค้ดจะห่อด้วย async def และ gather แต่ละ fetch_user call ยัง block event-loop thread เดียวทีละตัวเต็มๆ ดังนั้นเวลารวมคือผลรวมของ delay ทั้งหมด ไม่ใช่ค่าสูงสุด"
+  },
+  {
+    q: "```python\nasync def greet(name):\n    return f\"Hello, {name}!\"\n\ncoro = greet(\"Python\")\ndel coro\n```\nรันตรงๆ ด้วย `python3.14 script.py` ธรรมดา ไม่มีอะไรถูกพิมพ์ อะไรเปลี่ยนไปถ้ารันด้วย `python3.14 -X dev script.py` แทน?",
+    options: [
+      "สคริปต์รันเร็วขึ้นโดยข้าม bytecode verification",
+      "เผยให้เห็น RuntimeWarning: coroutine 'greet' was never awaited ตอนที่ coroutine ถูก garbage-collect ซึ่งการรันปกติจะเงียบไป",
+      "raise SyntaxError เพราะ coroutine ต้องมี await",
+      "เรียก asyncio.run ให้อัตโนมัติกับ coroutine ที่ไม่ได้ใช้ทุกตัวที่เจอ"
+    ],
+    answer: 1,
+    explain: "-X dev เปิด runtime check เพิ่มเติม (coroutine ที่ไม่เคย await, resource warning บางแบบ และอื่นๆ) โดยไม่ต้องแก้โค้ดเลย รวมกับ -W error::RuntimeWarning ใน test suite มันเปลี่ยน async bug เงียบๆ กลุ่มหนึ่ง -- เช่น coroutine ที่หายไปนี้ -- ให้เป็น failure จริงแทนที่จะเป็นบรรทัด log ที่พลาดง่าย"
+  },
+  {
+    q: "workload หนึ่งใช้เวลา wall-clock 95% รอ network response จาก async-native HTTP client เครื่องมือใดจากตารางตัดสินใจเหมาะที่สุด?",
+    options: [
+      "multiprocessing เพราะ parallelism ช่วยเสมอ",
+      "asyncio เพราะงานเป็น I/O-bound และมี async-native library ให้ใช้",
+      "Free-threaded python3.14t เพราะมันเอา GIL ออก",
+      "threading เพราะเป็นตัวเลือกที่ง่ายที่สุด"
+    ],
+    answer: 1,
+    explain: "คำถามแรกของตารางตัดสินใจคือ workload ใช้เวลาไปกับการรอหรือการคำนวณ การรอ network I/O ที่มี async-native library ให้ใช้คือกรณีตำราของ asyncio -- มันจัดการการรอพร้อมกันจำนวนมากบนเธรดเดียวด้วย overhead น้อยที่สุดในสามโมเดล"
   }
 ];
 

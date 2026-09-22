@@ -1,6 +1,6 @@
 ---
 title: Slicing
-description: 'seq[start:stop:step], negative indices, กลับลำดับด้วย [::-1] และ shallow copy ผ่าน slice ใน Python 3.14'
+description: 'seq[start:stop:step], slice assignment และการลบ, slice บน tuple/str/bytes/range, และ slice object ใน Python 3.14'
 sidebar:
   order: 5
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Slice syntax
 
@@ -45,6 +47,8 @@ nums[:-3]    # [10, 20, 30, 40]  — everything except last three
 
 Negative index ทำให้เข้าถึงส่วนท้ายของ sequence ได้ง่ายโดยไม่ต้องรู้ความยาว
 
+**มี negative index ตัวหนึ่งที่ไม่ negative จริง ๆ: `-0 == 0`** `seq[-0:]` หมายถึง `seq[0:]` — คือ *ทั้ง* sequence — ไม่ใช่ "ศูนย์ element สุดท้าย" เลย โค้ดใดก็ตามที่คำนวณ negative bound จากตัวแปรที่อาจเป็น `0` ได้ ต้องจัดการกรณีนี้อย่างชัดเจน ดูตัวอย่างจริงในหัวข้อ "อ่านโค้ดที่ AI เขียน" ด้านล่าง
+
 ## การกลับลำดับ sequence
 
 `seq[::-1]` คือวิธีที่ idiomatic ใน Python เพื่อกลับลำดับ sequence ใด ๆ
@@ -63,6 +67,13 @@ s = 'Hello, World!'
 print(s[::-1])   # !dlroW ,olleH
 ```
 
+negative step ที่ไม่ใช่ `-1` จะเดินถอยหลังพร้อม stride — `[::-2]` กลับลำดับและเอาทุก element ที่สองด้วย:
+
+```python
+letters = ['a', 'b', 'c', 'd', 'e', 'f', 'g']
+print(letters[::-2])  # ['g', 'e', 'c', 'a']
+```
+
 ## Shallow copy ผ่าน slice
 
 `seq[:]` (ไม่มี start, stop หรือ step) คืน **shallow copy** ของ sequence
@@ -78,9 +89,67 @@ print(copy)      # [99, 2, 3, 4, 5]
 
 สำหรับโครงสร้างซ้อน (list ภายใน list) ใช้ `copy.deepcopy()` แทนหากต้องการ inner list ที่เป็นอิสระ
 
-## Named slices
+## Slice assignment และการลบ
 
-เก็บ slice ในตัวแปรด้วย `slice(start, stop, step)` เพื่อความอ่านง่าย:
+ต่างจากการอ่าน การ assign เข้า slice จะแก้ไข list ใน place — และตัวแทนที่ assign เข้าไปไม่จำเป็นต้องยาวเท่ากับ slice ที่ถูกแทนที่:
+
+```python
+nums = [10, 20, 30, 40, 50]
+nums[1:3] = [99, 98, 97]
+print(nums)  # [10, 99, 98, 97, 40, 50] — 2 elements replaced by 3, the list grew
+```
+
+```python
+nums2 = [10, 20, 30, 40, 50]
+nums2[1:4] = [0]
+print(nums2)  # [10, 0, 50] — 3 elements replaced by 1, the list shrank
+```
+
+`del seq[start:stop]` ลบ slice ออกทั้งหมด แล้ว element ที่เหลือขยับลงมา:
+
+```python
+nums3 = [10, 20, 30, 40, 50]
+del nums3[1:3]
+print(nums3)  # [10, 40, 50]
+```
+
+slice **ธรรมดา** (ละ `step` หรือเป็น `1`) ยอมรับความยาวที่ไม่ตรงกันได้ — นั่นคือวิธีที่มันทำให้ list โตหรือหดได้ ส่วน slice **แบบ extended** (step อื่นใด) ไม่ยอมรับ: ตัวแทนที่ assign เข้าไปต้องมีจำนวน element เท่ากับที่ slice เลือกไว้เป๊ะ ๆ เพราะไม่มีความคลุมเครือให้แก้ว่าตำแหน่งไหนควรได้ค่าไหน
+
+```python
+nums4 = [1, 2, 3, 4, 5]
+nums4[::2] = [10, 30, 50]   # exactly 3 elements for 3 selected positions
+print(nums4)  # [10, 2, 30, 4, 50]
+
+nums5 = [1, 2, 3, 4, 5]
+nums5[::2] = [100]
+# ValueError: attempt to assign sequence of size 1 to extended slice of size 3
+```
+
+## Slice บน sequence type อื่น: tuple, str, bytes, และ range
+
+Slicing ทำงานเหมือนกันทุกประการข้าม built-in sequence type ทุกตัว — จะได้ object ประเภทเดียวกับที่ slice เสมอ ยกเว้นตัวเดียว: การ slice `range` จะได้ `range` อีกตัว คำนวณแบบ lazy ไม่ใช่ list:
+
+```python
+t = (10, 20, 30, 40, 50)
+print(t[1:4])   # (20, 30, 40) — a tuple
+
+s = 'abcdef'
+print(s[1:4])   # 'bcd' — a str
+
+b = b'abcdef'
+print(b[1:4])   # b'bcd' — bytes
+
+r = range(0, 20, 2)
+sub = r[2:5]
+print(sub)        # range(4, 10, 2) — still a range, not a list
+print(list(sub))  # [4, 6, 8] — only materialised when you ask
+```
+
+Tuple, str, และ bytes ล้วนเปลี่ยนแปลงไม่ได้ ดังนั้น — ต่างจาก list — ทั้งสามไม่รองรับการ assign เข้า slice เลย; `t[1:3] = (...)` จะ raise `TypeError`
+
+## Named slices และ `slice` object
+
+`seq[a:b:c]` คือ syntactic sugar: Python สร้าง `slice` object แล้วส่งเข้า `__getitem__` คุณสร้างและเก็บ object นั้นเองได้ด้วย `slice(start, stop, step)` ซึ่งทำให้ slice ใช้ซ้ำได้และอธิบายตัวเองได้:
 
 ```python
 HEADER  = slice(None, 3)
@@ -91,6 +160,17 @@ data = b'HDR' + b'payload' + b'FT'
 print(data[HEADER])   # b'HDR'
 print(data[PAYLOAD])  # b'payload'
 print(data[FOOTER])   # b'FT'
+```
+
+method `.indices(length)` ของ `slice` object จะ resolve `start`/`stop`/`step` — รวมถึงค่า negative และค่าที่เกินขอบเขต — ให้เป็นค่าที่เป็นรูปธรรม, clamp แล้ว, และวนไปข้างหน้าได้เสมอสำหรับ sequence ที่มีความยาวตามที่กำหนด นี่คือสิ่งที่ `__getitem__` ทำภายในก่อนจะเดินผ่าน sequence:
+
+```python
+sl = slice(1, 10, 2)
+print(sl.indices(5))  # (1, 5, 2) — stop clamped from 10 down to 5
+
+nums6 = [0, 1, 2, 3, 4]
+start, stop, step = sl.indices(len(nums6))
+print([nums6[i] for i in range(start, stop, step)])  # [1, 3] — matches nums6[sl] exactly
 ```
 
 ## ตัวอย่างรันได้
@@ -118,10 +198,118 @@ print('copy:', copy)
 
 <Playground code={slicingCode} />
 
-<Callout title="Slicing คืน object ใหม่เสมอ; [::-1] กลับลำดับ">
-ทุก slice expression สร้าง list (หรือ string, tuple) ใหม่ — ไม่แก้ไข source
+playground ด้านล่างครอบคลุมหัวข้อความลึกด้านบน — slice assignment ที่ทำให้ list โตและหด, `del` บน slice, การตรวจความยาวของ extended slice, `[::-2]`, การ slice tuple/str/bytes/range, และ `.indices()` ของ `slice` object:
+
+export const slicingDepthCode = `
+# --- slice assignment: replace a range, can change length ---
+nums = [10, 20, 30, 40, 50]
+nums[1:3] = [99, 98, 97]
+print('after slice assignment (grows):', nums)
+
+nums2 = [10, 20, 30, 40, 50]
+nums2[1:4] = [0]
+print('after slice assignment (shrinks):', nums2)
+
+# --- slice deletion ---
+nums3 = [10, 20, 30, 40, 50]
+del nums3[1:3]
+print('after slice deletion:', nums3)
+
+# --- extended slice assignment must match length exactly ---
+nums4 = [1, 2, 3, 4, 5]
+nums4[::2] = [10, 30, 50]
+print('extended slice assign (matching length):', nums4)
+
+nums5 = [1, 2, 3, 4, 5]
+try:
+    nums5[::2] = [100]
+except ValueError as e:
+    print('ValueError:', e)
+
+# --- [::-2] ---
+letters = ['a', 'b', 'c', 'd', 'e', 'f', 'g']
+print('[::-2]:', letters[::-2])
+
+# --- slicing works the same on tuple, str, bytes ---
+t = (10, 20, 30, 40, 50)
+print('tuple slice:', t[1:4], type(t[1:4]).__name__)
+
+s = 'abcdef'
+print('str slice:', s[1:4], type(s[1:4]).__name__)
+
+b = b'abcdef'
+print('bytes slice:', b[1:4], type(b[1:4]).__name__)
+
+# --- slicing a range returns a NEW range, not a list ---
+r = range(0, 20, 2)
+sub = r[2:5]
+print('range slice:', sub, type(sub).__name__, list(sub))
+
+# --- slice object + .indices() ---
+sl = slice(1, 10, 2)
+print('slice object:', sl)
+print('indices() resolved against len=5:', sl.indices(5))
+
+nums6 = [0, 1, 2, 3, 4]
+start, stop, step = sl.indices(len(nums6))
+manual = [nums6[i] for i in range(start, stop, step)]
+print('manual walk using indices():', manual)
+print('direct slice result:', nums6[sl])
+`.trim();
+
+<Playground code={slicingDepthCode} />
+
+## Mental Model
+
+export const slicingMentalModel = `flowchart LR
+  Seq["seq[1:4]"] -->|excluded| A0["seq[0]"]
+  Seq -->|included| A1["seq[1]"]
+  Seq -->|included| A2["seq[2]"]
+  Seq -->|included| A3["seq[3]"]
+  Seq -->|excluded, this is stop| A4["seq[4]"]`;
+
+<Mermaid code={slicingMentalModel} title="stop คือ index ถัดจากตัวสุดท้ายที่รวมเสมอ -- seq[1:4] รวม index 1, 2, 3 และไม่แตะ index 4 เลย" />
+
+## Trade-offs
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| การ slice (`seq[a:b:c]`) | ไม่ raise `IndexError` เลย — ขอบเขตที่เกินจะถูก clamp แบบเงียบ ๆ | การ clamp เดียวกันนั้นอาจซ่อน off-by-one bug แทนที่จะโผล่ให้เห็น |
+| slice assignment ธรรมดา (ละ `step`) | ทำให้ list โตหรือหดได้ใน statement เดียว | ความยาวใหม่จะตรงกับความตั้งใจก็ต่อเมื่อคุณตั้งใจจริง ๆ ว่า "แทนที่ทั้งช่วงนี้" |
+| extended-slice assignment (`step != 1`) | แทนที่ตามตำแหน่งได้แม่นยำ | เข้มงวด — ความยาวไม่ตรงกันจะ raise `ValueError` แทนที่จะตัดหรือเติมให้แบบเงียบ ๆ |
+| การ slice `range` | ยังคง lazy — range ขนาดใหญ่ slice ได้ O(1) ไม่ใช่ O(n) | คืน `range` ไม่ใช่ `list` — โค้ดที่คาดหวัง method ของ list (`.append`, การ index ด้วย API ที่รับแค่ list) ต้อง `list(...)` ก่อน |
+| `slice` object + `.indices()` | ใช้ซ้ำได้ ตั้งชื่อได้ และ resolve ขอบเขต negative/เกินขอบเขตให้เอง | ต้องอ่านผ่านชั้นเพิ่มอีกหนึ่งชั้นเมื่อเทียบกับ `[a:b:c]` แบบ inline |
+
+## Common Misconceptions
+
+- **"index ที่เกินขอบเขตของ slice จะ raise `IndexError` เหมือน indexing ธรรมดา"** — ความจริง: `a[100:]` บน list 5 element คืน `[]`; slicing จะ clamp เสมอ ไม่ raise
+- **"`seq[-0:]` หมายถึง tail ที่ว่างเปล่า — ศูนย์ element"** — ความจริง: `-0 == 0` ใน Python ดังนั้น `seq[-0:]` คือ `seq[0:]` เป๊ะ ๆ — ทั้ง sequence
+- **"slice assignment ต้องแทนที่ด้วยจำนวน element เท่าเดิม"** — ความจริง: จริงเฉพาะ extended slice (`step != 1`) เท่านั้น; slice ธรรมดาแทนที่แล้วทำให้ list โตหรือหดได้อย่างอิสระ
+- **"slice `range` จะได้ list"** — ความจริง: ได้ `range` อีกตัว คำนวณแบบ lazy; ครอบด้วย `list(...)` ถ้าต้องการ element ที่เป็นรูปธรรม
+- **"`a[:]`, `a[::1]`, และ `list(a)` ทำงานเหมือนกันทุกบริบท"** — ความจริง: ทั้งสามทำ shallow copy ของ list แต่มีแค่ `a[:]`/`a[::1]` เท่านั้นที่ใช้กับ sequence type ใดก็ได้ผ่าน `__getitem__`; custom sequence class บางตัวมีแค่อย่างใดอย่างหนึ่ง
+
+## อ่านโค้ดที่ AI เขียน
+
+- function คำนวณ negative slice bound จากตัวแปรที่อาจเป็น `0` ได้หรือเปล่า (เช่น `items[-n:]` เพื่อ "ตัด `n` item สุดท้ายทิ้ง")? เมื่อ `n == 0`, `-n` คือ `0` ไม่ใช่ "ไม่มี item" — `items[-0:]` คืน *ทั้ง* sequence และถ้าผลลัพธ์นั้นถูกลบหรือทิ้งไป bug จะเงียบและร้ายแรง
+- โค้ด slice assignment สมมติว่าตัวแทนที่ assign ยาวเท่ากับ slice เดิมเสมอหรือเปล่า? นั่นรับประกันเฉพาะ extended slice เท่านั้น; สำหรับ slice ธรรมดา ตัวแทนที่สั้นหรือยาวกว่าถูกต้องและเปลี่ยนความยาวของ list ได้ — ตรวจว่าการเปลี่ยนความยาวนั้นตั้งใจหรือไม่
+- `range` object ถูก slice แล้วเอาไปใช้ทันทีในที่ที่คาดหวัง `list` (`.append()`, JSON serialization, API ที่รับแค่ list) หรือเปล่า? ต้อง `list(...)` ก่อน
+- โค้ด slice string หรือ tuple แล้วพยายามแก้ไขผลลัพธ์ใน place หรือเปล่า? การ slice `str`, `tuple`, หรือ `bytes` คืน object ประเภท immutable เดียวกัน — `s[1:3][0] = 'x'` ล้มเหลวแบบเดียวกับ `s[0] = 'x'`
+- slice ที่กลับลำดับพร้อม stride (`[::-2]`, `[::-3]`, ...) ปรากฏในที่ที่น่าจะตั้งใจแค่กลับลำดับธรรมดา (`[::-1]`) หรือเปล่า? เลขเกินมาตัวเดียวจะข้าม element แบบเงียบ ๆ แทนที่จะ error
+
+<SpotTheBug code={`def drop_last_n(items, n):
+    del items[-n:]
+    return items
+
+
+print(drop_last_n([1, 2, 3, 4, 5], 0))
+print(drop_last_n([1, 2, 3, 4, 5], 2))`}>
+function สมมติว่า `n=0` หมายถึง "ไม่ต้องลบอะไรเลย" แต่ `-n` เมื่อ `n == 0` คือ `-0` ซึ่ง Python ถือว่าเท่ากับ `0` เป๊ะ ๆ — ไม่ใช่ "negative zero" และไม่ใช่ "ไม่มี item จากท้าย" ดังนั้น `items[-0:]` คือ `items[0:]` ทั้ง list และ `del items[0:]` จะลบมันทิ้งทั้งหมด ตรวจสอบแล้วบน Python 3.14: การเรียกครั้งแรกพิมพ์ `[]` ไม่ใช่ `[1, 2, 3, 4, 5]` ที่ไม่เปลี่ยนแปลงตามชื่อ `drop_last_n` สัญญาไว้; การเรียกครั้งที่สอง (`n=2`) ทำงานตามที่ตั้งใจและพิมพ์ `[1, 2, 3]` ไม่มี exception เกิดขึ้นเลยสำหรับกรณี `n=0` ซึ่งเป็นสิ่งที่ทำให้ bug นี้หลุดออกไปได้ง่าย วิธีแก้คือใส่ guard ชัดเจน: `if n: del items[-n:]` หรือ slice ด้วย stop ที่ชัดเจนแทน negative start: `del items[len(items) - n:]`
+</SpotTheBug>
+
+<Callout title="Slicing คืน object ใหม่เสมอ; [::-1] กลับลำดับ; ขอบเขตถูก clamp ไม่ใช่ตรวจสอบ">
+ทุก slice expression สร้าง list (หรือ string, tuple, bytes) ใหม่ — ไม่แก้ไข source เลย ยกเว้นตอนที่ assign เข้า slice ซึ่งจะแก้ไขใน place
 `a[::-1]` คือ idiom มาตรฐานใน Python เพื่อกลับลำดับ sequence ในนิพจน์เดียว
-Index ที่เกินขอบเขตของ slice จะถูก clamp อัตโนมัติ: `a[100:]` คืน `[]` แทนที่จะเกิด `IndexError`
+Index ที่เกินขอบเขตของ slice จะถูก clamp อัตโนมัติ: `a[100:]` คืน `[]` แทนที่จะเกิด `IndexError` — และ `-0` ก็คือ `0` เฉย ๆ ดังนั้น negative bound ที่คำนวณจากค่าที่อาจเป็นศูนย์ได้ต้องมีการตรวจสอบอย่างชัดเจน
 </Callout>
 
 export const quizSlicing = [
@@ -133,22 +321,41 @@ export const quizSlicing = [
             "[30, 40, 50, 60]",
             "[20, 30, 40, 50]"
         ],
-        answer: 1
+        answer: 1,
+        explain: "การ slice รวม index 2 ไปจนถึง (ไม่รวม) index 5: index 2, 3, 4 เก็บค่า 30, 40, 50"
     },
     {
-        q: "`nums[-3:]` คืนค่าอะไรสำหรับ list เดียวกัน?",
+        q: "โค้ดนี้พิมพ์อะไร?\n\nitems = [1, 2, 3, 4, 5]\nn = 0\ndel items[-n:]\nprint(items)",
         options: [
-            "[10, 20, 30]",
-            "[50, 60, 70]",
-            "[40, 50, 60]",
-            "[60, 70]"
+            "[1, 2, 3, 4, 5]",
+            "[]",
+            "[1, 2, 3, 4]",
+            "raise IndexError"
         ],
-        answer: 1
+        answer: 1,
+        explain: "-n เมื่อ n เป็น 0 คือ 0 เฉย ๆ (integer ไม่มี negative zero) items[-0:] คือ items[0:] ทั้ง list ดังนั้น del items[-n:] จึงลบทุกอย่างทิ้ง นี่คือ footgun จริงที่เงียบ — ตรวจสอบแล้วบน Python 3.14"
     },
     {
-        q: "Slice expression ใดที่กลับลำดับ sequence?",
-        options: ["seq[0:-1]", "seq[-1:0]", "seq[::-1]", "seq[::1]"],
-        answer: 2
+        q: "โค้ดนี้พิมพ์อะไร?\n\nnums = [1, 2, 3, 4, 5]\nnums[::2] = [100]",
+        options: [
+            "[100, 2, 3, 4, 5]",
+            "[100]",
+            "raise ValueError: attempt to assign sequence of size 1 to extended slice of size 3",
+            "[100, 2, 100, 4, 100]"
+        ],
+        answer: 2,
+        explain: "nums[::2] เลือก 3 ตำแหน่ง (index 0, 2, 4) extended-slice assignment (step != 1) ต้องการให้ตัวแทนที่ assign มี element เท่ากับที่ slice เลือกไว้เป๊ะ ๆ — 1 element สำหรับ 3 ตำแหน่งจึง raise ValueError slice ธรรมดา (nums[1:3] = [...]) จะไม่มีข้อจำกัดนี้"
+    },
+    {
+        q: "`range(0, 20, 2)[2:5]` มีค่าเท่ากับอะไร?",
+        options: [
+            "[4, 6, 8]",
+            "range(4, 10, 2)",
+            "range(2, 5)",
+            "raise TypeError -- range object slice ไม่ได้"
+        ],
+        answer: 1,
+        explain: "การ slice range จะได้ range อีกตัว คำนวณแบบ lazy ไม่ใช่ list range(4, 10, 2) แทนค่าสามตัวเดียวกัน (4, 6, 8) แต่ยังเป็น range อยู่จนกว่าจะครอบด้วย list(...)"
     },
     {
         q: "`original[:]` สร้าง deep copy หรือ shallow copy?",
@@ -158,7 +365,19 @@ export const quizSlicing = [
             "ไม่มีการ copy — คืน object เดิม",
             "เกิด TypeError สำหรับ nested list"
         ],
-        answer: 1
+        answer: 1,
+        explain: "original[:] สร้าง outer list ใหม่ แต่ทุก element ข้างในยังเป็น object เดิม -- element ที่เปลี่ยนแปลงได้ที่ซ้อนอยู่ (เช่น inner list) ยังถูกแชร์อยู่ เหมือน shallow copy ทั่วไป"
+    },
+    {
+        q: "`slice` object คือ `slice(1, 10, 2)` `.indices(5)` คืนค่าอะไร และทำไม?",
+        options: [
+            "(1, 10, 2) -- ไม่เปลี่ยน เพราะ .indices() แค่สะท้อน argument ของมัน",
+            "(1, 5, 2) -- stop ถูก clamp ลงมาให้เท่ากับความยาวของ sequence",
+            "raise IndexError -- 10 เกินขอบเขตสำหรับ sequence ความยาว 5",
+            "(1, 4, 2) -- index สุดท้ายที่ valid ไม่ใช่ความยาว"
+        ],
+        answer: 1,
+        explain: ".indices(length) resolve start/stop/step ของ slice ให้เป็นค่าที่เป็นรูปธรรมใช้ได้กับ sequence ความยาวที่กำหนด โดย clamp ขอบเขตที่เกินแทนที่จะ raise ในที่นี้ stop=10 ถูก clamp เป็น 5 (ความยาว) ได้ (1, 5, 2) -- ตรงกับที่ nums[sl] จะเดินภายในเป๊ะ ๆ"
     }
 ];
 

@@ -1,0 +1,212 @@
+---
+title: 'Runtime Internals: Reading Python From the Inside'
+description: 'Why understanding the CPython interpreter — object model, memory, bytecode, and the GIL — is what lets you judge unfamiliar code instead of just running it.'
+sidebar:
+  order: 1
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+## Why a reader needs the interpreter model
+
+Every earlier module in this course taught you to *write* Python: syntax, data structures, classes, functions, typing, async. None of it required knowing how any of it actually runs. You can write a working class, a correct decorator, a `for` loop over a dict, without ever asking what object `self` actually points to, what a `for` loop compiles down to, or why two threads racing on `count += 1` can lose an update.
+
+That gap is exactly where AI-generated Python fails most often — and where a reviewer who has never looked at the machinery underneath fails to catch it. A generated snippet can look idiomatic, pass a quick read, and still leak memory through a reference cycle, corrupt a shared counter under threads, or silently do the wrong thing because of how attribute lookup actually works. None of those are syntax errors. All of them are runtime facts.
+
+This module has one job: give you the four pieces of runtime knowledge that let you look at **someone else's Python source** — not run it, not profile it, just read it — and answer four questions with confidence:
+
+1. **What is this name actually bound to, and is it shared?** (the object model — `id`, `is`, refcounts)
+2. **When does this object actually go away, and can it leak?** (memory and the garbage collector)
+3. **What does this line actually execute, and in what order?** (bytecode, frames, the interpreter loop)
+4. **Can two threads touch this at once, and what happens if they do?** (the GIL and free-threading)
+
+## From source text to running objects
+
+Every `.py` file you have written in this course has gone through the same four stages before a single line of your logic executes. This module is organized around them, in order:
+
+<Mermaid code={`flowchart LR
+  SRC["Source text\n(.py file)"] --> COMP["Compiler\n(parse + compile)"]
+  COMP --> CODE["Code object\n(co_consts, co_names,\nco_varnames, bytecode)"]
+  CODE --> LOOP["Eval loop\n(frames, value stack,\none opcode at a time)"]
+  LOOP --> OBJ["Objects\n(PyObject: refcount + type\nheap-allocated, GC-tracked)"]
+  OBJ -. mutated/read by .-> LOOP
+  LOOP -. GIL serializes access .-> THREADS["Threads"]`} title="Source to running program: the four stages this module covers" />
+
+- **`object-model.mdx`** covers the right-hand box: what a Python object actually *is* in memory, how names bind to them, and how attribute lookup decides what `obj.attr` returns.
+- **`memory-and-gc.mdx`** covers what happens to those objects over time: when refcounting alone frees them, when the cycle collector has to step in, and how they leak anyway.
+- **`bytecode-and-interpreter.mdx`** covers the middle two boxes: how source becomes a code object, how the eval loop executes it frame by frame, and how the interpreter optimizes itself as it runs.
+- **`gil-and-free-threading.mdx`** covers the dashed arrow: what serializes access to those objects when more than one thread is involved, and what changes when it doesn't.
+
+## A runnable preview: all four stages, one demo
+
+```python
+import dis
+import sys
+
+source = "y = 1 + 2\nprint(y)\n"
+code_obj = compile(source, "<demo>", "exec")
+print("co_consts:", code_obj.co_consts)
+print("co_names:", code_obj.co_names)
+
+print("--- bytecode ---")
+dis.dis(code_obj)
+
+print("--- running it ---")
+exec(code_obj)
+```
+
+Real output, `python3.14`:
+
+```text
+co_consts: (1, None)
+co_names: ('y', 'print')
+--- bytecode ---
+  0           RESUME                   0
+
+  1           LOAD_SMALL_INT           3
+              STORE_NAME               0 (y)
+
+  2           LOAD_NAME                1 (print)
+              PUSH_NULL
+              LOAD_NAME                0 (y)
+              CALL                     1
+              POP_TOP
+              LOAD_CONST               1 (None)
+              RETURN_VALUE
+
+3
+```
+
+Notice `1 + 2` never appears as `1`, `2`, and an add instruction — the compiler constant-folds it to `3` at compile time, and `3` is small enough that it gets its own dedicated `LOAD_SMALL_INT` opcode instead of a `co_consts` lookup (`co_consts` here only holds `1` — a leftover from parsing — and `None`, the implicit return of a module). That is the compiler stage. `dis.dis` shows you the code-object stage. `exec` runs it through the eval loop. The `3` it prints is a live Python object, immortal-cached (see `object-model.mdx`) the moment it is created. Four stages, one paragraph of code — the rest of this module goes deep on each.
+
+export const runtimeIntroCode = `
+import dis
+
+source = "y = 1 + 2\\nprint(y)\\n"
+code_obj = compile(source, "<demo>", "exec")
+print("co_consts:", code_obj.co_consts)
+print("co_names:", code_obj.co_names)
+print("--- bytecode ---")
+dis.dis(code_obj)
+print("--- running it ---")
+exec(code_obj)
+`.trim();
+
+<Playground code={runtimeIntroCode} />
+
+## Mental Model
+
+A running Python program is a compiler's output (a tree of code objects) being walked by one C loop, one bytecode instruction at a time, manipulating a heap of reference-counted objects. Every mysterious behavior in this course so far — why `is` sometimes lies, why a cycle doesn't free itself, why a `for` loop is faster than an equivalent `while`, why two threads doing "nothing but math" still don't get a 2x speedup — has a mechanical answer at one of these four stages. You do not need to memorize CPython's C source. You need the four load-bearing facts this module verifies, so that when you read someone else's code, you know which of the four stages to suspect.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Learning the object model explicitly | `is` vs `==`, `__slots__`, descriptor precedence stop being surprises | One more layer to learn before "just write the code" |
+| Understanding the GC and refcounting | You can spot a leaking cycle or an `lru_cache` leak before it ships | Extra vocabulary (generations, weakrefs) for a cost you rarely pay by hand |
+| Reading bytecode | You can settle "which is faster" arguments with `dis`, not guesses | `dis` output changes across Python versions — it is not a stable API |
+| Knowing the GIL mechanism | You know when threads help (I/O) and when they cannot (CPU-bound, GIL build) | Free-threaded Python is real in 3.14 but still young — tooling and libraries are catching up |
+
+## Common Misconceptions
+
+- **"I don't need to know how the interpreter works to write good Python."** You can write *working* Python without it. You cannot reliably read *someone else's* Python — especially AI-generated Python, which is fluent but unaccountable — without knowing where the four classic failure modes (identity bugs, cycles/leaks, ordering bugs, race conditions) actually come from.
+- **"CPython bytecode is a stable, documented API."** It changes every minor version — this module's `bytecode-and-interpreter.mdx` lesson shows real 3.14 opcode names (`LOAD_FAST_BORROW`, `RESUME_CHECK`) that did not exist a few versions ago. Use `dis` to *understand*, never to depend on exact opcodes in production code.
+- **"The GIL means threads are useless in Python."** It means threads are useless for *CPU-bound* work on a GIL build — I/O-bound threading has always worked, and `gil-and-free-threading.mdx` plus the async module's `gil-threads` lesson both cover exactly why.
+- **"Garbage collection means I never have to think about memory in Python."** Reference cycles, module-level caches, and `functools.lru_cache` on a bound method all leak in ordinary, idiomatic-looking Python — `memory-and-gc.mdx` reproduces all three.
+
+## Reading AI-generated code
+
+A model that generates fluent Python has no mechanism for knowing whether the code it produced will leak, race, or silently do the wrong thing at runtime — it pattern-matches on what *looks* correct. Before trusting generated code that touches shared state, caching, or long-lived objects, ask:
+
+- Does this create a reference cycle (two objects pointing at each other, or a parent holding a child that holds a callback back to the parent) with no plan for it? Reference counting alone will never free it.
+- Does this decorate a method with `@functools.lru_cache` or `@functools.cache`? The cache holds a reference to `self`, keeping every instance alive for the life of the program — `memory-and-gc.mdx` reproduces this exactly.
+- Does this share a plain variable, list, or dict across threads with a read-then-write pattern (`counter += 1`, `if key not in d: d[key] = ...`)? Multiple bytecode instructions execute between the read and the write; a thread switch in between loses an update.
+- Does a comment claim something is "atomic" or "thread-safe" without naming which single bytecode instruction (or C-level lock) makes it so?
+
+<SpotTheBug code={`import functools
+
+class ReportBuilder:
+    def __init__(self, name):
+        self.name = name
+
+    @functools.lru_cache(maxsize=None)
+    def render(self, section):
+        return f"{self.name}: {section}"
+
+for i in range(10_000):
+    builder = ReportBuilder(f"report-{i}")
+    builder.render("summary")
+`} lang="python">
+Each loop iteration creates a new `ReportBuilder` and calls its `lru_cache`-decorated `render`. `lru_cache` keys its cache on the arguments passed to the call — and for a bound method, the first argument is `self`. Every distinct `builder` instance becomes a permanent cache key, so `functools.lru_cache` holds a strong reference to every one of the 10,000 `ReportBuilder` objects for the rest of the program's life, even though nothing else in the program still needs them. `render`'s own local work (a single f-string) never benefited from caching in the first place, since `section` is different on every call anyway relative to a unique `self`. The fix, covered in `memory-and-gc.mdx`, is to never put `@lru_cache` directly on an instance method; cache a module-level or `staticmethod` function that takes only the values that actually repeat.
+</SpotTheBug>
+
+<Callout title="Four stages, one interpreter">
+Source becomes a code object (compiler), a code object is walked by the eval loop (interpreter), the eval loop manipulates reference-counted objects (object model + GC), and when more than one thread is involved, the GIL (or its absence, in a free-threaded build) decides what "at the same time" actually means. Every lesson in this module is about one of those four stages — read them in order, or jump to the one that answers the question a piece of code just raised for you.
+</Callout>
+
+export const quizRuntimeIndex = [
+  {
+    q: "What are the four stages this module's Mermaid diagram traces from a .py file to a running program?",
+    options: [
+      "Lexer, parser, linker, executable",
+      "Source text, compiler/code object, eval loop, objects",
+      "Import, compile, cache, run",
+      "Tokenize, type-check, optimize, JIT-compile",
+    ],
+    answer: 1,
+    explain: "Source text is compiled into a code object (co_consts/co_names/co_varnames + bytecode), the eval loop walks that code object frame by frame one opcode at a time, and the opcodes create and mutate heap objects -- the four boxes in the diagram, and the four lessons in this module.",
+  },
+  {
+    q: "Why does `1 + 2` show up as `LOAD_SMALL_INT 3` in the disassembly instead of loading 1 and 2 separately and adding them?",
+    options: [
+      "dis.dis always simplifies arithmetic for readability",
+      "The compiler constant-folds the expression at compile time, and 3 is small enough to get its own opcode instead of a co_consts entry",
+      "Python evaluates all arithmetic lazily at runtime, so this is a caching artifact",
+      "This only happens inside a REPL, not in a real .py file",
+    ],
+    answer: 1,
+    explain: "CPython's compiler performs constant folding, so a literal expression like 1 + 2 is computed once at compile time. LOAD_SMALL_INT is a 3.12+ opcode for common small integers that avoids a co_consts lookup entirely.",
+  },
+  {
+    q: "Which of these is something the object model (not the GC, not the interpreter loop, not the GIL) is directly responsible for explaining?",
+    options: [
+      "Why dis output differs between Python versions",
+      "Why two threads racing on a shared counter can lose updates",
+      "Why `a is b` can be True for two equal-looking small integers but False for two equal-looking large ones",
+      "Why a reference cycle needs gc.collect() instead of freeing immediately",
+    ],
+    answer: 2,
+    explain: "Identity (is) behavior comes from how objects are created and cached -- the small-int cache and string interning, both object-model topics covered in object-model.mdx. The other three options belong to the interpreter/bytecode, GIL, and GC lessons respectively.",
+  },
+  {
+    q: "```python\nimport functools\n\nclass Report:\n    def __init__(self, name):\n        self.name = name\n\n    @functools.lru_cache(maxsize=None)\n    def render(self):\n        return self.name.upper()\n```\nWhat is the practical consequence of decorating an instance method this way?",
+    options: [
+      "Nothing unusual -- lru_cache only caches the return value, not self",
+      "Every Report instance ever passed to render() is kept alive forever by the cache, since self is part of the cache key",
+      "It raises a TypeError at class definition time",
+      "The cache is automatically cleared when each Report instance is garbage collected",
+    ],
+    answer: 1,
+    explain: "functools.lru_cache keys its cache on all positional arguments, and for a bound method that includes self. The cache dict holds a strong reference to every self it has ever seen, so instances never become eligible for collection -- a real, easy-to-miss memory leak covered in memory-and-gc.mdx.",
+  },
+  {
+    q: "A comment on a shared global counter says `count += 1  # atomic, no lock needed`. Which lesson in this module would you check to verify or refute that claim?",
+    options: [
+      "object-model.mdx, because it covers refcounts",
+      "bytecode-and-interpreter.mdx, to see how many bytecode instructions count += 1 actually compiles to",
+      "memory-and-gc.mdx, because leaks are unrelated to atomicity",
+      "None of them -- this requires reading the C source",
+    ],
+    answer: 1,
+    explain: "Atomicity is a bytecode-level question: count += 1 compiles to a LOAD, a BINARY_OP, and a STORE -- multiple separate instructions the interpreter can be interrupted between. gil-and-free-threading.mdx uses exactly this dis output to show it is not atomic, but the mechanism for checking is bytecode-and-interpreter.mdx's territory.",
+  },
+];
+
+<Quiz client:visible id="runtime-internals/index" questions={quizRuntimeIndex} />
+
+<ProgressTracker client:visible id="runtime-internals/index" />

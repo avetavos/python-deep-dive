@@ -1,6 +1,6 @@
 ---
 title: Generators
-description: 'yield, generator function, lazy evaluation, generator expression และ StopIteration ใน Python'
+description: 'yield, generator function, lazy evaluation, yield from, .send(), StopIteration.value และ generator expression ใน Python'
 sidebar:
   order: 5
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## generator คืออะไร?
 
@@ -64,6 +66,164 @@ def three_words():
 # Equivalent — for loop handles next() and StopIteration for you
 for word in three_words():
     print(word)
+```
+
+## generator ใช้ได้แค่ครั้งเดียว
+
+generator **object** เป็น iterator ที่ใช้ได้ครั้งเดียว เมื่อทุก `yield` ทำงานจนจบและ function return แล้ว object นั้นจะว่างเปล่าตลอดไป การเรียก generator *function* ใหม่จะได้ generator object ใหม่ — แต่การ iterate object เดิมที่หมดแล้วเป็นครั้งที่สอง จะไม่ได้อะไรออกมาเลยแบบเงียบ ๆ โดยไม่มี error ใด ๆ:
+
+```python
+def three_words():
+    yield "Python"
+    yield "is"
+    yield "expressive"
+
+gen = three_words()
+print([w for w in gen])   # ['Python', 'is', 'expressive']
+print([w for w in gen])   # []  — same object, already exhausted, no error raised
+```
+
+สิ่งนี้ต่างจาก `list` ที่ loop ซ้ำได้กี่รอบก็ได้ ถ้า function ต้อง iterate ค่าเดียวกันมากกว่าหนึ่งครั้ง ให้ส่งเป็น `list` แทน (หรือเรียก generator function ใหม่เพื่อได้ generator สด ๆ) ไม่ใช่ generator object ที่ใช้ไปแล้ว
+
+## `yield from`: ส่งต่อไปยัง sub-generator
+
+`yield from` ส่งการควบคุมไปให้ iterable อีกตัวหนึ่ง โดยส่งต่อทุกค่าที่มันผลิตออกมาราวกับว่า generator ตัวนอกเป็นคน `yield` เอง — และมันยังประเมินค่าเป็น `return` value ของ sub-generator ด้วย:
+
+```python
+def inner():
+    yield 1
+    yield 2
+    return "inner done"
+
+def outer():
+    result = yield from inner()   # forwards 1, then 2
+    print("inner returned:", result)
+    yield 3
+
+print(list(outer()))
+# inner returned: inner done
+# [1, 2, 3]
+```
+
+`yield from` เป็นวิธีมาตรฐานในการประกอบ generator เข้าด้วยกัน — สั้นกว่าและส่งต่อ `.send()`, `.throw()` และ return value ของ sub-generator ได้ถูกต้อง ซึ่งลูป `for x in inner(): yield x` แบบเขียนเองไม่ทำให้เลยสักอย่าง
+
+## `.send()`: การสื่อสารสองทาง
+
+`yield` ไม่ใช่แค่จุดออกเท่านั้น — มันเป็น expression ที่รับค่าที่ถูกส่งเข้ามาผ่าน `.send()` ได้ด้วย การเรียก `next()` (หรือ `.send(None)`) ครั้งแรกจำเป็นต้องมีก่อนเสมอ เพื่อขับ generator ไปถึง `yield` ตัวแรก (priming) ก่อนที่จะส่งค่าจริงเข้าไปได้:
+
+```python
+def echo_upper():
+    received = None
+    while True:
+        received = yield received       # yield is an expression here
+        if received is not None:
+            received = received.upper()
+
+gen = echo_upper()
+print(next(gen))             # None — priming call, runs up to the first yield
+print(gen.send("hello"))     # HELLO
+print(gen.send("world"))     # WORLD
+```
+
+## `return` ใน generator กับ `StopIteration.value`
+
+statement `return` ภายใน generator function ไม่ได้ส่งค่ากลับแบบปกติ — มันยังคง raise `StopIteration` เหมือนเดิม แต่จะแนบค่าที่ return ไว้ที่ attribute `.value` ของ exception นั้น ลูป `for` ธรรมดาจะไม่มีวันเห็นค่านี้ (มันแค่หยุด) แต่การ iterate ด้วยมือหรือ `yield from` ดึงค่ามาได้:
+
+```python
+def summing():
+    total = 0
+    while True:
+        x = yield
+        if x is None:
+            return total
+        total += x
+
+gen = summing()
+next(gen)
+gen.send(10)
+gen.send(20)
+try:
+    gen.send(None)
+except StopIteration as e:
+    print(e.value)   # 30
+```
+
+## `.close()` และ `finally`
+
+การเรียก `.close()` บน generator จะ raise `GeneratorExit` ข้างในตรงจุดที่มันหยุดชั่วคราวอยู่ — นี่คือสิ่งที่ทำให้ block `try`/`finally` รอบ `yield` ทำงาน cleanup ได้ เหมือนกับ guarantee ที่ `with` block ให้กับ context manager เป๊ะ ๆ:
+
+```python
+def resource_gen():
+    print("acquiring resource")
+    try:
+        yield 1
+        yield 2
+    finally:
+        print("releasing resource")
+
+gen = resource_gen()
+print(next(gen))   # acquiring resource \n 1
+gen.close()         # releasing resource
+```
+
+generator ที่ถูก garbage collect ก่อนจะถูกใช้จนหมด ก็จะถูกเรียก `.close()` ให้อัตโนมัติเช่นกัน ดังนั้น block `finally` ก็ยังทำงานอยู่ — แต่การพึ่งจังหวะของ garbage collection สำหรับ cleanup นั้นเปราะบาง ให้เรียก `.close()` เอง (หรือขับ generator ผ่าน `with contextlib.closing(gen):`) เมื่อรู้ล่วงหน้าว่าจะจบก่อนกำหนด
+
+## Type hint สำหรับ generator
+
+generator ที่ใช้แค่ค่าที่ yield ออกมา annotate เป็น `Iterator[YieldType]` ได้เลย เมื่อ `.send()` หรือ return value มีความหมายด้วย `Generator[YieldType, SendType, ReturnType]` แบบเต็มสามพารามิเตอร์จะบอกชัดเจนว่าอะไรไหลไปทางไหนบ้าง:
+
+```python
+from typing import Generator, Iterator
+
+def count_up(start: int, stop: int) -> Iterator[int]:
+    current = start
+    while current <= stop:
+        yield current
+        current += 1
+
+def echo_typed() -> Generator[str, str, str]:
+    received = ""
+    while True:
+        received = yield received.upper()
+        if received == "STOP":
+            return "done"
+```
+
+`Iterator[int]` คือรูปย่อของ "yield เป็น `int`, ไม่สนใจว่าจะถูกส่งอะไรเข้ามา, ไม่สนใจ return value" — ให้ใช้แบบนี้ เว้นแต่ generator นั้นใช้ `.send()` หรือมี `return` ที่มีความหมายจริง ๆ
+
+## generator เทียบกับ list: memory
+
+generator ไม่ materialize ค่าของมันเลย — มันเก็บแค่ state ที่พอจะผลิตค่า *ถัดไป* เท่านั้น `sys.getsizeof` ทำให้ความต่างนี้เห็นเป็นรูปธรรม: ขนาดของ generator คงที่ไม่ว่าจะผลิตค่าไปกี่ตัวในที่สุด ในขณะที่ขนาดของ list โตขึ้นตามทุก element:
+
+```python
+import sys
+
+big_list = [x for x in range(100_000)]
+big_gen = (x for x in range(100_000))
+print(sys.getsizeof(big_list))   # 800984 (bytes; grows with element count)
+print(sys.getsizeof(big_gen))    # 200 (bytes; constant, regardless of range size)
+```
+
+นี่คือเหตุผลที่ `sum(x * x for x in range(10_000_000))` ไม่ต้องสร้าง list สิบล้าน element ขึ้นมาก่อนเลย — generator expression ป้อนค่าให้ `sum()` ทีละตัว
+
+## `itertools.chain` และ `itertools.islice`
+
+`itertools.islice` ตัดช่วง (slice) ของ iterable ใด ๆ ก็ได้ — รวมถึง generator ที่ไม่รู้จบ — โดยไม่ต้องเรียก `list()` กับมันก่อนเลย ซึ่งจะไม่มีวัน return `itertools.chain` iterate หลาย iterable ต่อกันราวกับเป็นตัวเดียว โดยไม่ต้องต่อ (concatenate) ให้กลายเป็น sequence ใหม่:
+
+```python
+from itertools import islice, chain
+
+def fibonacci():
+    a, b = 0, 1
+    while True:        # infinite loop — but never blocks
+        yield a
+        a, b = b, a + b
+
+first_5 = list(islice(fibonacci(), 5))
+print(first_5)   # [0, 1, 1, 2, 3]
+
+combined = list(chain([1, 2], (3, 4), range(5, 7)))
+print(combined)  # [1, 2, 3, 4, 5, 6]
 ```
 
 ## generator expression
@@ -142,6 +302,131 @@ except StopIteration:
 
 <Playground code={generatorsCode} />
 
+## เดโมเจาะลึก: `yield from`, `.send()`, `.close()` และ memory
+
+export const generatorsDepthCode = `
+import sys
+from itertools import islice, chain
+from typing import Generator, Iterator
+
+
+# --- exhausted once: second loop is empty ---
+def three_words():
+    yield "Python"
+    yield "is"
+    yield "expressive"
+
+gen = three_words()
+print("--- exhausted once ---")
+print("first pass:", [w for w in gen])
+print("second pass:", [w for w in gen])
+
+# --- yield from ---
+def inner():
+    yield 1
+    yield 2
+    return "inner done"
+
+def outer_yield_from():
+    result = yield from inner()
+    print("inner returned:", result)
+    yield 3
+
+print("\\n--- yield from ---")
+print(list(outer_yield_from()))
+
+# --- .send() ---
+def echo_upper():
+    received = None
+    while True:
+        received = yield received
+        if received is not None:
+            received = received.upper()
+
+print("\\n--- .send() ---")
+gen2 = echo_upper()
+print(next(gen2))          # prime the generator, prints None
+print(gen2.send("hello"))  # HELLO
+print(gen2.send("world"))  # WORLD
+
+# --- return value via StopIteration.value ---
+def summing():
+    total = 0
+    while True:
+        x = yield
+        if x is None:
+            return total
+        total += x
+
+print("\\n--- return + StopIteration.value ---")
+gen3 = summing()
+next(gen3)
+gen3.send(10)
+gen3.send(20)
+try:
+    gen3.send(None)
+except StopIteration as e:
+    print("StopIteration.value:", e.value)
+
+# --- .close() / finally ---
+def resource_gen():
+    print("acquiring resource")
+    try:
+        yield 1
+        yield 2
+    finally:
+        print("releasing resource")
+
+print("\\n--- .close() / finally ---")
+gen4 = resource_gen()
+print(next(gen4))
+gen4.close()
+try:
+    next(gen4)
+except StopIteration:
+    print("StopIteration after close()")
+
+# --- type hints: Iterator[int] / Generator[Y, S, R] ---
+def count_up(start: int, stop: int) -> Iterator[int]:
+    current = start
+    while current <= stop:
+        yield current
+        current += 1
+
+def echo_typed() -> Generator[str, str, str]:
+    received = ""
+    while True:
+        received = yield received.upper()
+        if received == "STOP":
+            return "done"
+
+print("\\n--- typed generators still run the same ---")
+print(list(count_up(1, 3)))
+
+# --- generator vs list memory ---
+print("\\n--- memory: list vs generator ---")
+big_list = [x for x in range(100_000)]
+big_gen = (x for x in range(100_000))
+print("list getsizeof:", sys.getsizeof(big_list))
+print("generator getsizeof:", sys.getsizeof(big_gen))
+
+# --- itertools.chain / islice ---
+print("\\n--- itertools.chain / islice ---")
+def fibonacci():
+    a, b = 0, 1
+    while True:
+        yield a
+        a, b = b, a + b
+
+first_5 = list(islice(fibonacci(), 5))
+print("first 5 fib:", first_5)
+
+combined = list(chain([1, 2], (3, 4), range(5, 7)))
+print("chained:", combined)
+`.trim();
+
+<Playground code={generatorsDepthCode} />
+
 <Callout title="generator เป็นแบบ lazy และใช้ได้ครั้งเดียว">
 สองคุณสมบัติสำคัญที่ต้องจำ:
 
@@ -159,6 +444,61 @@ print(list(gen))   # []  — already exhausted
 ```
 </Callout>
 
+## Mental Model
+
+generator คือ state machine เล็ก ๆ ที่มี state เหล่านี้เป๊ะ ๆ — เริ่มที่ `Created` แล้วทุก `next()`/`.send()` จะเลื่อนมันไปข้างหน้า จนกว่าจะถึง `Returned` (raise `StopIteration` พร้อม return value) หรือ `Closed` (ผ่าน `.close()` ที่รัน block `finally` ระหว่างทาง):
+
+export const generatorsMentalModel = `stateDiagram-v2
+  [*] --> Created: call the generator function
+  Created --> Suspended: first next()/send(None)
+  Suspended --> Suspended: next()/send(v) resumes to the next yield
+  Suspended --> Returned: function body reaches return or falls off the end
+  Suspended --> Closed: .close() raises GeneratorExit at the paused yield
+  Returned --> [*]: StopIteration(value=...)
+  Closed --> [*]: finally blocks have already run`;
+
+<Mermaid code={generatorsMentalModel} title="วงจรชีวิตของ generator: Created -> Suspended (วนที่ yield) -> Returned หรือ Closed" />
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| generator (lazy) | memory คงที่ไม่ว่าจะผลิตค่ากี่ตัว (`sys.getsizeof` อยู่ที่ ~200 byte เสมอ) | ใช้ได้ครั้งเดียว — iterate รอบสองจะไม่ได้อะไรเลยแบบเงียบ ๆ ไม่มี error |
+| list (eager) | iterate ซ้ำได้กี่รอบก็ได้ รองรับ index และ `len()` | memory โตขึ้นตามทุก element — ต้องใส่ทั้งหมดไว้ใน memory พร้อมกัน |
+| `yield from` | ส่งต่อค่า, `.send()` และ return value ของ sub-generator ได้ถูกต้อง | มีความหมายเฉพาะตอน delegate ไปให้ generator/iterable อีกตัว ไม่ใช่ loop body ธรรมดา |
+| generator สองทางด้วย `.send()` | ให้ generator รับค่าได้ ไม่ใช่แค่ผลิตค่าอย่างเดียว (สไตล์ coroutine) | ต้องมี `next()` priming ก่อนเสมอ และ flow ตามยากกว่า generator แบบผลิตอย่างเดียว |
+| `itertools.islice`/`chain` บน generator | ตัดช่วงหรือรวม sequence ที่ไม่รู้จบ/lazy โดยไม่ต้อง materialize | consume generator ต้นทาง — "ย้อนกลับ" ผ่านสิ่งที่ `islice` ดึงไปแล้วไม่ได้ |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"iterate generator ที่หมดแล้วจะ raise error"** — ข้อเท็จจริง: มันผลิตค่าเป็นศูนย์ตัวแบบเงียบ ๆ ไม่มี exception ใด ๆ — ไม่มี `StopIteration` รั่วออกมาจาก `for` loop หรือ list comprehension เลยไม่ว่ากรณีไหน จึงสังเกตพลาดได้ง่ายตอน review
+- **"`yield from inner()` เหมือนกับ `for x in inner(): yield x`"** — ข้อเท็จจริง: `yield from` ยังส่งต่อ `.send()`/`.throw()` เข้าไปใน `inner()` และประเมินค่าเป็น return value ของ `inner()` ด้วย ในขณะที่ loop แบบเขียนเองไม่ทำอย่างใดอย่างหนึ่งเลย
+- **"`return value` ของ generator คือสิ่งที่ `for` loop ได้รับตอนจบ"** — ข้อเท็จจริง: `for` loop ไม่มีวันเห็นค่านี้เลย — มันถูกแนบไว้ที่ `StopIteration.value` ดึงออกมาได้แค่ผ่านการ iterate ด้วยมือหรือ `yield from` เท่านั้น
+- **"`.close()` แค่หยุด generator โดยไม่มี cleanup"** — ข้อเท็จจริง: มัน raise `GeneratorExit` ตรงจุดที่หยุดชั่วคราวอยู่ ดังนั้น `try`/`finally` รอบมันก็ยังทำงาน เหมือนการปิด context manager เป๊ะ ๆ
+- **"generator expression ก็เหมือน list แค่เขียนด้วย `()`"** — ข้อเท็จจริง: `sys.getsizeof` แสดงว่าขนาดของ generator คงที่ (~200 byte) ไม่ว่า range จะใหญ่แค่ไหน ในขณะที่ขนาดของ list โตตามจำนวน element — generator ยังไม่ได้คำนวณหรือเก็บค่าไหนไว้เลย
+
+## อ่านโค้ดที่ AI เขียน
+
+- generator (ไม่ใช่ list) ถูก iterate มากกว่าหนึ่งครั้งหรือเปล่า — ใน loop แยกกันสองที่ หรือถูกส่งให้ function สองตัวที่ต่างก็ loop ผ่านมัน? ตัวที่บริโภคเป็นตัวที่สองจะได้อะไรกลับมาเลยแบบเงียบ ๆ
+- code delegate ไปยัง sub-generator ด้วย `for x in sub(): yield x` แบบเขียนเอง ทั้งที่ return value หรือพฤติกรรม `.send()` ของมันมีความหมายจริง ๆ หรือเปล่า? ตรงนั้นควรเป็น `yield from sub()`
+- `return <value>` ของ generator ดูเหมือนตั้งใจให้ไปถึง `for` loop หรือเปล่า? มันไปถึงแค่ `StopIteration.value` เท่านั้น — `for` loop ธรรมดาจะทิ้งมันไปแบบเงียบ ๆ
+- resource (file, lock, connection) ถูกเปิดก่อน `yield` โดยไม่มี `try`/`finally` หรือเปล่า? ถ้า generator ถูกทิ้งกลางทาง `.close()` (หรือ garbage collection) ก็ยัง raise `GeneratorExit` ที่ `yield` นั้น และถ้าไม่มี `finally` resource จะไม่ถูกปล่อยเลย
+- `list(...)` ถูกเรียกกับ generator ที่ไม่รู้จบ หรือที่ในทางปฏิบัติไม่มีขอบเขตบนหรือเปล่า? ควรถูกห่อด้วย `itertools.islice(..., n)` ก่อน
+
+<SpotTheBug code={`def read_lines(path):
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            yield line.strip()
+
+
+def process(path):
+    lines = read_lines(path)
+    total_lines = sum(1 for _ in lines)
+    non_empty = [line for line in lines if line]
+    print(f"{path}: {total_lines} lines, {len(non_empty)} non-empty")`}>
+`lines` เป็น generator และ `sum(1 for _ in lines)` consume มันจนหมดขณะนับ พอถึงจังหวะที่ list comprehension `[line for line in lines if line]` รัน `lines` ก็หมดสภาพไปแล้ว ดังนั้น `non_empty` จึงเป็น `[]` เสมอไม่ว่าไฟล์จะมีเนื้อหาอะไร — ไม่มี exception ใด ๆ ถูก raise เลย bug นี้จึงหลุดออกไปแบบเงียบ ๆ และโผล่มาเป็นแค่ตัวเลขนับที่ผิด ยืนยันแล้วบน Python 3.14: การพิมพ์ `list(lines)` เป็นครั้งที่สองหลังเรียก `sum(...)` จะได้ `[]`. ทางแก้คือ iterate generator แค่ครั้งเดียว — อ่านมันเข้า `list` ก่อน (`lines = list(read_lines(path))`) ถ้าต้องสแกนมากกว่าหนึ่งครั้ง หรือคำนวณทั้ง `total_lines` และ `non_empty` ใน pass เดียวผ่าน generator นั้น
+</SpotTheBug>
+
 export const quizGenerators = [
   {
     q: "เกิดอะไรขึ้นเมื่อ Python เจอ `yield` ภายใน function?",
@@ -168,32 +508,63 @@ export const quizGenerators = [
       "function จะหยุดชั่วคราว ส่งค่าออกมา แล้วทำงานต่อในการเรียก next() ครั้งถัดไป",
       "function จะทำงานในอีก thread แยกต่างหาก"
     ],
-    answer: 2
+    answer: 2,
+    explain: "yield หยุดการทำงานของ function ตรงจุดนั้นเป๊ะ ๆ ส่งค่าให้ผู้เรียก แล้วแช่แข็ง state ภายในทั้งหมด การเรียก next() (หรือ .send()) ครั้งถัดไปจะทำงานต่อทันทีหลังจาก yield นั้น"
   },
   {
-    q: "exception ใดที่ส่งสัญญาณว่า generator ไม่มีค่าให้ผลิตแล้ว?",
-    options: ["GeneratorExit", "StopIteration", "IndexError", "RuntimeError"],
-    answer: 1
-  },
-  {
-    q: "ข้อได้เปรียบหลักของ generator expression เหนือ list comprehension คืออะไร?",
+    q: "โค้ดนี้พิมพ์อะไร?\n\ndef words():\n    yield \"a\"\n    yield \"b\"\n\ngen = words()\nfirst = list(gen)\nsecond = list(gen)\nprint(first, second)",
     options: [
-      "generator expression ทำงานเร็วกว่าในทุกกรณี",
-      "generator expression ผลิตค่าแบบ lazy จึงใช้ memory น้อยกว่ามาก",
-      "generator expression รองรับ syntax ของ Python ได้มากกว่า",
-      "generator expression สามารถ iterate ได้หลายครั้ง"
+      "['a', 'b'] ['a', 'b']",
+      "['a', 'b'] []",
+      "[] ['a', 'b']",
+      "raise StopIteration ตอน list(gen) ครั้งที่สอง"
     ],
-    answer: 1
+    answer: 1,
+    explain: "gen เป็น iterator ที่ใช้ได้ครั้งเดียว list(gen) ครั้งแรกดึงมันจนหมด ทำให้ generator รันจนจบ list(gen) ครั้งที่สอง iterate object เดิมที่หมดสภาพแล้ว จึงผลิตค่าออกมาแบบเงียบ ๆ ไม่มีอะไรเลย และไม่มี exception ถูก raise ด้วย"
   },
   {
-    q: "หลังจาก iterate generator จนหมดแล้ว การ iterate ซ้ำอีกครั้งจะให้ผลลัพธ์อย่างไร?",
+    q: "โค้ดนี้พิมพ์อะไร?\n\ndef gen():\n    x = yield 1\n    y = yield x\n    return y\n\ng = gen()\nprint(next(g))\nprint(g.send(\"A\"))\ntry:\n    g.send(\"B\")\nexcept StopIteration as e:\n    print(e.value)",
     options: [
-      "จะเริ่มต้นใหม่จากจุดเริ่มต้น",
-      "จะ raise RuntimeError",
-      "จะไม่ให้ค่าออกมาเลย เพราะ generator ยังคงหมดอยู่",
-      "จะวนซ้ำค่าสุดท้ายไปเรื่อย ๆ ไม่รู้จบ"
+      "1, A, B",
+      "1, None, B",
+      "1, A, None",
+      "TypeError ตอน send() ครั้งแรก"
     ],
-    answer: 2
+    answer: 0,
+    explain: "next(g) รันไปถึง yield ตัวแรก พิมพ์ 1 g.send(\"A\") ทำงานต่อโดย x=\"A\" รันไปถึง yield x ตัวที่สอง พิมพ์ \"A\" g.send(\"B\") ทำงานต่อโดย y=\"B\" แล้วเจอ return y ซึ่ง raise StopIteration ที่มี .value เป็น \"B\""
+  },
+  {
+    q: "ทำไม `yield from inner()` ถึงเป็นที่นิยมมากกว่า `for x in inner(): yield x` โดยทั่วไป?",
+    options: [
+      "มันรันเร็วกว่าอย่างชัดเจนในทุกกรณี",
+      "มันยังส่งต่อ .send()/.throw() เข้าไปใน inner() และประเมินค่าเป็น return value ของ inner() ด้วย ซึ่ง loop แบบเขียนเองไม่ทำ",
+      "loop แบบเขียนเองเป็น SyntaxError ใน Python 3.14",
+      "yield from ใช้ได้แค่กับ generator ที่ไม่รู้จบเท่านั้น"
+    ],
+    answer: 1,
+    explain: "for loop แบบเขียนเองส่งต่อแค่ค่าที่ yield ออกมาเท่านั้น yield from ยังส่งต่อค่าที่ผ่าน .send() และ exception ที่ผ่าน .throw() เข้าไปยัง sub-generator ด้วย และ expression yield from เองก็ประเมินค่าเป็น return value ของ sub-generator ซึ่ง loop แบบเขียนเองไม่มีให้เลย"
+  },
+  {
+    q: "generator หนึ่งมี block `try: ... yield ... finally: cleanup()` ถ้า generator ถูก garbage collect ก่อนจะถูก iterate จนจบ `cleanup()` จะเป็นอย่างไร?",
+    options: [
+      "ไม่มีวันทำงาน — block finally จะถูกข้ามเมื่อ generator ถูกทิ้ง",
+      "Python raise GeneratorExit ที่จุด yield ที่หยุดชั่วคราวอยู่ (ผ่าน .close() แบบ implicit) ดังนั้น finally ก็ยังทำงาน",
+      "จะทำงานก็ต่อเมื่อ generator ถูก iterate ด้วย for loop เท่านั้น ไม่ใช่ด้วยมือ",
+      "จะ raise ResourceWarning แทนที่จะรัน cleanup()"
+    ],
+    answer: 1,
+    explain: "garbage collection จะเรียก .close() บน generator ที่ถูกทิ้ง ซึ่ง raise GeneratorExit ตรงจุดที่มันหยุดชั่วคราวอยู่พอดี สิ่งนี้ unwind ผ่าน try/finally รอบ yield ดังนั้น cleanup() ก็ยังทำงาน — guarantee เดียวกับที่การเรียก .close() เองให้"
+  },
+  {
+    q: "`sys.getsizeof` แสดงอะไรเมื่อเทียบ `[x for x in range(1_000_000)]` กับ `(x for x in range(1_000_000))`?",
+    options: [
+      "ขนาดเท่ากันทั้งคู่ เพราะสุดท้ายทั้งสองก็ visit จำนวน element เท่ากัน",
+      "ขนาดของ list โตตามจำนวน element ส่วนขนาดของ generator คงที่โดยประมาณไม่ว่า range จะใหญ่แค่ไหน",
+      "generator มีขนาดใหญ่กว่าเสมอ เพราะเก็บ state พิเศษไว้สำหรับ lazy evaluation",
+      "sys.getsizeof วัดขนาดของ generator object ไม่ได้"
+    ],
+    answer: 1,
+    explain: "list comprehension สร้าง element ทั้งล้านตัวขึ้นมาก่อนเลย ขนาดของมันจึงโตตามจำนวน element generator expression เก็บแค่ state ที่พอจะผลิตค่าถัดไปเท่านั้น ขนาดของมัน (ประมาณ 200 byte) จึงคงที่ไม่ว่า range จะใหญ่แค่ไหน"
   }
 ];
 

@@ -1,0 +1,402 @@
+---
+title: Bytecode and the Interpreter
+description: 'Code object, dis, frame กับ value stack, LEGB ใน bytecode, specializing adaptive interpreter, JIT ทดลองใน 3.14, .pyc caching และระบบ import'
+sidebar:
+  order: 4
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+## จาก source ไปเป็น code object
+
+`compile(source, filename, mode)` เปลี่ยนข้อความ source ของ Python ให้เป็น **code object** — ยังไม่ใช่สิ่งที่รันได้ทันที แค่คำอธิบายว่าจะรันอะไร: ลำดับของ bytecode instruction บวกกับตารางที่ instruction เหล่านั้นอ้างถึง (`co_consts` สำหรับค่าคงที่ literal, `co_names` สำหรับชื่อ global/attribute, `co_varnames` สำหรับชื่อ local variable)
+
+```python
+src = "x = 1\ny = x + 2\nprint(y)\n"
+code = compile(src, "<demo>", "exec")
+print("co_consts:", code.co_consts)
+print("co_names:", code.co_names)
+
+
+def scoped(a, b):
+    total = a + b
+    return total
+
+
+print("function co_varnames:", scoped.__code__.co_varnames)
+print("function co_consts:", scoped.__code__.co_consts)
+```
+
+Output จริง จาก `python3.14`:
+
+```text
+co_consts: (1, None)
+co_names: ('x', 'y', 'print')
+function co_varnames: ('a', 'b', 'total')
+function co_consts: (None,)
+```
+
+ระดับ module ชื่อ (`x`, `y`, `print`) อยู่ใน `co_names` เพราะถูกหาผ่าน dict (globals) ในฟังก์ชัน `a`, `b`, และ `total` อยู่ใน `co_varnames` แทน — slot ที่ index ตายตัวใน frame ไม่ใช่การหาใน dict ซึ่งเป็นส่วนใหญ่ของเหตุผลที่การเข้าถึง local variable เร็วกว่า global
+
+## `dis.dis` — อ่าน bytecode
+
+```python
+def add(a, b):
+    return a + b
+
+
+import dis
+dis.dis(add)
+```
+
+Output จริง จาก `python3.14`:
+
+```text
+  1           RESUME                   0
+
+  2           LOAD_FAST_BORROW_LOAD_FAST_BORROW 1 (a, b)
+              BINARY_OP                0 (+)
+              RETURN_VALUE
+```
+
+มีสองอย่างที่ควรสังเกตถ้าคุณเคยดู `dis` output ครั้งสุดท้ายบน Python เวอร์ชันเก่ากว่า: `RESUME` (เพิ่มใน 3.11 เป็น no-op ที่ใช้สำหรับ tracing/เช็ค signal ตอนเข้าฟังก์ชัน) และ `LOAD_FAST_BORROW_LOAD_FAST_BORROW` — **superinstruction** ตัวเดียวที่โหลดทั้ง `a` และ `b` ใน opcode เดียวแทนที่จะเป็น `LOAD_FAST` แยกกันสองครั้ง "Borrow" ตรงนี้แปลว่า interpreter ใช้ reference โดยไม่ increment refcount ตลอดช่วงของ operation นั้น หลีกเลี่ยง overhead ของ refcounting ไปเลยสำหรับค่าที่มันรู้ว่ายังมีชีวิตอยู่แน่ ๆ — เป็น optimization ตั้งแต่ 3.12 เป็นต้นมา `dis` output แบบนี้ไม่ใช่ส่วนหนึ่งของ API ที่เสถียรเลย ชื่อ opcode และแม้แต่จำนวน opcode ที่บรรทัดหนึ่งคอมไพล์ไปเปลี่ยนไปในแต่ละ minor version ใช้ `dis` เพื่อเข้าใจ อย่าใช้ pattern-match กับมันในโค้ด production
+
+## Frame, value stack และ LEGB ใน bytecode
+
+การเรียกฟังก์ชันทุกครั้งได้ **frame** — value stack ที่ปรับขนาดได้ (ที่ operand ถูก push ก่อนทำ operation แล้ว pop เป็นผลลัพธ์) บวกกับพื้นที่ของตัวเองสำหรับ local variable การ resolve ชื่อแบบ LEGB (Local, Enclosing, Global, Built-in) ไม่ใช่การค้นหาตอนรันจริงผ่าน scope ที่ซ้อนกัน — compiler ตัดสินใจไว้แล้วต่อชื่อว่าจะปล่อย opcode ตัวไหน:
+
+```python
+g = 10
+
+
+def legb_demo():
+    local = 1
+
+    def inner():
+        nonlocal_target = local  # LOAD_DEREF: a closure variable from an enclosing scope
+        return nonlocal_target + g  # LOAD_GLOBAL: a module global
+
+    return inner()
+
+
+import dis
+dis.dis(legb_demo.__code__.co_consts[1])  # disassemble inner() specifically
+```
+
+Output จริง จาก `python3.14` (disassembly ของฟังก์ชัน inner):
+
+```text
+  --           COPY_FREE_VARS           1
+
+  7            RESUME                   0
+
+  8            LOAD_DEREF               1 (local)
+               STORE_FAST               0 (nonlocal_target)
+
+  9            LOAD_FAST_BORROW         0 (nonlocal_target)
+               LOAD_GLOBAL              0 (g)
+               BINARY_OP                0 (+)
+               RETURN_VALUE
+```
+
+`LOAD_DEREF` ดึง `local` จาก **cell object** ที่แชร์กับ frame ของ enclosing scope (นี่คือสิ่งที่ทำให้ closure ทำงานได้ — frame ของ `outer` หายไปแล้ว แต่ cell ที่มันสร้างยังอยู่ตราบใดที่ `inner` ยังอ้างถึงมัน) `LOAD_GLOBAL` หา `g` ใน global namespace ของ module ไม่ใช่ local frame `COPY_FREE_VARS` ตอนเข้าฟังก์ชัน copy cell ของ closure เข้า frame ใหม่ นี่คือ LEGB ที่เป็นรูปธรรม: compiler รู้อยู่แล้วจากการวิเคราะห์ static ของ source ว่าชื่อแต่ละตัวใน 3 กลยุทธ์การหาแบบนี้ต้องการอะไร — ไม่มี loop "หา local ก่อน แล้วค่อย enclosing แล้วค่อย global" แบบทั่วไปตอนรันจริงเลย
+
+## Specializing adaptive interpreter (PEP 659)
+
+ตั้งแต่ Python 3.11 interpreter เขียน bytecode ของฟังก์ชันใหม่ในที่เดิมหลังจากถูกเรียกมากพอ แทนที่ opcode ทั่วไปด้วย opcode เฉพาะที่ปรับให้เข้ากับ type จริงที่เห็นที่ call site นั้น:
+
+```python
+def hot(a, b):
+    return a + b
+
+
+import dis
+print("--- cold ---")
+dis.dis(hot, adaptive=True)
+for _ in range(200):
+    hot(1, 2)
+print("--- warm, after 200 calls ---")
+dis.dis(hot, adaptive=True)
+```
+
+Output จริง จาก `python3.14`:
+
+```text
+--- cold ---
+ 50           RESUME                   0
+
+ 51           LOAD_FAST_BORROW_LOAD_FAST_BORROW 1 (a, b)
+              BINARY_OP                0 (+)
+              RETURN_VALUE
+--- warm, after 200 calls ---
+ 50           RESUME_CHECK             0
+
+ 51           LOAD_FAST_BORROW_LOAD_FAST_BORROW 1 (a, b)
+              BINARY_OP_ADD_INT        0 (+)
+              RETURN_VALUE
+```
+
+หลังจากเรียก 200 ครั้งด้วย argument เป็น `int` ทั้งคู่ `BINARY_OP` ทั่วไปกลายเป็น `BINARY_OP_ADD_INT` เฉพาะทาง — เวอร์ชันที่ข้าม dispatch แบบทั่วไป (เช็ค type ของ operand ทั้งคู่ หา `__add__` เช็คว่าเป็น `NotImplemented` ไหม อาจลอง `__radd__`) แล้วกระโดดตรงไปบวก integer เลย และย้อนกลับไปใช้ path ทั่วไปอัตโนมัติถ้ามีการเรียกด้วย argument ที่ไม่ใช่ `int` เข้ามา `RESUME` ก็กลายเป็น `RESUME_CHECK` เช่นกัน ทั้งหมดนี้ไม่เปลี่ยนสิ่งที่ฟังก์ชันคืนเลย — มันเป็น optimization ภายในล้วน ๆ มองไม่เห็นเลยนอกจากจะดูด้วย `dis(..., adaptive=True)`
+
+## JIT ทดลอง — สถานะบน build นี้
+
+Python 3.13 เริ่มมี just-in-time compiler แบบทดลอง; binary release ทางการของ 3.14 สำหรับ Windows และ macOS มีมันติดตั้งมาด้วย แต่มัน **เป็น opt-in ไม่เปิดโดยดีฟอลต์**:
+
+```python
+import sys
+
+print("JIT support compiled in:", sys._jit.is_available())
+print("JIT enabled for this process:", sys._jit.is_enabled())
+```
+
+Output จริง จาก `python3.14.7` (Homebrew build, Apple Silicon):
+
+```text
+JIT support compiled in: True
+JIT enabled for this process: False
+```
+
+`sys._jit.is_available()` รายงานว่า *interpreter build เจาะจงตัวนี้* ถูก compile มาพร้อม JIT support หรือเปล่า — `True` ตรงนี้ `sys._jit.is_enabled()` รายงานว่ามันเปิดใช้งานจริงสำหรับ process ที่กำลังรันอยู่หรือเปล่า — `False` โดยดีฟอลต์ ยืนยันข้างบน และการตั้ง `PYTHON_JIT=1` ใน environment ก่อนสตาร์ท interpreter Homebrew ตัวนี้เจาะจง **ไม่** เปลี่ยนผลลัพธ์นั้นตอนที่ทดสอบตรง ๆ อย่าเอา "JIT support compiled in" ไปตีความว่า "โค้ดของฉันถูก JIT-compile อยู่" เช็ค `is_enabled()` (และ `sys._jit.is_active()` ข้างใน frame ที่ hot) บน interpreter ของคุณเองก่อนอ้างเรื่อง performance ที่ขึ้นกับมัน
+
+## ไฟล์ `.pyc`, `__pycache__` และ `PYTHONDONTWRITEBYTECODE`
+
+การ import module คอมไพล์ source ของมันเป็น bytecode แล้ว cache รูปแบบที่คอมไพล์แล้วนั้นลงดิสก์ เพื่อให้การ import ครั้งต่อไปข้ามการคอมไพล์ใหม่ได้:
+
+```python
+# mymod.py contains: VALUE = 1
+import mymod
+```
+
+```text
+$ python3.14 -c "import mymod" && ls __pycache__
+mymod.cpython-314.pyc
+
+$ rm -rf __pycache__ && PYTHONDONTWRITEBYTECODE=1 python3.14 -c "import mymod" && ls __pycache__
+ls: __pycache__: No such file or directory
+```
+
+ชื่อไฟล์ cache เข้ารหัสเวอร์ชัน interpreter ไว้ด้วย (`cpython-314`) เพราะ bytecode ไม่ portable ข้าม major/minor version `PYTHONDONTWRITEBYTECODE=1` (หรือ `python3.14 -B`) ระงับการเขียน cache ไปเลย — มีประโยชน์สำหรับ filesystem แบบอ่านอย่างเดียวหรือ container ที่ไม่อยากมีไฟล์ `.pyc` เกะกะ แลกกับการต้องคอมไพล์จาก source ใหม่ทุกครั้งที่รัน
+
+## ระบบ import: `sys.modules`, `sys.path` และ circular import จริง
+
+`import` เช็ค `sys.modules` ก่อน (cache ของทุก module ที่เคย import ไปแล้วใน process นี้); ถ้าไม่มีก็ค้นหาใน `sys.path` เพื่อหา source แล้วรัน top-level code ของ module นั้นครั้งเดียวเป๊ะ ๆ และ *ลงทะเบียน module object ใน `sys.modules` ก่อนที่การรันนั้นจะจบ* — ซึ่งเป็นสิ่งที่ทำให้ circular import พังในรูปแบบที่เจาะจงและ reproduce ได้:
+
+```python
+# cir_a.py
+from cir_b import b_func  # cir_b is imported before a_func exists below
+
+def a_func():
+    return "a"
+```
+
+```python
+# cir_b.py
+from cir_a import a_func  # cir_a is only half-executed at this point
+
+def b_func():
+    return a_func()
+```
+
+```text
+$ python3.14 -c "import cir_a"
+ImportError: cannot import name 'a_func' from 'cir_a' (consider renaming '/path/to/cir_a.py' if it has the same name as a library you intended to import)
+```
+
+ลำดับที่เกิดขึ้น: import `cir_a` เริ่มรันมันแล้วเจอ `from cir_b import b_func`; สิ่งนั้นเริ่มรัน `cir_b` ซึ่งเจอ `from cir_a import a_func` — แต่ `cir_a` อยู่ใน `sys.modules` แล้ว (ลงทะเบียนตั้งแต่วินาทีที่มันเริ่มรัน ก่อนที่ `a_func` จะถูกประกาศด้วยซ้ำ) Python เลยไม่รันมันซ้ำ มันแค่หา `a_func` บน module object ที่รันไปครึ่งเดียวแล้วไม่เจอ วิธีแก้เกือบทุกครั้งคือย้าย import เข้าไปในฟังก์ชันที่ต้องการมันจริง ๆ (เลื่อนออกไปให้พ้น top-level execution ของทั้งสอง module) หรือจัดโครงสร้างใหม่ให้ module หนึ่งไม่ต้องการชื่อจากอีก module ตอน import time
+
+`importlib.reload` รัน top-level code ของ module ใหม่บน module object *เดิม* ทำให้เห็นการเปลี่ยนแปลงของ source โดยไม่ต้อง restart interpreter:
+
+```python
+import importlib
+import time
+import mymod2  # mymod2.py currently has: VALUE = 1
+
+print("before:", mymod2.VALUE)
+time.sleep(0.3)
+with open("mymod2.py", "w") as f:
+    f.write("VALUE = 99\n")
+importlib.reload(mymod2)
+print("after: ", mymod2.VALUE)
+```
+
+Output จริง จาก `python3.14`:
+
+```text
+before: 1
+after:  99
+```
+
+## Demo ที่รันได้เต็มรูปแบบ
+
+export const bytecodeCode = `
+import dis
+
+print("=== compile -> code object ===")
+src = "x = 1\\ny = x + 2\\nprint(y)\\n"
+code = compile(src, "<demo>", "exec")
+print("co_consts:", code.co_consts)
+print("co_names:", code.co_names)
+
+
+def scoped(a, b):
+    total = a + b
+    return total
+
+
+print("function co_varnames:", scoped.__code__.co_varnames)
+
+print("=== dis.dis of a simple function ===")
+
+
+def add(a, b):
+    return a + b
+
+
+dis.dis(add)
+
+print("=== LEGB in bytecode ===")
+g = 10
+
+
+def legb_demo():
+    local = 1
+
+    def inner():
+        nonlocal_target = local
+        return nonlocal_target + g
+
+    return inner()
+
+
+print("legb_demo() ->", legb_demo())
+dis.dis(legb_demo.__code__.co_consts[1])
+
+print("=== specializing adaptive interpreter ===")
+
+
+def hot(a, b):
+    return a + b
+
+
+print("--- cold ---")
+dis.dis(hot, adaptive=True)
+for _ in range(200):
+    hot(1, 2)
+print("--- warm, after 200 calls ---")
+dis.dis(hot, adaptive=True)
+
+print("=== import system: sys.modules and sys.path ===")
+import sys
+
+print("'sys' already in sys.modules:", "sys" in sys.modules)
+print("'dis' already in sys.modules:", "dis" in sys.modules)
+`.trim();
+
+<Playground code={bytecodeCode} />
+
+<Callout title="dis เป็นหน้าต่าง debug ไม่ใช่ API">
+CPython bytecode เปลี่ยนทุก minor release มาหลายปีแล้ว (superinstruction กับ RESUME ใน 3.11, LOAD_FAST_BORROW กับ RESUME_CHECK ใน 3.12+, ชื่อ opcode ที่แสดงในบทนี้ที่ยังไม่มีมาก่อนเมื่อไม่กี่เวอร์ชันที่แล้ว) ใช้ `dis.dis` เพื่อตอบว่า "บรรทัดนี้ทำอะไรจริง ๆ" อย่าใช้เขียนโค้ด (หรือ tooling) ที่พึ่งพา opcode sequence เฉพาะให้เสถียรข้าม Python เวอร์ชัน
+</Callout>
+
+## Mental Model
+
+ไฟล์ `.py` กลายเป็นต้นไม้ของ **code object** (หนึ่งตัวต่อ module, ฟังก์ชัน, และ class body) ตอน compile time แต่ละตัวเป็นแค่ข้อมูล: list ของ bytecode instruction แบบเรียบ บวกกับตาราง lookup (`co_consts`, `co_names`, `co_varnames`) การรันโปรแกรมหมายถึง eval loop หยิบ code object หนึ่งตัว สร้าง **frame** ให้มัน (value stack บวก slot ของ local variable) แล้วเดินผ่าน instruction ทีละตัว push และ pop stack จนกว่า `RETURN_VALUE` หรือ exception ที่ไม่ถูกจัดการจะจบ frame นั้น แต่ interpreter ไม่ได้หยุดนิ่ง — มันดูว่า opcode ตัวไหนรันกับ type อะไรจริง ๆ แล้วเขียน hot code path ใหม่ในที่เดิมเพื่อข้าม dispatch แบบทั่วไป (`BINARY_OP` → `BINARY_OP_ADD_INT`) ไม่มีการวิเคราะห์อันไหนต้องอ่าน C สักบรรทัดเลย — `dis`, `compile`, และ attribute ของ code object เองเปิดเผยทั้งหมดนี้จาก Python ตรง ๆ
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| คอมไพล์เป็น code object ก่อน | code object เดียวกันรันได้ล้านครั้งโดยไม่ต้อง parse ใหม่; ตรวจสอบได้ผ่าน `co_consts`/`co_names`/ฯลฯ | เพิ่มขั้นตอนระหว่าง source กับการรัน; syntax error โผล่ตอน compile time ไม่เสมอไปตรงจุดที่คาดสำหรับโค้ดที่ bind ช้า (`exec`, `eval`) |
+| Specializing adaptive interpreter | ได้ speedup จริงสำหรับ hot loop ที่ type เดียว โดยไม่ต้องแก้โค้ดเลย | มี warm-up cost ก่อนที่ specialization จะทำงาน; `dis` output ต่างกันก่อน/หลัง warm-up ทำให้คนที่เทียบ "bytecode" โดยไม่สังเกตว่าฟังก์ชันรันไปแล้วหรือยังสับสนได้ |
+| JIT ทดลอง | อาจได้ speedup เพิ่มเติมทับ specialization เป็น opt-in | ปิดโดยดีฟอลต์แม้บน build ที่รองรับ; ยังใหม่มากพอที่ "Python ของฉันมี JIT" มักเป็นเท็จเปล่า ๆ สำหรับ interpreter หนึ่ง ๆ |
+| `.pyc` caching | ข้ามการคอมไพล์ใหม่ทุกครั้งที่รัน | cache ที่ค้างหลังย้ายไฟล์ข้าม environment เป็นแหล่งความสับสนจริง (แม้จะพบไม่บ่อย); ปิดได้ผ่าน `PYTHONDONTWRITEBYTECODE` ถ้าไม่ต้องการ |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"comprehension เร็วกว่าเพราะรันใน C ไม่ใช่ bytecode"** มันรันผ่าน eval loop ตัวเดียวกันกับทุกอย่างเป๊ะ ๆ — เหตุผลจริงคือ `LIST_APPEND` ถูกใช้ตรง ๆ แทนการหา attribute `.append` แล้วเรียก บวกกับ (ตั้งแต่ 3.12, PEP 709) comprehension ถูก inline เข้า frame ที่ล้อมรอบแทนที่จะสร้าง function call แยก
+- **"`dis` output เป็น Python API ที่เสถียรพึ่งพาได้ในสคริปต์"** มันเปลี่ยนทุก minor version บางทีเปลี่ยนแบบชัดเจนมาก (ดู `LOAD_FAST_BORROW_LOAD_FAST_BORROW` ที่ยังไม่มีก่อนงาน superinstruction ยุค 3.12) ใช้มันเพื่อสืบสวน ไม่ใช่เป็น dependency
+- **"Python 3.14 ของฉันมี JIT โค้ดของฉันเลยถูก JIT-compile"** `sys._jit.is_available()` (compile มาแล้ว) กับ `sys._jit.is_enabled()` (เปิดใช้งานจริงสำหรับ process นี้) เป็นคำถามคนละข้อ ยืนยันข้างบนแล้วว่าให้คำตอบต่างกันบน build จริงปัจจุบัน
+- **"circular import พังด้วย error ที่คลุมเครือไม่มีประโยชน์เสมอ"** `ImportError` จริงที่ reproduce ตรงนี้ระบุ attribute ที่หายไปเป๊ะ ๆ และยังแนะนำให้เช็ค name collision กับ package ภายนอกด้วยซ้ำ — เป็นข้อมูลที่ใช้งานได้จริง เมื่อรู้ว่า module ที่ initialize ไปครึ่งเดียวใน `sys.modules` คือกลไกเบื้องหลัง
+- **"`importlib.reload` restart module จากศูนย์ ปล่อย state เก่าทั้งหมด"** มันรัน top-level code ของ module ใหม่บน module object *เดิม* — ชื่อระดับ module เก่าที่โค้ดใหม่ไม่ได้ assign ใหม่จะไม่ถูกแตะเลย และ module อื่นที่เคยทำ `from mymod import VALUE` ไปแล้วก็ยังถือสำเนาเก่าของ `VALUE` ของตัวเอง ไม่ได้รับผลจาก reload เลย
+
+## อ่านโค้ดที่ AI เขียน
+
+- สคริปต์หรือ library พึ่งพา `dis` opcode เฉพาะตัวว่าต้องมีอยู่ (เช่น เช็ค bytecode ที่ generate มาว่ามี instruction ตัวหนึ่งเป็นส่วนหนึ่งของ "safety check") หรือเปล่า? check แบบนี้อาจหยุดทำงานแบบเงียบ ๆ หรือเริ่ม fail ได้ในแค่ Python patch release ถัดไป
+- import ที่หัว module สร้าง circular dependency กับอีก module ใน package เดียวกันจริง ๆ หรือเปล่า? โครงสร้าง module ที่ generate มามัก "บังเอิญทำงานได้" จนกว่าจะมีใครเพิ่ม cross-import อีกเส้น จุดนั้นมันจะพังด้วย `ImportError` แบบที่แสดงในบทนี้
+- benchmark หรือคำกล่าวอ้างเรื่อง performance ใน comment สมมติว่ามี JIT compilation ("เร็วเพราะ JIT") โดยไม่เคยเรียก `sys._jit.is_enabled()` เพื่อยืนยันว่ามันใช้ได้กับ interpreter ที่รันโค้ดจริงหรือเปล่า?
+- `importlib.reload` ถูกใช้เพื่อ "รับค่า config ที่เปลี่ยน" ในแบบที่สมมติว่า state ทั้งหมด reset ทั้งที่ reference เก่าที่อื่นในโปรแกรมยังถือค่าเก่าค้างอยู่หรือเปล่า?
+
+<SpotTheBug code={`# settings.py
+from app import get_config  # app.py imports settings at module level too
+
+DEFAULT_TIMEOUT = get_config("timeout", 30)
+`} lang="python">
+ถ้า `app.py` มี `import settings` (หรือ `from settings import DEFAULT_TIMEOUT`) อยู่ที่ top level ของมันเองด้วย นี่คือ circular import: module ไหนก็ตามที่ถูก import ก่อนจะลงทะเบียนตัวเองใน `sys.modules` ก่อนที่ top-level execution ของตัวเองจะจบ ดังนั้นบรรทัด `from ... import name` ของ *อีก* module จะรันบน module object ที่สร้างไปครึ่งเดียว ขึ้นอยู่กับว่าไฟล์ไหนถูก entry point import ก่อน มันอาจทำงานได้โดยบังเอิญ (ถ้าชื่อที่ต้องการถูกประกาศไว้ก่อนบรรทัด circular import แล้ว) หรือ raise `ImportError: cannot import name ... from partially initialized module` ตรงเป๊ะตามที่ reproduce ในบทนี้ด้วย `cir_a`/`cir_b` วิธีแก้คือตัดวงจรนั้นออก: ย้าย import ตัวใดตัวหนึ่งจากสองตัวเข้าไปในฟังก์ชันที่ต้องการมันจริง ๆ หรือแยกส่วนที่แชร์กัน (ตรงนี้คือ `get_config`) ออกเป็น module ที่สามที่ทั้ง `settings.py` และ `app.py` ไม่ต้อง import จากกันและกันเลย
+</SpotTheBug>
+
+export const quizBytecode = [
+  {
+    q: "```python\ndef f():\n    x = 1\n    return x\n```\nชื่อ `x` อยู่ที่ไหนใน code object ที่คอมไพล์แล้ว และทำไมมันถึงมีผลต่อความเร็ว?",
+    options: [
+      "In co_names, looked up via a dict, same as a global",
+      "In co_varnames, as a fixed-index slot in the function's frame -- no dict lookup needed",
+      "Nowhere -- x is optimized away entirely",
+      "In co_consts, alongside literal values",
+    ],
+    answer: 1,
+    explain: "local variable ในฟังก์ชันอยู่ใน co_varnames และถูกเข้าถึงผ่าน fixed integer index ใน frame (LOAD_FAST/STORE_FAST) ไม่ใช่ dict lookup ชื่อระดับ module และ global อยู่ใน co_names และต้องการ dict lookup จริง ๆ (LOAD_GLOBAL/LOAD_NAME) -- นี่เป็นส่วนจริงของเหตุผลที่การเข้าถึง local variable เร็วกว่า global เสมอ",
+  },
+  {
+    q: "การที่ `RESUME_CHECK` ปรากฏแทน `RESUME` หลังจากฟังก์ชันถูกเรียกหลายครั้งบ่งบอกอะไร?",
+    options: [
+      "The function has a bug and needs to be re-checked",
+      "The specializing adaptive interpreter has specialized this function's bytecode based on observed call patterns",
+      "The function is now running in a JIT-compiled state",
+      "RESUME_CHECK means the function raised an exception previously",
+    ],
+    answer: 1,
+    explain: "dis output จริงของบทนี้แสดง RESUME กลายเป็น RESUME_CHECK และ BINARY_OP กลายเป็น BINARY_OP_ADD_INT หลังจาก warm-up call 200 ครั้งด้วย argument เป็น int -- ทั้งคู่เป็นตัวอย่างของ specializing adaptive interpreter ตาม PEP 659 ที่เขียน bytecode ใหม่ในที่เดิมตาม type จริงที่เห็นตอนรัน ไม่เกี่ยวกับฟีเจอร์ JIT ที่เป็น opt-in แยกต่างหาก",
+  },
+  {
+    q: "บน Python 3.14 build ที่ `sys._jit.is_available()` คืน True การที่ `sys._jit.is_enabled()` คืน False แปลว่าอะไรจริง ๆ?",
+    options: [
+      "The interpreter was not compiled with JIT support at all",
+      "JIT support is compiled into this interpreter binary, but it is not turned on for the currently running process",
+      "The JIT crashed and disabled itself",
+      "is_enabled() always returns False and is not a real check",
+    ],
+    answer: 1,
+    explain: "is_available() ตอบว่า 'interpreter build นี้รองรับ JIT หรือเปล่า' และ is_enabled() ตอบว่า 'มันเปิดใช้งานจริงสำหรับ process นี้หรือเปล่า' -- ทั้งคู่ตรวจสอบได้อิสระจากกัน และตามที่แสดงใน output จริงของบทนี้ อาจให้คำตอบไม่ตรงกันก็ได้ อย่าสมมติว่า JIT compilation กำลังเกิดขึ้นแค่เพราะ Python build หนึ่งรองรับมันในทางทฤษฎี",
+  },
+  {
+    q: "```python\n# cir_a.py\nfrom cir_b import b_func\ndef a_func():\n    return \"a\"\n\n# cir_b.py\nfrom cir_a import a_func\ndef b_func():\n    return a_func()\n```\nทำไม `import cir_a` ถึง raise `ImportError: cannot import name 'a_func' from 'cir_a'`?",
+    options: [
+      "Python does not support any form of circular import, ever",
+      "cir_a is registered in sys.modules the moment its execution starts (before a_func is defined), so when cir_b tries `from cir_a import a_func` it finds a partially-initialized module object missing that name",
+      "cir_b.py has a syntax error",
+      "This is a naming collision with the standard library, unrelated to circularity",
+    ],
+    answer: 1,
+    explain: "module ถูกเพิ่มเข้า sys.modules ก่อนที่ top-level code ของมันจะรันจบ ตั้งใจเพื่อไม่ให้ import แบบ re-entrant loop ไม่รู้จบ นั่นแปลว่า module ที่ถูก import กลางคันของการรันตัวเอง (แบบ cir_a ตรงนี้ จากข้างใน cir_b) จะขาดทุกชื่อที่ประกาศหลังบรรทัด import ที่ trigger cycle นั้น -- คือ a_func ในกรณีนี้เป๊ะ ๆ reproduce ตรงตัวในบทนี้",
+  },
+  {
+    q: "```python\nimport mymod2  # VALUE = 1\nprint(mymod2.VALUE)\nwith open('mymod2.py', 'w') as f:\n    f.write('VALUE = 99')\nimportlib.reload(mymod2)\nprint(mymod2.VALUE)\n```\nสิ่งนี้ print อะไร และเพราะอะไร?",
+    options: [
+      "1 then 1 -- reload only works before a module has been imported once",
+      "1 then 99 -- reload re-executes the module's top-level code against the same module object, picking up the new source",
+      "99 then 99 -- Python always reads the latest file content on every attribute access",
+      "This raises an exception -- you cannot rewrite a file that's already imported",
+    ],
+    answer: 1,
+    explain: "บทนี้ reproduce ลำดับนี้เป๊ะด้วย output จริง: 1 แล้วก็ 99 importlib.reload รัน source ของ module ใหม่บน module object เดิม ดังนั้น VALUE ถูก assign ใหม่เป็นค่าใหม่ -- แต่สิ่งนี้ไม่ย้อนกลับไปอัปเดต module อื่นที่เคยทำ `from mymod2 import VALUE` ไปแล้ว เพราะนั่นสร้าง binding อิสระไปยัง int object เก่า",
+  },
+];
+
+<Quiz client:visible id="runtime-internals/bytecode-and-interpreter" questions={quizBytecode} />
+
+<ProgressTracker client:visible id="runtime-internals/bytecode-and-interpreter" />

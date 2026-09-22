@@ -1,0 +1,331 @@
+---
+title: 'Worked review 1: CSV report CLI'
+description: 'A 65-line AI-style CSV order report with four planted bugs — mutable default argument, aliasing, a bare except, and a naive datetime — found, fixed, and re-verified.'
+sidebar:
+  order: 5
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+This is the kind of script an AI assistant produces in one shot for "parse this CSV and give me a discount report": it runs, it prints a plausible-looking report, and it has four real bugs. Read it once yourself before expanding any `<details>` below — find as many as you can, then compare.
+
+<Playground code={csvReportBuggyCode} />
+
+export const csvReportBuggyCode = `import csv
+import io
+from datetime import datetime
+
+
+def parse_orders(csv_text: str, errors: list[str] = []) -> list[dict]:
+    orders = []
+    reader = csv.DictReader(io.StringIO(csv_text))
+    for row in reader:
+        try:
+            row["amount"] = float(row["amount"])
+            orders.append(row)
+        except:
+            errors.append(row["order_id"])
+    return orders
+
+
+def apply_discount(orders: list[dict], pct: float) -> list[dict]:
+    for order in orders:
+        order["amount"] = order["amount"] * (1 - pct)
+    return orders
+
+
+def build_report(orders: list[dict]) -> dict:
+    total = sum(order["amount"] for order in orders)
+    return {
+        "generated_at": datetime.utcnow().isoformat(),
+        "order_count": len(orders),
+        "total": round(total, 2),
+    }
+
+
+BATCH_1 = """order_id,customer,amount
+1001,Ada,120.50
+1002,Grace,not-a-number
+1003,Linus,89.99
+"""
+
+BATCH_2 = """order_id,customer,amount
+2001,Bob,45.00
+2002,Frank,not-a-number
+"""
+
+orders_1 = parse_orders(BATCH_1)
+before_discount = orders_1[0]["amount"]
+discounted_1 = apply_discount(orders_1, 0.10)
+print("batch 1 order 1001 before discount:", before_discount)
+print("batch 1 order 1001 after discount:", orders_1[0]["amount"])
+
+report_1 = build_report(discounted_1)
+print("report 1:", report_1)
+
+orders_2 = parse_orders(BATCH_2)
+report_2 = build_report(orders_2)
+print("report 2:", report_2)
+
+leaked_errors = parse_orders.__defaults__[0]
+print("shared default errors list after both batches:", leaked_errors)
+`.trim();
+
+**Real output** (the timestamps will differ on your run; everything else is exact):
+
+```text
+batch 1 order 1001 before discount: 120.5
+batch 1 order 1001 after discount: 108.45
+report 1: {'generated_at': '2026-09-22T14:32:20.889615', 'order_count': 2, 'total': 189.44}
+report 2: {'generated_at': '2026-09-22T14:32:20.889744', 'order_count': 1, 'total': 45.0}
+shared default errors list after both batches: ['1002', '2002']
+```
+
+## Findings
+
+<details>
+<summary>Bug 1: <code>errors: list[str] = []</code> is a mutable default argument (catalog #1)</summary>
+
+**Symptom:** `parse_orders.__defaults__[0]` — the actual default-argument object every call without its own `errors` list shares — contains `['1002', '2002']`, from *both* batches, even though the two calls in the code above never pass an `errors` argument at all and look completely independent.
+
+**Evidence:** the default list `[]` is created exactly once, when `parse_orders` is defined, not once per call. Every call that omits `errors` appends into that same shared object.
+
+**Fix:** default to `None` and create a fresh list inside the function body:
+
+```python
+def parse_orders(csv_text: str, errors: list[str] | None = None) -> list[dict]:
+    if errors is None:
+        errors = []
+    ...
+```
+
+</details>
+
+<details>
+<summary>Bug 2: <code>apply_discount</code> mutates the caller's list in place (catalog #3)</summary>
+
+**Symptom:** `before_discount` (`120.5`) and `orders_1[0]["amount"]` after the call (`108.45`) are the *same dict entry* — `apply_discount` doesn't return a new, discounted copy; it silently rewrites the `amount` field on every dict the caller passed in, and returns that same list.
+
+**Evidence:** `discounted_1 is orders_1` would be `True` — the function has no line that copies anything.
+
+**Fix:** build new `Order` values instead of mutating in place, so the caller's original data survives:
+
+```python
+def apply_discount(orders: list[Order], pct: float) -> list[Order]:
+    return [replace(order, amount=order.amount * (1 - pct)) for order in orders]
+```
+
+</details>
+
+<details>
+<summary>Bug 3: bare <code>except:</code> swallows more than the intended parse failure (catalog #6)</summary>
+
+**Symptom:** row `1002` ("not-a-number") is silently recorded as an error and excluded from the report — which looks correct for this input. But the `except:` clause catches *everything*, not just the `ValueError` from `float(...)` failing: a missing `"amount"` column, a `row` that's `None`, or any other genuine bug in this function would be swallowed exactly the same way, recorded as if it were just another bad row.
+
+**Evidence:** running `ruff` on this file flags the bare `except:` directly (see **What the tools caught** below).
+
+**Fix:** name the specific exception:
+
+```python
+try:
+    amount = float(row["amount"])
+except ValueError:
+    errors.append(row["order_id"])
+    continue
+```
+
+</details>
+
+<details>
+<summary>Bug 4: <code>datetime.utcnow()</code> produces a naive, deprecated timestamp (catalog #19)</summary>
+
+**Symptom:** running with `-X dev` prints a real `DeprecationWarning` pointing at this exact line, and the `generated_at` field in both reports carries no timezone information at all — a consumer of this report cannot tell whether `"2026-09-22T14:32:20.889615"` means UTC, the server's local time, or something else.
+
+**Evidence — real warning:**
+
+```text
+DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+```
+
+**Fix:**
+
+```python
+"generated_at": datetime.now(timezone.utc).isoformat(),
+```
+
+</details>
+
+## Fixed version
+
+All four bugs fixed, plus the underlying data model switched from loose `dict` rows to a small `Order` dataclass — the fix for bug 2 (returning new values instead of mutating) is far more natural once each order is a real, independently-constructed object rather than a shared dict:
+
+<Playground code={csvReportFixedCode} />
+
+export const csvReportFixedCode = `import csv
+import io
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
+
+
+@dataclass
+class Order:
+    order_id: str
+    customer: str
+    amount: float
+
+
+def parse_orders(csv_text: str, errors: list[str] | None = None) -> list[Order]:
+    if errors is None:
+        errors = []
+    orders: list[Order] = []
+    reader = csv.DictReader(io.StringIO(csv_text))
+    for row in reader:
+        try:
+            amount = float(row["amount"])
+        except ValueError:
+            errors.append(row["order_id"])
+            continue
+        orders.append(Order(order_id=row["order_id"], customer=row["customer"], amount=amount))
+    return orders
+
+
+def apply_discount(orders: list[Order], pct: float) -> list[Order]:
+    return [replace(order, amount=order.amount * (1 - pct)) for order in orders]
+
+
+def build_report(orders: list[Order]) -> dict[str, object]:
+    total = sum(order.amount for order in orders)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "order_count": len(orders),
+        "total": round(total, 2),
+    }
+
+
+BATCH_1 = """order_id,customer,amount
+1001,Ada,120.50
+1002,Grace,not-a-number
+1003,Linus,89.99
+"""
+
+BATCH_2 = """order_id,customer,amount
+2001,Bob,45.00
+2002,Frank,not-a-number
+"""
+
+orders_1 = parse_orders(BATCH_1)
+before_discount = orders_1[0].amount
+discounted_1 = apply_discount(orders_1, 0.10)
+print("batch 1 order 1001 before discount:", before_discount)
+print("batch 1 order 1001 after discount (original unchanged):", orders_1[0].amount)
+
+report_1 = build_report(discounted_1)
+print("report 1:", report_1)
+
+orders_2 = parse_orders(BATCH_2)
+report_2 = build_report(orders_2)
+print("report 2:", report_2)
+
+errors_1: list[str] = []
+parse_orders(BATCH_1, errors_1)
+errors_2: list[str] = []
+parse_orders(BATCH_2, errors_2)
+print("batch 1 errors:", errors_1)
+print("batch 2 errors (independent from batch 1):", errors_2)
+`.trim();
+
+**Real output** (timestamps will differ):
+
+```text
+batch 1 order 1001 before discount: 120.5
+batch 1 order 1001 after discount (original unchanged): 120.5
+report 1: {'generated_at': '2026-09-22T14:33:23.884852+00:00', 'order_count': 2, 'total': 189.44}
+report 2: {'generated_at': '2026-09-22T14:33:23.885013+00:00', 'order_count': 1, 'total': 45.0}
+batch 1 errors: ['1002']
+batch 2 errors (independent from batch 1): ['2002']
+```
+
+`orders_1[0].amount` is now unchanged after `apply_discount` (`120.5`, not `108.45`), each batch's errors stay independent, and `generated_at` now carries `+00:00`.
+
+## What the tools caught
+
+**`ruff` on the buggy file** — three of the four bugs, directly:
+
+```text
+B006 Do not use mutable data structures for argument defaults
+E722 Do not use bare `except`
+DTZ003 `datetime.datetime.utcnow()` used
+```
+
+Bug 2 (aliasing) is caught by nothing — no linter counts whether `apply_discount`'s docstring or contract promised not to mutate its argument.
+
+**`ruff` on the fixed file:**
+
+```text
+All checks passed!
+```
+
+**`mypy --strict` and `pyright` on the fixed file** — both clean, once the loose `dict` rows became a typed `Order` dataclass:
+
+```text
+mypy --strict:  Success: no issues found in 1 source file
+pyright:        0 errors, 0 warnings, 0 informations
+```
+
+<Callout title="Three of four caught automatically, one needs a human">
+This is a representative split for this catalog: `ruff` alone would have caught 3 of the 4 bugs in this file with zero configuration. The fourth — a function silently mutating a caller's data — required reading `apply_discount`'s body and comparing it against what its name and signature implied.
+</Callout>
+
+export const quizWorkedReview1 = [
+  {
+    q: "Why does `parse_orders.__defaults__[0]` contain error codes from BOTH batches, even though neither call in the script passes an `errors` argument?",
+    options: [
+      "Python merges all list arguments across function calls automatically",
+      "The default value `[]` is created once at function-definition time and shared by every call that omits the argument -- both batches append into that same object",
+      "This is a bug in the __defaults__ attribute itself",
+      "Global variables always leak between function calls"
+    ],
+    answer: 1,
+    explain: "Default argument values are evaluated exactly once, when the function is defined, not per call. Every call that relies on the default shares that one object -- exactly the mutable-default-argument bug from the AI Bug Catalog."
+  },
+  {
+    q: "`apply_discount(orders_1, 0.10)` was expected to return a discounted copy, but `orders_1[0][\"amount\"]` changed too. Why?",
+    options: [
+      "Python always deep-copies list arguments automatically, so this shouldn't happen",
+      "apply_discount iterates the list and rewrites each dict's \"amount\" key directly -- it mutates the same dict objects the caller passed in, rather than building new ones",
+      "This only happens because the CSV had a parsing error in it",
+      "dict values cannot be reassigned after creation"
+    ],
+    answer: 1,
+    explain: "order[\"amount\"] = ... inside the loop mutates the exact dict object referenced by both orders_1 and the function's own orders parameter -- there is no copy anywhere in the original function."
+  },
+  {
+    q: "The bare `except:` in the original parse_orders was written to catch a ValueError from float() failing. What else does it actually catch?",
+    options: [
+      "Nothing else -- bare except only catches the specific error type it was 'meant' for",
+      "Every exception, including KeyboardInterrupt, SystemExit, and any unrelated bug (a missing column, a malformed row) that would otherwise reveal itself as a crash",
+      "Only exceptions raised inside the try block's first line",
+      "TypeError specifically, but not other exception types"
+    ],
+    answer: 1,
+    explain: "A bare except: (identical to except BaseException:) catches everything, with no regard for what the author intended -- silently converting any unrelated bug into the same 'bad row' outcome as a genuine parse failure."
+  },
+  {
+    q: "Both the buggy and fixed versions of build_report produce a 'generated_at' field that looks like a valid timestamp string. What is the actual, functional difference?",
+    options: [
+      "There is no real difference -- both are equally usable",
+      "The fixed version's timestamp carries timezone information (+00:00); the buggy version's is naive, meaning nothing in the string itself says what timezone it represents",
+      "The fixed version is always exactly one hour ahead",
+      "The buggy version fails to parse as a valid ISO timestamp at all"
+    ],
+    answer: 1,
+    explain: "datetime.utcnow() returns the UTC wall-clock value but with no attached tzinfo -- 'naive'. datetime.now(timezone.utc) attaches real timezone info, so the resulting string unambiguously means UTC to any consumer, and can be safely compared against other aware datetimes."
+  }
+];
+
+<Quiz client:visible id="reading-python/worked-review-1" questions={quizWorkedReview1} />
+
+<ProgressTracker client:visible id="reading-python/worked-review-1" />

@@ -1,6 +1,6 @@
 ---
-title: "Packaging & pyproject.toml"
-description: 'จัดโครงสร้าง Python package ประกาศ metadata ใน pyproject.toml, build ด้วย build และเผยแพร่ไปยัง PyPI ด้วย twine'
+title: 'Packaging & pyproject.toml'
+description: 'จัดโครงสร้าง Python package ประกาศ metadata และ tool config ใน pyproject.toml, build/publish ด้วย uv'
 sidebar:
   order: 5
 ---
@@ -9,30 +9,43 @@ import Callout from '../../../../components/Callout.astro';
 import Mermaid from '../../../../components/Mermaid.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
-**Python package** คือไดเรกทอรีของโมดูลที่สามารถติดตั้ง กำหนดเวอร์ชัน และแชร์ได้ การทำ Packaging จะเปลี่ยนโค้ดในเครื่องของคุณให้เป็นสิ่งที่ทุกคนสามารถติดตั้งได้ด้วย `pip install mypackage` การเข้าใจ Packaging เป็นสิ่งจำเป็นทันทีที่โปรเจกต์ของคุณเติบโตเกินกว่าสคริปต์ไฟล์เดียว หรือเมื่อคุณต้องการแชร์งานกับเพื่อนร่วมทีมหรือสาธารณะ
+**Python package** คือไดเรกทอรีของโมดูลที่สามารถติดตั้ง กำหนดเวอร์ชัน และแชร์ได้ การทำ Packaging จะเปลี่ยนโค้ดในเครื่องของคุณให้เป็นสิ่งที่ทุกคนสามารถติดตั้งได้ด้วย `pip install mypackage` หรือ `uv add mypackage` การเข้าใจ Packaging เป็นสิ่งจำเป็นทันทีที่โปรเจกต์ของคุณเติบโตเกินกว่าสคริปต์ไฟล์เดียว หรือเมื่อคุณต้องการแชร์งานกับเพื่อนร่วมทีมหรือสาธารณะ
 
-> บทนี้ไม่มีปุ่ม Run — packaging และ publish ต้องรันในเครื่อง: `uv init --lib mypackage && cd mypackage && uv build`
+> บทนี้ไม่มีปุ่ม Run — packaging, build และ publish ต้องรันในเครื่อง: `uv init --lib mypackage && cd mypackage && uv build`
 
 ## โครงสร้าง Package
 
-การใช้ src-layout แบบเรียบร้อยจะแยกซอร์สโค้ดออกจากการทดสอบและ tooling ป้องกันการ import โค้ดที่ยังไม่ได้ติดตั้งโดยบังเอิญ
+การใช้ src-layout แบบเรียบร้อยจะแยกซอร์สโค้ดออกจากการทดสอบและ tooling ป้องกันการ import โค้ดที่ยังไม่ได้ติดตั้งโดยบังเอิญ `uv init --lib mypackage` สร้างโครงสร้างแบบนี้ให้เลย:
 
-export const packageLayoutDiagram = `flowchart TD
+```text
+$ uv init --lib mypackage && find mypackage -not -path '*/.git*' | sort
+mypackage
+mypackage/.python-version
+mypackage/README.md
+mypackage/pyproject.toml
+mypackage/src
+mypackage/src/mypackage
+mypackage/src/mypackage/__init__.py
+mypackage/src/mypackage/py.typed
+```
+
+<Mermaid code={`flowchart TD
   root["mypackage/"] --> src["src/"]
   src --> pkg["mypackage/"]
   pkg --> init["__init__.py"]
   pkg --> core["core.py"]
-  pkg --> utils["utils.py"]
+  pkg --> cli["cli.py"]
+  pkg --> typed["py.typed (empty marker file)"]
   root --> tests["tests/"]
-  tests --> conftest["conftest.py"]
   tests --> testcore["test_core.py"]
   root --> pyproj["pyproject.toml"]
-  root --> readme["README.md"]`;
+  root --> readme["README.md"]`} title="โครงสร้าง package แบบ src-layout ที่เรียบร้อย" />
 
-<Mermaid code={packageLayoutDiagram} title="โครงสร้าง package แบบ src-layout ที่เรียบร้อย" />
+`py.typed` เป็นไฟล์ว่างจริง ๆ (PEP 561) — หน้าที่เดียวของมันคือการมีอยู่ เพื่อบอก type checker ว่าคนที่ใช้ package นี้สามารถเชื่อ type hint ของมันได้ แทนที่จะมองว่าเป็น package ที่ไม่มี type
 
-## pyproject.toml
+## `pyproject.toml`
 
 `pyproject.toml` คือแหล่งข้อมูลหลักสำหรับ package ของคุณ ตาราง `[build-system]` ระบุ build backend และ `[project]` ประกาศ metadata ทั้งหมดที่ pip และ PyPI ต้องการ
 
@@ -46,7 +59,7 @@ name = "mypackage"
 version = "0.1.0"
 description = "A short description of mypackage"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 license = "MIT"
 authors = [
     { name = "Your Name", email = "you@example.com" }
@@ -55,19 +68,88 @@ dependencies = [
     "httpx>=0.27",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8",
-    "mypy>=1.10",
-]
+[project.scripts]
+mypackage-greet = "mypackage.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/yourname/mypackage"
 ```
 
-`requires-python` คือเวอร์ชันต่ำสุดที่คุณรับประกัน — pip จะไม่ยอมติดตั้งบน interpreter ที่เก่ากว่านั้น
-ให้ตั้งเป็นเวอร์ชันเก่าสุดที่คุณทดสอบจริง และควรรู้ว่า `distutils` ถูกถอดออกใน Python 3.12 แล้ว: ต้องมี build backend
-อย่าง `hatchling` (ตามตัวอย่างข้างบน), `setuptools` หรือ `uv_build` และ `setup.py` ไม่ใช่จุดเริ่มต้นอีกต่อไป
+`license = "MIT"` คือ SPDX license expression string (PEP 639) — รูปแบบสมัยใหม่ รูปแบบเก่า `license = { text = "MIT" }` แบบ table ถูก deprecate ไปแล้ว; ให้ใช้ string เปล่า ๆ และเพิ่ม `license-files = ["LICENSE*"]` ถ้าคุณแนบไฟล์ license ไปด้วย `requires-python` คือเวอร์ชันต่ำสุดที่คุณรับประกัน — pip และ uv จะไม่ยอมติดตั้งบน interpreter ที่เก่ากว่านั้น ให้ตั้งเป็นเวอร์ชันเก่าสุดที่คุณทดสอบจริง `distutils` ถูกถอดออกใน Python 3.12 แล้ว: ต้องมี build backend อย่าง `hatchling` (ตามตัวอย่างข้างบน), `setuptools` หรือ `uv_build` (backend ของ uv เอง — `uv init --lib` ใช้ตัวนี้เป็นดีฟอลต์) และ `setup.py` ไม่ใช่จุดเริ่มต้นอีกต่อไป
+
+## `[dependency-groups]` (PEP 735) เทียบกับ `[project.optional-dependencies]`
+
+ทั้งสองอย่างจัดกลุ่ม dependency เพิ่มเติม แต่ตอบคำถามคนละอย่าง `[project.optional-dependencies]` ประกาศ *extra ที่ติดตั้งได้ของ package ที่เผยแพร่* — ผู้ใช้สามารถ `pip install mypackage[dev]` เพื่อเลือกใช้ได้ `[dependency-groups]` (PEP 735 ตอนนี้เป็นมาตรฐานของตัวมันเองแล้ว ไม่ใช่แนวคิดเฉพาะของ Poetry/PDM อีกต่อไป) ประกาศ *กลุ่มสำหรับพัฒนาเท่านั้นที่ไม่เคยถูกเผยแพร่* — มันมีไว้เพื่อ `uv sync`/`uv run` ใน repo นี้เท่านั้น
+
+```toml
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "mypy>=1.10",
+]
+lint = [
+    "ruff>=0.16",
+]
+```
+
+```bash
+uv sync --group dev --group lint    # installs main deps + both groups, into .venv
+uv run pytest -q                    # uses that environment
+```
+
+รันจริง — `uv sync` resolve ทุกอย่าง และ script entry point ของโปรเจกต์เอง (ประกาศไว้ใน `[project.scripts]` ข้างบน) ใช้งานได้ทันทีผ่าน `uv run` ไม่ต้องมีขั้นตอนติดตั้งแยก:
+
+```text
+$ uv sync --group dev --group lint
+Resolved 20 packages in 336ms
+   Building mypackage @ file:///.../mypackage
+      Built mypackage @ file:///.../mypackage
+Prepared 1 package in 1.03s
+Installed 19 packages in 53ms
+ + anyio==4.15.1
+ + httpx==0.28.1
+ + mypackage==0.1.0 (from file:///.../mypackage)
+ + mypy==2.3.1
+ + pytest==9.1.1
+ + ruff==0.16.8
+ ...
+$ uv run mypackage-greet Ada
+Hello, Ada!
+$ uv run pytest -q
+.                                                                        [100%]
+1 passed in 0.00s
+```
+
+ใช้ `[project.optional-dependencies]` สำหรับสิ่งที่ *คนใช้* package ที่เผยแพร่ของคุณอาจต้องการ (`mypackage[cli]`, `mypackage[postgres]`); ใช้ `[dependency-groups]` สำหรับสิ่งที่มีแค่ *คนที่ contribute ให้ repo นี้* ต้องการ (`dev`, `lint`, `docs`) — พวกมันไม่เคยถูกส่งไปกับ wheel เลย
+
+## Tool configuration ก็อยู่ใน `pyproject.toml` เหมือนกัน
+
+```toml
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "UP"]
+
+[tool.mypy]
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+```
+
+นี่ไม่ใช่ตัวอย่างสมมติ — มันคือ `pyproject.toml` ของ scratch project ของบทนี้เอง และ checker ทุกตัวข้างล่างรันกับ config นี้เป๊ะ ๆ:
+
+```text
+$ uvx ruff check src/
+All checks passed!
+
+$ uv run mypy src/mypackage
+Success: no issues found in 3 source files
+```
+
+`[tool.ruff]`/`[tool.mypy]`/`[tool.pytest.ini_options]` หมายความว่าทุก contributor และทุก CI job รัน configuration *เดียวกัน* โดยอัตโนมัติ — ไม่ต้องมีไฟล์ `.flake8`, `mypy.ini`, `pytest.ini` แยกให้ sync กัน และไม่มีความเสี่ยงที่ checker จะใช้ค่าดีฟอลต์แบบเงียบ ๆ เพราะหาไฟล์ config ไม่เจอ
 
 ## ไฟล์ซอร์สโค้ด
 
@@ -90,58 +172,207 @@ def greet(name: str) -> str:
     return f"Hello, {name}!"
 ```
 
-## Editable install, การ Build และการเผยแพร่
+## `[project.scripts]` — entry point CLI จริง
 
-ในระหว่างการพัฒนา คุณต้องการให้การเปลี่ยนแปลงโค้ดมีผลทันทีโดยไม่ต้องติดตั้งใหม่ Flag `-e` ช่วยให้ทำแบบนั้นได้ เมื่อพร้อมแจกจ่าย `build` จะสร้าง artifact และ `twine` จะอัปโหลดขึ้น
+`[project.scripts]` map ชื่อคำสั่งไปยัง `module:function` — `uv`/`pip` จะ generate executable wrapper เล็ก ๆ ตอนติดตั้ง ที่ import โมดูลแล้วเรียก function นั้น ไม่ต้อง hack `sys.path` เอง ไม่ต้องมี `if __name__ == "__main__"` shim เพื่อให้รันเป็นคำสั่งได้
 
-```bash
-# editable install — changes to src/ take effect immediately
-pip install -e ".[dev]"
+```python
+# src/mypackage/cli.py -- exercised as `uv run mypackage-greet` above
+import sys
 
-# build source distribution + wheel
-python -m build
+from mypackage.core import greet
 
-# publish to PyPI (requires a PyPI account + token)
-twine upload dist/*
 
-# for practice, use TestPyPI first:
-twine upload --repository testpypi dist/*
+def main() -> None:
+    name = sys.argv[1] if len(sys.argv) > 1 else "world"
+    print(greet(name))
 ```
 
-<Callout title="pyproject.toml คือมาตรฐานสมัยใหม่">
-    `setup.py` และ `setup.cfg` เป็น legacy แล้ว โปรเจกต์ Python สมัยใหม่ทั้งหมดประกาศ metadata ใน `pyproject.toml` ตาราง `[build-system]` บอก pip ว่าต้องใช้ backend อะไร (hatchling, setuptools, flit เป็นต้น) `pip install -e .` ติดตั้ง package ในโหมด editable ซึ่งเหมาะสำหรับการพัฒนา
+## Editable install, การ Build และการเผยแพร่
+
+ในระหว่างการพัฒนา คุณต้องการให้การเปลี่ยนแปลงโค้ดมีผลทันทีโดยไม่ต้องติดตั้งใหม่ — `uv sync`/`pip install -e .` ทำแบบนี้ให้อยู่แล้ว เพราะ `uv sync` ติดตั้งตัวโปรเจกต์เองในโหมด editable โดยดีฟอลต์ เมื่อพร้อมแจกจ่าย `uv build` จะสร้างทั้ง source distribution และ wheel:
+
+```text
+$ uv build
+Building source distribution...
+Building wheel from source distribution...
+Successfully built dist/mypackage-0.1.0.tar.gz
+Successfully built dist/mypackage-0.1.0-py3-none-any.whl
+
+$ ls -la dist/
+-rw-r--r--  mypackage-0.1.0-py3-none-any.whl
+-rw-r--r--  mypackage-0.1.0.tar.gz
+```
+
+`uv publish` อัปโหลด artifact เหล่านั้นขึ้น index (PyPI โดยดีฟอลต์) — **ไม่ได้รันจริงที่นี่** เพราะจะเป็นการเผยแพร่ package จริง:
+
+```text
+$ uv publish --help
+Upload distributions to an index
+
+Usage: uv publish [OPTIONS] [FILES]...
+
+Arguments:
+  [FILES]...  Paths to the files to upload. Accepts glob expressions [default: dist/*]
+
+Options:
+  -t, --token <TOKEN>          The token for the upload [env: UV_PUBLISH_TOKEN]
+      --trusted-publishing <TRUSTED_PUBLISHING>
+          Configure trusted publishing [possible values: automatic, always, never]
+      --check-url <CHECK_URL>  Check an index URL for existing files to skip duplicate uploads
+```
+
+`uv publish --token $UV_PUBLISH_TOKEN` (PyPI API token หรือ `--trusted-publishing automatic` จาก CI บน GitHub Actions โดยไม่ต้องมี token เลย) จะอัปโหลดทุกอย่างใน `dist/*` ในขั้นตอนเดียว — ไม่ต้องมี `twine upload` แยกอีกแล้ว สำหรับฝึกซ้อม ให้ publish ไปยัง TestPyPI ก่อนด้วย `--publish-url https://test.pypi.org/legacy/`
+
+## `uv.lock` เทียบกับ `requirements.txt` — อีกครั้งในระดับ package
+
+บทเรียน venv-pip พูดถึง `uv.lock` สำหรับแอปพลิเคชัน; สำหรับ *library* อย่าง `mypackage`, `uv.lock` ก็ยังมีอยู่ (`uv sync` เขียนมันให้) แต่มัน lock *development environment* — เวอร์ชันที่คุณทดสอบด้วย — ไม่ใช่สิ่งที่ผู้ใช้ที่ติดตั้ง `mypackage` จาก PyPI จะได้รับ ซึ่งถูกกำหนดโดย version range ใน `dependencies = [...]` เท่านั้น เมื่อ tool ปลายทางต้องการไฟล์รูปแบบ `requirements.txt` ธรรมดาแทน `uv.lock`, `uv export` จะแปลงให้:
+
+```text
+$ uv export --no-hashes --no-dev
+Resolved 20 packages in 3ms
+# This file was autogenerated by uv via the following command:
+#    uv export --no-hashes --no-dev
+-e .
+anyio==4.15.1
+    # via httpx
+certifi==2026.7.22
+    # via
+    #   httpcore
+    #   httpx
+
+$ uv export --no-dev
+# (default: WITH hashes)
+anyio==4.15.1 \
+    --hash=sha256:6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101 \
+    ...
+```
+
+`uv export` ดีฟอลต์ให้รวม hash มาด้วย — ตรงข้ามกับดีฟอลต์ของ `pip freeze` ที่รันด้วยมือ และนี่คือเหตุผลที่ `requirements.txt` ที่ export จากโปรเจกต์ที่ใช้ `uv` เชื่อถือได้ในแบบที่ไฟล์ที่ maintain ด้วยมือมักไม่เป็น
+
+<Callout title="pyproject.toml คือมาตรฐานสมัยใหม่สำหรับทุกอย่าง ไม่ใช่แค่ metadata">
+`setup.py` และ `setup.cfg` เป็น legacy แล้ว โปรเจกต์ Python สมัยใหม่ทั้งหมดประกาศ package metadata (`[project]`), build backend (`[build-system]`) *และ* tool configuration (`[tool.ruff]`, `[tool.mypy]`, `[tool.pytest.ini_options]`) ใน `pyproject.toml` ไฟล์เดียว `license = "MIT"` (SPDX string ไม่ใช่ `{ text = "MIT" }`) คือรูปแบบปัจจุบัน `uv build` สร้าง sdist + wheel; `uv publish` อัปโหลดมัน
 </Callout>
+
+## Mental Model
+
+`pyproject.toml` มีหน้าที่อิสระสามอย่างอยู่ใต้หลังคาเดียวกัน: `[build-system]` บอกทุก tool ("จะเปลี่ยน source tree นี้ให้เป็น artifact ที่ติดตั้งได้อย่างไร") ว่าต้องเรียก backend ไหน; `[project]` คือ metadata ที่ package index และ installer อ่าน (name, version, dependencies, entry points); ตาราง `[tool.*]` คือ configuration แยก namespace สำหรับ development tool ตัวไหนก็ตามที่คุณรันกับ tree เดียวกันนี้ build backend ไม่เคยอ่าน `[tool.*]` และ `ruff`/`mypy` ก็ไม่เคยอ่าน `[project.dependencies]` — ไฟล์ถูกแชร์ร่วมกัน แต่แต่ละ tool มองแค่ตารางของตัวเองเท่านั้น
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| src-layout | ป้องกันการ import โค้ดที่ยังไม่ได้ติดตั้งโดยบังเอิญตอน test | มี directory level เพิ่มขึ้นหนึ่งชั้นเทียบกับ flat layout |
+| `[dependency-groups]` สำหรับ dev tool | ไม่เคยถูกส่งไปกับ wheel ที่เผยแพร่ ติดตั้งแยกได้ (`--group lint`) | ต้องเรียนรู้ตารางเพิ่ม แยกจาก `optional-dependencies` |
+| `[tool.*]` config รวมศูนย์ใน `pyproject.toml` | ไฟล์เดียว แหล่งข้อมูลเดียว diff ดูง่ายตอน review | tool เก่าบางตัว (`flake8`) ยังปฏิเสธที่จะอ่าน `pyproject.toml` เลย |
+| `uv build` + `uv publish` | เครื่องมือเดียว environment ที่รู้จัก lockfile เดียว ครอบคลุมทั้ง lifecycle | เป็น workflow ใหม่กว่า — tutorial ที่มีอยู่ส่วนใหญ่ยังแสดง `python -m build` + `twine` |
+| `license = "MIT"` (SPDX string) | อ่านด้วยเครื่องได้ ไม่กำกวม ตรงตาม PEP 639 | รูปแบบ table เก่า `{ text = "MIT" }` ถูก deprecate แล้วและบาง tool จะเตือน |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"`setup.py` ยังคือวิธี configure package สมัยใหม่"** `distutils` ถูกถอดออกใน Python 3.12 แล้ว; ต้องมี `pyproject.toml` `[build-system]` + backend (`hatchling`, `setuptools`, `uv_build`) แล้ว และ `setup.py` ถ้ามีอยู่ก็แค่เป็น compatibility shim
+- **"`[project.optional-dependencies]` กับ `[dependency-groups]` คือสิ่งเดียวกันแค่ syntax ต่างกัน"** Optional dependencies คือ *extra ที่ติดตั้งได้ของ package ที่เผยแพร่* (`pip install mypackage[postgres]`); dependency groups คือ *dev tooling เฉพาะ repo* ที่ไม่เคยถูกส่งไปกับ wheel มาตรฐานแยกกันโดย PEP 735
+- **"`license = { text = "MIT" }` คือ syntax สมัยใหม่ที่ถูกต้อง"** รูปแบบ table นั้นถูก deprecate ภายใต้ PEP 639 แล้ว รูปแบบปัจจุบันคือ SPDX string เปล่า ๆ `license = "MIT"`
+- **"`uv.lock` ของ library จะ pin สิ่งที่ผู้ใช้ของคุณได้รับ"** มัน pin แค่ development/test environment ของคุณเอง เวอร์ชัน dependency ที่ติดตั้งจริงของ library ที่เผยแพร่แล้วคือสิ่งที่ตรงกับ *version range* ใน `dependencies = [...]` ตอนที่ผู้ใช้ปลายทางติดตั้ง
+- **"wheel กับ source distribution (sdist) เป็น output ของ `uv build` ที่ใช้แทนกันได้"** wheel คือ artifact ที่ build ไว้ล่วงหน้าพร้อมติดตั้ง; sdist คือ source tree ที่บรรจุไว้เพื่อ build ทีหลัง — installer จะเลือก wheel ที่เข้ากันได้ก่อนเสมอ และ fallback ไป build จาก sdist ก็ต่อเมื่อไม่มี wheel ให้เลือก
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อ `pyproject.toml` ที่ generate มา ให้ตรวจ:
+
+- `license = { text = "MIT" }` — รูปแบบ table ที่ deprecate แล้ว ควรเป็น SPDX string `license = "MIT"` (PEP 639)
+- ส่วน `[tool.setuptools]` (`packages`, `package-dir`) ที่หลงเหลืออยู่ในโปรเจกต์ที่ `[build-system]` ระบุ backend *คนละตัว* (`hatchling`, `uv_build`) — boilerplate ที่ copy-paste มาซึ่ง backend ที่ใช้งานจริงจะเมินเฉยแบบเงียบ ๆ ทำให้เข้าใจผิดว่า package discovery ถูก configure ไว้แล้ว
+- Runtime dependency (`requests`, `httpx`) ถูกใส่ไว้แค่ใน `[dependency-groups] dev` แทนที่จะเป็น `[project] dependencies` — package จะ import error สำหรับ installer จริงทุกตัว แต่ test ผ่านในเครื่องเพราะ dev group บังเอิญมีมันด้วย
+- `pre-commit` hook ที่รัน `ruff format` แต่ไม่รัน `ruff check` (หรือกลับกัน) — formatting กับ linting เป็น subcommand คนละตัวของ ruff; hook ที่ format อย่างเดียวจะปล่อยให้ bug ประเภท `F401`/`B006` merge เข้าไปโดยไม่ถูกจับ
+- `dependencies = ["some-lib"]` ที่ไม่มี version constraint เลยใน library ที่ตั้งใจให้คนอื่น depend on — floor ที่ไม่ถูก constrain ทำให้ release ที่ breaking ของ `some-lib` ในอนาคตทำให้ผู้ใช้ทุกคนพังแบบเงียบ ๆ
+
+<SpotTheBug code={`# pyproject.toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mypackage"
+version = "0.1.0"
+license = { text = "MIT" }
+dependencies = [
+    "httpx",
+]
+
+[tool.setuptools]
+packages = ["mypackage"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]`} lang="toml">
+มีสอง bug `license = { text = "MIT" }` เป็นรูปแบบ table ของ PEP 639 ที่ deprecate แล้ว -- ควรเป็น SPDX string เปล่า ๆ `license = "MIT"` ไม่งั้น linter หรือ `uv build` จะเตือน สอง `[tool.setuptools]` configure build backend ที่ไฟล์นี้ไม่ได้ใช้เลย -- `[build-system]` ระบุ `hatchling` ดังนั้น key `packages` ของ setuptools จึงถูกเมินเฉยแบบเงียบ ๆ อาจเป็นเพราะ copy-paste มาจาก template ที่ใช้ backend คนละตัว มันทำให้เข้าใจผิดว่า package discovery ถูก configure ไว้อย่างชัดเจน ทั้งที่ hatchling กำลังใช้กฎ auto-discovery ของตัวเอง (ที่ต่างออกไป) ปัญหาเล็กที่สาม `httpx` ไม่มี version constraint เลย (`httpx>=0.27` จะปลอดภัยกว่าสำหรับ library ที่เผยแพร่) ทำให้ release ที่ breaking ของ `httpx` ในอนาคตกระทบผู้ใช้ทุกคนโดยไม่มีคำเตือน
+</SpotTheBug>
 
 export const quizPackaging = [
     {
-        q: "ไฟล์ใดคือมาตรฐานสมัยใหม่สำหรับการประกาศ metadata ของ Python package?",
+        q: "วิธีประกาศ MIT license ใน pyproject.toml ที่เป็นปัจจุบันและไม่ deprecated (PEP 639) คืออะไร?",
         options: [
-            "setup.py",
-            "MANIFEST.in",
-            "pyproject.toml",
-            "requirements.txt",
-        ],
-        answer: 2,
-    },
-    {
-        q: "`pip install -e .` ทำอะไร?",
-        options: [
-            "ติดตั้ง package จาก PyPI",
-            "ติดตั้ง package ในโหมด editable เพื่อให้การเปลี่ยนแปลงซอร์สมีผลทันที",
-            "Build และเผยแพร่ package",
-            "ลบ package ออก",
+            "license = { text = \"MIT\" }",
+            "license = \"MIT\"",
+            "license = [\"MIT\"]",
+            "[license]\nname = \"MIT\"",
         ],
         answer: 1,
+        explain: "PEP 639 กำหนดมาตรฐานให้ license เป็น SPDX expression string เปล่า ๆ รูปแบบ table เก่า license = { text = \"MIT\" } ถูก deprecate แล้ว -- pyproject.toml ของบทเรียนนี้เองใช้รูปแบบ string และ uvx ruff / uv build ยอมรับโดยไม่มีคำเตือน",
     },
     {
-        q: "ใช้เครื่องมือใดในการอัปโหลด package ไปยัง PyPI?",
+        q: "ความแตกต่างสำคัญระหว่าง `[project.optional-dependencies]` กับ `[dependency-groups]` (PEP 735) คืออะไร?",
         options: [
-            "build",
-            "pip",
-            "twine",
-            "setuptools",
+            "They are two names for the exact same feature",
+            "optional-dependencies are installable extras of the published package (pip install pkg[extra]); dependency-groups are dev-only groups that never ship in the wheel",
+            "dependency-groups only work with uv, optional-dependencies only work with pip",
+            "optional-dependencies can only contain one package each",
         ],
-        answer: 2,
+        answer: 1,
+        explain: "ผู้ใช้สามารถเลือกใช้ optional-dependencies extra ตอนติดตั้ง package ที่เผยแพร่ของคุณได้ ส่วน dependency-group (dev, lint ฯลฯ) จะถูก resolve และติดตั้งเฉพาะคนที่ทำงานบน repository เองผ่าน `uv sync --group name` -- มันไม่เคยถูกรวมอยู่ใน wheel หรือ sdist ที่ build แล้ว",
+    },
+    {
+        q: "```text\n$ uv build\nBuilding source distribution...\nBuilding wheel from source distribution...\nSuccessfully built dist/mypackage-0.1.0.tar.gz\nSuccessfully built dist/mypackage-0.1.0-py3-none-any.whl\n```\nไฟล์สองตัวที่ได้ต่างกันอย่างไร?",
+        options: [
+            "They are identical, just different file extensions",
+            "The .tar.gz (sdist) packages the source tree for building later; the .whl (wheel) is a prebuilt, ready-to-install artifact that installers prefer",
+            "The .whl only works on Windows",
+            "The .tar.gz is only used for testing, never distributed",
+        ],
+        answer: 1,
+        explain: "pip/uv จะเลือกติดตั้ง wheel ที่เข้ากันได้โดยตรง (ไม่ต้อง build ตอนติดตั้ง) และจะ fallback ไป build จาก sdist ก็ต่อเมื่อไม่มี wheel ที่ตรงกัน -- ทั้งสองเป็น artifact type จริงที่เผยแพร่ ไม่ใช่ทดสอบเทียบกับเวอร์ชัน release",
+    },
+    {
+        q: "```toml\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n[tool.setuptools]\npackages = [\"mypackage\"]\n```\nตรงนี้ผิดตรงไหน?",
+        options: [
+            "Nothing -- setuptools config always applies regardless of build-backend",
+            "[tool.setuptools] configures a backend (setuptools) that this project doesn't use -- the active backend is hatchling, so this table is silently ignored",
+            "hatchling cannot be used with [tool.setuptools] present, this pyproject.toml will fail to parse",
+            "packages should be a string, not a list",
+        ],
+        answer: 1,
+        explain: "Build backend ถูกกำหนดโดย [build-system] build-backend เท่านั้น ตาราง [tool.*] คือ config เฉพาะ namespace ของแต่ละ tool ที่มีแค่ tool ตรงกันเท่านั้นที่จะอ่าน -- setuptools ไม่เคยรันที่นี่ ดังนั้น [tool.setuptools] คือ config ที่ตายแล้ว น่าจะหลงเหลือมาจาก template ที่เคยใช้ setuptools",
+    },
+    {
+        q: "ทำไม `uv export --no-hashes` ถึงให้ไฟล์ที่ไม่มี hash ในขณะที่ `uv export` เฉย ๆ มี hash?",
+        options: [
+            "uv export always includes hashes and --no-hashes has no effect",
+            "uv defaults to including hashes for reproducibility/security (matching uv.lock's own behavior); --no-hashes explicitly opts out for tools that can't parse hashed requirements",
+            "Hashes are only generated for packages with no wheels available",
+            "--no-hashes only works when publishing to TestPyPI",
+        ],
+        answer: 1,
+        explain: "uv ถือว่าการ pin ด้วย hash เป็นดีฟอลต์ที่ปลอดภัยตอน export เป็นไฟล์รูปแบบ requirements.txt ต่างจาก pip freeze ที่รันด้วยมือซึ่งไม่เคยใส่ hash เลย --no-hashes มีไว้สำหรับ tooling เก่าที่อ่าน syntax --hash= ไม่ได้",
+    },
+    {
+        q: "Library ที่เผยแพร่มี dependencies = [\"httpx>=0.27\"] และ uv.lock ของตัวเอง pin httpx==0.28.1 ไว้สำหรับ development ผู้ใช้ที่ติดตั้ง library จาก PyPI จะได้เวอร์ชันไหนจริง ๆ?",
+        options: [
+            "Always exactly 0.28.1, because uv.lock is published with the package",
+            "Whatever version satisfies >=0.27 at the consumer's own install time -- uv.lock only governs this repo's own dev/test environment, it is not shipped or consulted by a downstream installer",
+            "The library will refuse to install without an exact pin",
+            "0.27.0 exactly, ignoring the consumer's resolver",
+        ],
+        answer: 1,
+        explain: "uv.lock (และแนวคิด lockfile ทั้งหมด) มีไว้สำหรับแอปพลิเคชันและ dev environment ที่ reproduce ได้ของ repo นี้เอง เวอร์ชัน dependency ที่รันจริงของ library ที่เผยแพร่แล้วจะถูก resolve ใหม่โดย installer ของผู้ใช้เองตาม version range ที่ประกาศใน dependencies -- lockfile ไม่เคยเป็นส่วนหนึ่งของ wheel/sdist ที่ build แล้ว",
     },
 ];
 

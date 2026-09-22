@@ -1,6 +1,6 @@
 ---
 title: Classes and Inheritance
-description: 'class, __init__, instance vs class attributes, methods, self, and inheritance with super() in Python.'
+description: 'class, __init__ vs __new__, instance vs class attributes, MRO and cooperative super(), isinstance vs type(), duck typing vs ABC vs Protocol.'
 sidebar:
   order: 2
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Defining a class
 
@@ -50,58 +52,295 @@ rex.bark()   # Python calls Dog.bark(rex) under the hood
 Mutating a class attribute through an instance creates a *shadow* instance attribute and does **not** change the class attribute for other instances.
 Use class attributes only for constants or shared state that truly belongs to the class.
 
-## Inheritance and `super()`
+## Shared mutable class attributes — a real bug
 
-A subclass inherits all methods from its parent.
-Use `super()` to call the parent's method — most commonly `super().__init__()` to initialise the parent's state.
+A class attribute is one object, owned by the class, and every instance that hasn't shadowed it reads *the same object*. That's harmless for an immutable default like a string. It's a bug the moment the default is mutable — a `list` or `dict` — because every instance's `.append()` mutates the one shared object:
 
 ```python
-class Animal:
-    def __init__(self, name: str, sound: str) -> None:
-        self.name = name
-        self.sound = sound
+class Dog:
+    tricks: list[str] = []  # BUG: one list object shared by every instance
 
-    def speak(self) -> str:
-        return f"{self.name} says {self.sound}"
-
-
-class Dog(Animal):
-    def __init__(self, name: str) -> None:
-        super().__init__(name, "woof")   # delegate to Animal.__init__
-
-    def fetch(self, item: str) -> str:
-        return f"{self.name} fetches the {item}!"
+    def add_trick(self, trick: str) -> None:
+        self.tricks.append(trick)  # mutates the SHARED class attribute
 ```
 
-`super()` without arguments works in Python 3 — no need to pass the class or instance explicitly.
+`rex.add_trick("sit")` and `fido.add_trick("roll over")` both mutate the exact same list — `rex.tricks` ends up `['sit', 'roll over']`, and `rex.tricks is fido.tricks` is `True`. The fix is to make `tricks` an *instance* attribute, created fresh inside `__init__`:
+
+```python
+class FixedDog:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.tricks: list[str] = []  # instance attribute -- one list per dog
+```
+
+Now each dog gets its own list; `good_rex.tricks is good_fido.tricks` is `False`. This is the exact same defect as a mutable default argument (covered in the Functions module) wearing a different hat — a single mutable object is unintentionally shared across many owners.
+
+## `__init__` vs `__new__`
+
+`__init__` initializes an *already-created* instance — it never returns anything. `__new__` is what actually **creates** the instance; it runs first, receives the class (`cls`) instead of `self`, and must return an object (usually via `super().__new__(cls)`). You almost never need to override `__new__` — the two common reasons are enforcing a singleton and subclassing an immutable built-in type like `tuple` or `str`, which must have their value fixed before `__init__` could set anything:
+
+```python
+class Singleton:
+    _instance: "Singleton | None" = None
+
+    def __new__(cls) -> "Singleton":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+```
+
+`Singleton()` called twice returns the *same* object both times (`a is b` is `True`) — `__new__` short-circuits construction instead of building a fresh instance each call.
+
+## MRO and cooperative `super().__init__(**kwargs)`
+
+When a class has more than one base — multiple inheritance — Python needs a deterministic order to search for methods. That order is the **Method Resolution Order** (MRO), computed by the C3 linearization algorithm and exposed as `ClassName.__mro__`. For a **diamond** — two classes sharing a common ancestor — the MRO visits each class exactly once:
+
+```python
+class Base:
+    def __init__(self, **kwargs: object) -> None:
+        print("Base.__init__", kwargs)
+        super().__init__()
+
+class Left(Base):
+    def __init__(self, **kwargs: object) -> None:
+        print("Left.__init__")
+        super().__init__(**kwargs)
+
+class Right(Base):
+    def __init__(self, **kwargs: object) -> None:
+        print("Right.__init__")
+        super().__init__(**kwargs)
+
+class Diamond(Left, Right):
+    def __init__(self, **kwargs: object) -> None:
+        print("Diamond.__init__")
+        super().__init__(**kwargs)
+```
+
+<Mermaid code={`flowchart TD
+  Diamond --> Left
+  Diamond --> Right
+  Left --> Base
+  Right --> Base
+  Base --> object`} title="Diamond inheritance: Diamond.__mro__ visits Left, Right, then Base exactly once" />
+
+`Diamond.__mro__` is `[Diamond, Left, Right, Base, object]`. Each `__init__` calls `super().__init__(**kwargs)` — **cooperative** super, meaning it forwards along the MRO chain rather than jumping straight to its own parent. `Diamond(value=1)` prints `Diamond.__init__`, then `Left.__init__`, then `Right.__init__`, then `Base.__init__ {'value': 1}` — `super()` in `Left` calls `Right.__init__`, not `Base.__init__`, because it follows the MRO, not the class's own bases. Forgetting `**kwargs` (or dropping `super().__init__()` entirely) in any link breaks the chain — a common AI-generated-code bug.
+
+## `isinstance` vs `type(x) ==`
+
+Both ask "is this the right type", but they disagree on subclasses:
+
+```python
+class Animal: pass
+class Dog2(Animal): pass
+
+d = Dog2()
+isinstance(d, Animal)   # True  -- Dog2 IS-A Animal
+type(d) == Animal       # False -- type(d) is Dog2, not Animal
+type(d) == Dog2         # True
+```
+
+`isinstance` walks the MRO, so it correctly recognizes subclasses; `type(x) ==` demands an *exact* type match and silently breaks polymorphism the moment someone subclasses your class. Prefer `isinstance` unless you have a specific reason to reject subclasses.
+
+## Composition over inheritance
+
+Inheritance says "is-a"; composition says "has-a" — a class holds another object as an attribute and delegates to it, instead of inheriting its behavior:
+
+```python
+class Engine:
+    def start(self) -> str:
+        return "vroom"
+
+class Car:
+    def __init__(self) -> None:
+        self.engine = Engine()  # Car HAS an Engine -- composition
+
+    def start(self) -> str:
+        return self.engine.start()
+```
+
+Composition avoids the fragile-base-class problem (a change to a deep parent breaking distant subclasses) and lets you swap the `Engine` for a different implementation without touching `Car`'s class hierarchy. Reach for inheritance only when the relationship is genuinely "is-a" and you want to inherit an *interface* along with behavior; reach for composition for everything else.
+
+## Duck typing vs `ABC` vs `Protocol`
+
+Python normally doesn't check types before calling a method — if the object has the right method, the call just works ("if it quacks like a duck..."):
+
+```python
+class Duck:
+    def quack(self) -> str:
+        return "Quack!"
+
+class Person:
+    def quack(self) -> str:
+        return "I'm quacking!"
+
+def make_it_quack(thing) -> str:
+    return thing.quack()   # no shared base class required
+```
+
+`abc.ABC` opts into **nominal** typing: subclasses must explicitly inherit from the abstract base, and Python refuses to instantiate a class that hasn't implemented every `@abstractmethod` — `Shape()` on an abstract `Shape` raises `TypeError: Can't instantiate abstract class Shape without an implementation for abstract method 'area'`, checked at instantiation time, at runtime.
+
+```python
+from abc import ABC, abstractmethod
+
+class Shape(ABC):
+    @abstractmethod
+    def area(self) -> float: ...
+```
+
+`typing.Protocol` gives you **structural** typing checked statically: a class satisfies a `Protocol` just by having the right methods, with no inheritance and no runtime check at all (unless you add `@runtime_checkable`).
+
+```python
+from typing import Protocol
+
+class Quacker(Protocol):
+    def quack(self) -> str: ...
+
+def make_it_quack_typed(thing: Quacker) -> str:
+    return thing.quack()
+
+make_it_quack_typed(Duck())   # Duck never mentions Quacker -- structural match, mypy/pyright both accept it
+```
+
+Use duck typing for quick scripts, `ABC` when you want an enforced, documented contract with shared implementation, and `Protocol` when you want static structural checking without forcing every implementer to inherit from your type.
+
+## Classes are objects, too
+
+`class` doesn't just create a type — it creates an **object**, an instance of `type` (the built-in metaclass). `type(Dog2)` is `<class 'type'>`, and so is `type(type)` itself — `type` is its own metaclass, the point where the chain stops.
+
+```python
+type(Dog2)             # <class 'type'>
+isinstance(Dog2, type) # True
+```
+
+A related piece of syntax, **name mangling**: an attribute named with two leading underscores (and at most one trailing) inside a class body, like `self.__secret`, is rewritten by the compiler to `self._ClassName__secret`. It's there to avoid accidental clashes in subclasses, not real privacy — the attribute is still reachable as `obj._ClassName__secret` from outside. Static type checkers hold the line further than the interpreter does: `uvx mypy --strict` on `m._Mangled__secret` reports `` "Mangled" has no attribute "_Mangled__secret"  [attr-defined] ``, and `uvx pyright` reports `Cannot access attribute "_Mangled__secret" for class "Mangled"` — neither exposes the mangled name as part of the class's public surface, even though the interpreter happily returns `42`.
 
 ## Full runnable demo
 
 export const classesCode = `
-class Animal:
-    kingdom: str = "Animalia"
+class Dog:
+    tricks: list[str] = []  # BUG: one list object shared by every instance
 
-    def __init__(self, name: str, sound: str) -> None:
-        self.name = name
-        self.sound = sound
-
-    def speak(self) -> str:
-        return f"{self.name} says {self.sound}"
-
-
-class Dog(Animal):
     def __init__(self, name: str) -> None:
-        super().__init__(name, "woof")
+        self.name = name
 
-    def fetch(self, item: str) -> str:
-        return f"{self.name} fetches the {item}!"
+    def add_trick(self, trick: str) -> None:
+        self.tricks.append(trick)  # mutates the SHARED class attribute
 
 
-dog = Dog("Rex")
-print(dog.speak())
-print(dog.fetch("ball"))
-print(Dog.kingdom)
-print(isinstance(dog, Animal))
+class FixedDog:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.tricks: list[str] = []  # instance attribute -- one list per dog
+
+    def add_trick(self, trick: str) -> None:
+        self.tricks.append(trick)
+
+
+rex = Dog("Rex")
+fido = Dog("Fido")
+rex.add_trick("sit")
+fido.add_trick("roll over")
+print(rex.tricks)
+print(rex.tricks is fido.tricks)
+
+good_rex = FixedDog("Rex")
+good_fido = FixedDog("Fido")
+good_rex.add_trick("sit")
+good_fido.add_trick("roll over")
+print(good_rex.tricks)
+print(good_rex.tricks is good_fido.tricks)
+
+
+class Singleton:
+    _instance: "Singleton | None" = None
+
+    def __new__(cls) -> "Singleton":
+        if cls._instance is None:
+            print("creating the one instance")
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+
+a = Singleton()
+b = Singleton()
+print(a is b)
+
+
+class ImmutablePoint(tuple[float, float]):
+    def __new__(cls, x: float, y: float) -> "ImmutablePoint":
+        return super().__new__(cls, (x, y))
+
+    @property
+    def x(self) -> float:
+        return self[0]
+
+    @property
+    def y(self) -> float:
+        return self[1]
+
+
+p = ImmutablePoint(1, 2)
+print(p.x, p.y, tuple(p))
+
+
+class Base:
+    def __init__(self, **kwargs: object) -> None:
+        print("Base.__init__", kwargs)
+        super().__init__()
+
+
+class Left(Base):
+    def __init__(self, **kwargs: object) -> None:
+        print("Left.__init__")
+        super().__init__(**kwargs)
+
+
+class Right(Base):
+    def __init__(self, **kwargs: object) -> None:
+        print("Right.__init__")
+        super().__init__(**kwargs)
+
+
+class Diamond(Left, Right):
+    def __init__(self, **kwargs: object) -> None:
+        print("Diamond.__init__")
+        super().__init__(**kwargs)
+
+
+print([c.__name__ for c in Diamond.__mro__])
+Diamond(value=1)
+
+
+class Animal:
+    pass
+
+
+class Dog2(Animal):
+    pass
+
+
+d = Dog2()
+print(isinstance(d, Animal))
+print(type(d) == Animal)
+print(type(d) == Dog2)
+
+print(type(Dog2))
+print(type(type))
+print(isinstance(Dog2, type))
+
+
+class Mangled:
+    def __init__(self) -> None:
+        self.__secret = 42  # rewritten by the compiler to _Mangled__secret
+
+    def reveal(self) -> int:
+        return self.__secret
+
+
+m = Mangled()
+print(m.reveal())
+print(m._Mangled__secret)  # still reachable -- mangling is not real privacy
 `.trim();
 
 <Playground code={classesCode} />
@@ -112,6 +351,57 @@ This is intentional — Python's philosophy is that explicit is better than impl
 The `self` parameter makes it immediately clear that a function operates on an instance, and it allows Python's method resolution to work without hidden magic.
 </Callout>
 
+## Mental Model
+
+<Mermaid code={`flowchart LR
+  L1["1. instance __dict__"] --> L2["2. class __dict__ (MRO order)"]
+  L2 --> L3["3. type(instance) itself, if all else fails"]
+  L2 -.->|"not found anywhere"| L4["AttributeError"]`} title="Attribute lookup: instance dict first, then the class's MRO chain" />
+
+An instance is a thin object whose own `__dict__` holds *its* attributes. Look up `obj.attr` and Python checks the instance's own `__dict__` first; if it's not there, it walks the class's MRO, class by class, until it finds `attr` or runs out of classes and raises `AttributeError`. Assignment (`obj.attr = x`) always writes to the *instance* `__dict__` — it never mutates the class — which is exactly why shadowing a class attribute through an instance doesn't touch the class attribute other instances see, and why the shared-mutable-class-attribute bug only bites when you *mutate the object in place* (`.append`) instead of assigning a new one.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Class attribute | Shared state, one copy in memory | Mutating it in place leaks across every instance |
+| `__new__` override | Full control over instance creation (singleton, immutable subclass) | Easy to get wrong; almost never needed |
+| Multiple inheritance + cooperative `super()` | Reuse from more than one base, deterministic MRO | Every class in the chain must call `super().__init__(**kwargs)`, or the chain breaks |
+| `isinstance` | Respects subclassing / polymorphism | Slightly more permissive than an exact-type check |
+| `ABC` | Enforced contract, shared implementation, fails fast at instantiation | Forces inheritance; can't retrofit an existing unrelated class |
+| `Protocol` | Structural, no inheritance required, works with classes you don't own | Static-only by default; no `isinstance` guarantee unless `@runtime_checkable` |
+
+## Common Misconceptions
+
+- **A class attribute is just a "default value" copied into each instance.** It is not copied — every instance that hasn't shadowed it shares the *same* object. Mutating a mutable class attribute in place mutates it for everyone.
+- **`__init__` creates the object.** `__new__` creates it; `__init__` only initializes what already exists. Overriding `__new__` is how singletons and immutable-type subclasses work.
+- **`isinstance(x, C)` and `type(x) == C` are interchangeable.** They agree only when `x` is exactly a `C`, never a subclass — `type(x) == C` is `False` for every subclass instance.
+- **Diamond inheritance is rare enough to ignore `super()`'s cooperative behavior.** Any class that might be mixed into multiple inheritance should call `super().__init__(**kwargs)` and forward unused kwargs, or it silently breaks the chain for whoever combines it with something else.
+- **Name-mangled attributes (`__secret`) are truly private.** They are reachable as `obj._ClassName__secret` at runtime; mangling only avoids accidental name clashes in subclasses, and type checkers reject external access to the mangled name even though the interpreter allows it.
+
+## Reading AI-generated code
+
+Before trusting a generated class, check for:
+
+- A class-level attribute assigned a mutable literal — `items = []`, `config = {}` — that a method then mutates in place (`.append`, `.update`, `[key] =`). That default is shared by every instance, not fresh per instance.
+- A subclass in a multiple-inheritance chain whose `__init__` calls `super().__init__()` with no arguments, or skips the `super()` call entirely, dropping kwargs the next class in the MRO needs.
+- `type(x) == SomeClass` used where a subclass instance should still count — this silently rejects every subclass.
+- An overridden `__new__` that forgets to `return` the instance, or that calls `cls(...)` recursively instead of `super().__new__(cls)` — both break construction.
+- A class that inherits from an unrelated class purely to reuse one method — a sign composition (a `has-a` attribute) was the right tool, not inheritance.
+
+<SpotTheBug code={`class ShoppingCart:
+    items = []  # meant as "default empty cart"
+
+    def add(self, item: str) -> None:
+        self.items.append(item)
+
+cart_a = ShoppingCart()
+cart_b = ShoppingCart()
+cart_a.add("book")
+print(cart_b.items)`} lang="python">
+`items = []` is a **class** attribute, not a per-instance default — there is exactly one list object, and every `ShoppingCart` that hasn't shadowed `items` shares it. `cart_a.add("book")` mutates that shared list in place, so `cart_b.items` prints `['book']` even though nothing was ever added to `cart_b`. Verified: `cart_a.items is cart_b.items` is `True`. Fix it by creating the list in `__init__`: `self.items: list[str] = []`, so each cart gets its own list.
+</SpotTheBug>
+
 export const quizClasses = [
   {
     q: "What is the purpose of `__init__` in a Python class?",
@@ -121,7 +411,8 @@ export const quizClasses = [
       "It is called when the instance is deleted",
       "It defines class-level constants"
     ],
-    answer: 1
+    answer: 1,
+    explain: "__init__ runs after the instance already exists (created by __new__) and sets up its attributes. It never creates or returns the instance itself."
   },
   {
     q: "You define `species = 'Canis'` directly in the class body. What kind of attribute is it?",
@@ -131,7 +422,8 @@ export const quizClasses = [
       "A class attribute shared by all instances",
       "A private attribute"
     ],
-    answer: 2
+    answer: 2,
+    explain: "Anything assigned directly in the class body (not inside a method, not on self) becomes a class attribute — one object stored on the class and shared by every instance that hasn't shadowed it."
   },
   {
     q: "Inside an instance method, what does `self` refer to?",
@@ -141,7 +433,8 @@ export const quizClasses = [
       "The specific instance the method was called on",
       "The parent class"
     ],
-    answer: 2
+    answer: 2,
+    explain: "self is just the first positional parameter, bound automatically by Python to the instance the method was called on -- rex.bark() passes rex as self."
   },
   {
     q: "What does `super().__init__(name, sound)` do inside a subclass?",
@@ -151,7 +444,52 @@ export const quizClasses = [
       "Overrides the parent __init__ completely",
       "Raises TypeError if the parent has no __init__"
     ],
-    answer: 1
+    answer: 1,
+    explain: "super() returns a proxy that forwards the call to the next class in the MRO -- here the parent's __init__ -- so the subclass can reuse the parent's setup logic instead of duplicating it."
+  },
+  {
+    q: "```python\nclass Dog:\n    tricks: list[str] = []\n\n    def add_trick(self, t):\n        self.tricks.append(t)\n\nrex = Dog()\nfido = Dog()\nrex.add_trick(\"sit\")\nprint(fido.tricks)\n```\nWhat does this print?",
+    options: [
+      "[] -- fido has its own empty list",
+      "['sit'] -- fido shares the same list object as rex",
+      "AttributeError: 'Dog' object has no attribute 'tricks'",
+      "TypeError: tricks is read-only"
+    ],
+    answer: 1,
+    explain: "tricks is a class attribute -- one list shared by every Dog. rex.add_trick mutates that shared list in place, so fido.tricks sees the same change: ['sit']. rex.tricks is fido.tricks is True."
+  },
+  {
+    q: "```python\nclass Base:\n    def __init__(self, **kw): print(\"Base\", kw); super().__init__()\nclass Left(Base):\n    def __init__(self, **kw): print(\"Left\"); super().__init__(**kw)\nclass Right(Base):\n    def __init__(self, **kw): print(\"Right\"); super().__init__(**kw)\nclass Diamond(Left, Right):\n    def __init__(self, **kw): print(\"Diamond\"); super().__init__(**kw)\n\nDiamond(value=1)\n```\nWhat order do the prints appear in?",
+    options: [
+      "Diamond, Left, Base, Right",
+      "Diamond, Left, Right, Base",
+      "Diamond, Right, Left, Base",
+      "Base, Left, Right, Diamond"
+    ],
+    answer: 1,
+    explain: "Diamond.__mro__ is [Diamond, Left, Right, Base, object]. Each super().__init__() forwards to the NEXT class in that MRO, not to its own direct parent, so Left's super() call reaches Right before Base."
+  },
+  {
+    q: "`class Dog2(Animal): pass` and `d = Dog2()`. Which is true?",
+    options: [
+      "isinstance(d, Animal) is False because d is a Dog2, not an Animal",
+      "type(d) == Animal is True because Dog2 inherits everything from Animal",
+      "isinstance(d, Animal) is True, but type(d) == Animal is False",
+      "Both isinstance(d, Animal) and type(d) == Animal are False"
+    ],
+    answer: 2,
+    explain: "isinstance walks the MRO, so a Dog2 correctly counts as an Animal. type(d) == Animal demands an exact type match -- type(d) is Dog2, so it's False even though d IS an Animal."
+  },
+  {
+    q: "A class defines `self.__token = \"abc\"` inside `__init__`. From outside the class, how do you read it?",
+    options: [
+      "obj.__token -- the double underscore has no effect outside the class",
+      "obj._ClassName__token -- the compiler renamed it via name mangling",
+      "It cannot be read from outside the class under any name",
+      "obj.token -- Python strips both leading underscores automatically"
+    ],
+    answer: 1,
+    explain: "Name mangling rewrites self.__token to self._ClassName__token wherever it appears inside the class body. It's reachable from outside under that mangled name -- it is not real privacy, just clash-avoidance for subclasses."
   }
 ];
 

@@ -37,13 +37,15 @@ src/content/docs/
     typing-errors/
     async-concurrency/
     stdlib-testing-tooling/
+    runtime-internals/
+    reading-python/
     index.mdx               # EN landing (splash)
   th/                       # Thai — served at /th/...
     (same module directories)
     index.mdx               # TH landing (splash)
 ```
 
-### The 7 Modules
+### The 9 Modules
 
 | Directory | Module |
 | --------- | ------ |
@@ -54,6 +56,8 @@ src/content/docs/
 | `typing-errors` | Typing & Errors |
 | `async-concurrency` | Async & Concurrency |
 | `stdlib-testing-tooling` | Stdlib, Testing & Tooling |
+| `runtime-internals` | Runtime Internals (object model, memory & GC, bytecode & interpreter, GIL & free-threading) |
+| `reading-python` | Reading & Reviewing Python (AI bug catalog, review checklist, verification tools) |
 
 ### Lesson Template
 
@@ -67,7 +71,7 @@ frontmatter (`title`, `description`, `sidebar.order`) → imports → concept in
 
 ### Pyodide notes
 
-Pyodide runs pure Python plus much of the standard library (collections, itertools, functools, math, datetime, json, dataclasses, typing, re). It does **not** support `threading`/`multiprocessing`, and top-level `asyncio.run()` does not work (a loop is already running) — those lessons are shown as code with a "run locally" callout rather than a live runner.
+Pyodide runs pure Python plus much of the standard library (collections, itertools, functools, math, datetime, json, dataclasses, typing, re). It does **not** support `threading`/`multiprocessing` — those lessons are shown as code with a "run locally" callout rather than a live runner. `asyncio` examples do run: the browser's loop is already running, so `py-runner.ts` rewrites a lesson's final top-level `asyncio.run(main())` (bare or under an `if __name__ == "__main__":` guard) into a top-level `await main()` before executing; lesson code stays in the canonical CPython form so it also runs with `python3.14`.
 
 ## Deployment
 

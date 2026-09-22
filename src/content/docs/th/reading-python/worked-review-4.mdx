@@ -1,0 +1,319 @@
+---
+title: 'Worked review 4: a pytest suite that passes while wrong'
+description: 'pytest suite เล็ก ๆ ที่มี bug ปลูกไว้ 4 ตัว -- mock.patch target ผิด, fixture scope leak, assert ที่ไม่มีความหมาย และ error path ที่ไม่ถูกทดสอบ -- ที่ยังผ่านเกือบทั้งหมด'
+sidebar:
+  order: 8
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+> **Playground note:** `pytest` ต้องการ binary `pytest` จริง, test discovery และ (สำหรับตัวอย่าง `@patch`) module ที่สองจริงให้ patch — ไม่มีอะไรในนี้ที่ Pyodide runner ในเบราว์เซอร์ให้ได้เลย ทุก snippet ด้านล่างเป็น fence รันในเครื่องด้วย `uv run --with pytest pytest -q`
+
+นี่คือรูปแบบที่อันตรายที่สุดใน catalog ทั้งหมดนี้: test suite ที่ *เกือบ* ผ่านทั้งหมด บนโค้ดที่มี bug จริงที่ถูกส่งใช้งานแล้ว pytest ที่ผ่านสีเขียวคือสัญญาณเดียวที่ผู้รีวิวเชื่อถือมากที่สุด — ซึ่งเป็นเหตุผลพอดีว่าทำไม suite ที่ผ่านด้วยเหตุผลผิด ๆ ถึงคุ้มค่าที่จะรีวิวอย่างเต็มรูปแบบ
+
+โค้ดที่ถูกทดสอบ — pricing module เล็ก ๆ ที่เรียก "external" pricing service:
+
+```python
+# external_pricing.py
+def get_current_multiplier() -> float:
+    # Pretend this calls a real remote pricing service.
+    return 1.0
+```
+
+```python
+# pricing.py
+from external_pricing import get_current_multiplier
+
+
+def apply_discount(price: float, pct: float) -> float:
+    if pct < 0 or pct > 1:
+        raise ValueError("pct must be between 0 and 1")
+    return price * (1 - pct) * get_current_multiplier()
+```
+
+test suite:
+
+```python
+# test_pricing.py
+from unittest.mock import patch
+
+import pytest
+
+from pricing import apply_discount
+
+
+@patch("external_pricing.get_current_multiplier", return_value=2.0)
+def test_apply_discount_uses_multiplier(mock_mult):
+    result = apply_discount(100, 0.1)
+    assert result
+
+
+def test_apply_discount_basic():
+    assert apply_discount(100, 0.5) == 50.0
+
+
+shared_cache: dict[str, bool] = {}
+
+
+@pytest.fixture(scope="module")
+def cache():
+    return shared_cache
+
+
+def test_first_uses_cache(cache):
+    cache["seen"] = True
+    assert "seen" in cache
+
+
+def test_second_assumes_empty_cache(cache):
+    assert "seen" not in cache
+```
+
+**output จริง `pytest -q`:**
+
+```text
+...F                                                                     [100%]
+=================================== FAILURES ===================================
+_______________________ test_second_assumes_empty_cache ________________________
+
+cache = {'seen': True}
+
+    def test_second_assumes_empty_cache(cache):
+>       assert "seen" not in cache
+E       AssertionError: assert 'seen' not in {'seen': True}
+
+test_pricing.py:32: AssertionError
+=========================== short test summary info ============================
+FAILED test_pricing.py::test_second_assumes_empty_cache - AssertionError: ass...
+1 failed, 3 passed in 0.01s
+```
+
+3 ผ่าน 1 fail อ่านผลลัพธ์นี้แบบที่ผู้รีวิวที่ยุ่งจริง ๆ จะอ่าน: "test fixture ตัวหนึ่งดู flaky ที่เหลือเขียวหมด" — แล้วไปต่อ การอ่านแบบนั้นพลาดสองในสี่ bug จริงในไฟล์นี้
+
+## สิ่งที่พบ
+
+<details>
+<summary>Bug 1: <code>@patch("external_pricing.get_current_multiplier", ...)</code> patch ผิดตำแหน่ง (catalog #22)</summary>
+
+**อาการ:** `test_apply_discount_uses_multiplier` **ผ่าน** แต่มันไม่ได้ทดสอบสิ่งที่มันอ้างว่าทดสอบจริง ๆ `pricing.py` ทำ `from external_pricing import get_current_multiplier` — นั่นผูกชื่อ `get_current_multiplier` *ของ* `pricing` เอง แยกจาก `external_pricing.get_current_multiplier` การ patch attribute ของ module เดิมไม่เคยแตะชื่อที่ `pricing.apply_discount` เรียกจริง ๆ เลย
+
+**หลักฐาน — พิสูจน์ว่า mock มีผลเป็นศูนย์** ใช้ assertion ที่เข้มงวดกว่าแทน assertion ที่ไม่มีความหมายที่ test นี้มีอยู่จริง:
+
+```python
+@patch("external_pricing.get_current_multiplier", return_value=2.0)
+def test_with_strict_assert(mock_mult):
+    result = apply_discount(100, 0.1)
+    assert result == 100 * 0.9 * 2.0, f"expected mocked multiplier to apply, got {result}"
+```
+
+```text
+E       AssertionError: expected mocked multiplier to apply, got 90.0
+E       assert 90.0 == ((100 * 0.9) * 2.0)
+```
+
+`90.0` คือ `100 * 0.9 * 1.0` — `get_current_multiplier()` ตัว **จริง** ที่ไม่ถูก mock รันแทน mock ไม่เคยอยู่ใน call path เลยด้วยซ้ำ
+
+**ทางแก้:** patch ชื่อตามที่ `pricing.py` lookup มันจริง ๆ:
+
+```python
+@patch("pricing.get_current_multiplier", return_value=2.0)
+def test_apply_discount_uses_multiplier(mock_mult):
+    result = apply_discount(100, 0.1)
+    assert result == 100 * 0.9 * 2.0
+```
+
+</details>
+
+<details>
+<summary>Bug 2: <code>@pytest.fixture(scope="module")</code> ทำให้ mutable state รั่วระหว่าง test</summary>
+
+**อาการ:** นี่คือ bug ตัวเดียวที่ suite เองรายงาน failure ให้จริง — `test_second_assumes_empty_cache` fail เพราะ `test_first_uses_cache` เขียน `"seen"` ลงใน `cache` object *เดียวกัน* ไปแล้ว ซึ่ง `scope="module"` ส่งให้ทุก test ในไฟล์นั้นใช้ร่วมกันแทนที่จะสร้างใหม่ต่อ test
+
+**หลักฐาน:** output ของ failure จริงข้างบนแสดง `cache = {'seen': True}` — state ที่หลงเหลือจาก test ก่อนหน้า
+
+**ทางแก้:** ใช้ scope function แบบ default (`{}` ใหม่ต่อ test) เว้นแต่การแชร์ state ข้าม test จะตั้งใจจริง ๆ:
+
+```python
+@pytest.fixture
+def cache():
+    return {}
+```
+
+</details>
+
+<details>
+<summary>Bug 3: <code>assert result</code> เช็คแค่ truthiness ไม่ใช่ค่าที่คาดหวังจริง</summary>
+
+**อาการ:** `assert result` ของ `test_apply_discount_uses_multiplier` เช็คแค่ว่า `result` ไม่ falsy (`0`, `0.0`, `None`, `""` ฯลฯ) — `90.0` (ค่าผิดที่ไม่ถูก mock จาก bug 1) truthy พอ ๆ กับ `180.0` (ค่าที่ mock ถูกต้องควรจะเป็น) ดังนั้น assertion นี้แยกแยะไม่ได้ว่า "mock ทำงาน" กับ "mock ไม่มีผลอะไรเลยแบบเงียบ ๆ"
+
+**หลักฐาน:** test ผ่านเหมือนกันเป๊ะไม่ว่า bug 1 จะถูกแก้หรือไม่ เพราะ assertion ไม่เคยมีความสามารถจับความต่างนั้นได้เลย — ดูเวอร์ชันที่เข้มงวดกว่าของ bug 1 ข้างบน ซึ่ง *fail* จริงกับโค้ดที่มี bug
+
+**ทางแก้:** assert ค่าที่คาดหวังจริง พร้อม message ที่บอกว่าคาดหวังอะไร:
+
+```python
+assert result == 100 * 0.9 * 2.0, f"expected mocked multiplier to apply, got {result}"
+```
+
+</details>
+
+<details>
+<summary>Bug 4: error path (<code>pct</code> ที่ไม่ valid) ไม่ถูกทดสอบเลย</summary>
+
+**อาการ:** ไม่มี test ไหนเรียก `apply_discount` ด้วย `pct < 0` หรือ `pct > 1` เลย — guard `if pct < 0 or pct > 1: raise ValueError(...)` มี test coverage เป็นศูนย์ เพื่อพิสูจน์ว่านี่เป็นช่องโหว่จริงที่ใช้ประโยชน์ได้ ไม่ใช่แค่เชิงทฤษฎี เงื่อนไขของ guard ถูกทำให้พังโดยตั้งใจ (`or` เปลี่ยนเป็น `and` ทำให้มันไม่มีทางเป็นจริงได้อีก) แล้วรัน suite *เดียวกัน* ใหม่โดยไม่เปลี่ยนอะไรอื่นเลย:
+
+```text
+1 failed, 3 passed in 0.01s
+```
+
+ผลลัพธ์เหมือนเดิมเป๊ะ input-validation guard ที่พังสมบูรณ์ — ตัวที่ปล่อยให้ `apply_discount(100, -5)` คืน `600.0` แบบเงียบ ๆ แทนที่จะ raise — ถูกส่งใช้งานพร้อมผลลัพธ์ test เดียวกันเป๊ะกับโค้ดที่ถูกต้อง suite ให้การป้องกันเป็นศูนย์ต่อ regression นี้
+
+**ทางแก้:** เพิ่ม test ที่ทดสอบ error path อย่างชัดเจน:
+
+```python
+def test_apply_discount_rejects_negative_pct():
+    with pytest.raises(ValueError, match="pct must be between 0 and 1"):
+        apply_discount(100, -0.1)
+
+def test_apply_discount_rejects_pct_above_one():
+    with pytest.raises(ValueError, match="pct must be between 0 and 1"):
+        apply_discount(100, 1.5)
+```
+
+</details>
+
+## เวอร์ชันที่แก้แล้ว
+
+แก้ทั้งสี่ bug แล้ว: target ของ `@patch` ถูกแก้ไข, fixture ถูก scope ต่อ test, assert ทั้งสองเช็คค่าที่คาดหวังจริงพร้อม message และเพิ่ม test ใหม่สองตัวที่ครอบ error path ที่ไม่เคยถูกทดสอบมาก่อน:
+
+```python
+# test_pricing_fixed.py
+from unittest.mock import patch
+
+import pytest
+
+from pricing import apply_discount
+
+
+@patch("pricing.get_current_multiplier", return_value=2.0)
+def test_apply_discount_uses_multiplier(mock_mult):
+    result = apply_discount(100, 0.1)
+    assert result == 100 * 0.9 * 2.0, f"expected mocked multiplier to apply, got {result}"
+
+
+def test_apply_discount_basic():
+    assert apply_discount(100, 0.5) == 50.0, "50% off 100 should be exactly 50.0"
+
+
+def test_apply_discount_rejects_negative_pct():
+    with pytest.raises(ValueError, match="pct must be between 0 and 1"):
+        apply_discount(100, -0.1)
+
+
+def test_apply_discount_rejects_pct_above_one():
+    with pytest.raises(ValueError, match="pct must be between 0 and 1"):
+        apply_discount(100, 1.5)
+
+
+@pytest.fixture
+def cache():
+    return {}
+
+
+def test_first_uses_cache(cache):
+    cache["seen"] = True
+    assert "seen" in cache
+
+
+def test_second_assumes_empty_cache(cache):
+    assert "seen" not in cache, "each test should get its own fresh cache"
+```
+
+**output จริง `pytest -q`:**
+
+```text
+......                                                                   [100%]
+6 passed in 0.01s
+```
+
+**A/B proof จริงที่แสดงว่า suite ที่แก้แล้วป้องกัน regression ได้จริง** — การเปลี่ยน guard เดียวกันเป๊ะ (`or` → `and`) รันกับ suite ที่แก้แล้ว:
+
+```text
+E       Failed: DID NOT RAISE ValueError
+...
+FAILED test_pricing_fixed.py::test_apply_discount_rejects_negative_pct - Failed: DID NOT RAISE ValueError
+FAILED test_pricing_fixed.py::test_apply_discount_rejects_pct_above_one - Failed: DID NOT RAISE ValueError
+2 failed, 4 passed in 0.01s
+```
+
+suite ที่แก้แล้วจับ regression ตัวเดียวกันเป๊ะที่ suite เดิมพลาดไปโดยสมบูรณ์ได้
+
+## สิ่งที่เครื่องมือจับได้
+
+ไม่มี bug ไหนในสี่ตัวของไฟล์นี้ที่ถูกจับโดย `ruff`, `mypy --strict` หรือ `pyright` เลย — ทุกตัวเป็นคุณสมบัติของสิ่งที่ test *verify* จริง ๆ ซึ่งอยู่นอกเหนือสิ่งที่ linter หรือ type checker ตรวจสอบ `pytest --cov` ไปได้ไกลกว่านั้นสำหรับ bug 4 แต่ยังไม่ถึงปัญหาจริง:
+
+```text
+Name         Stmts   Miss  Cover   Missing
+------------------------------------------
+pricing.py       5      1    80%   6
+------------------------------------------
+TOTAL            5      1    80%
+```
+
+**output จริง coverage 80%** — บรรทัด 6 คือ `raise ValueError(...)` ข้างใน guard ถูก flag ถูกต้องว่าไม่เคยถูกรันโดย test ไหนเลย coverage *ชี้นิ้ว* ไปที่บรรทัดที่ถูกต้องพอดีตรงนี้ สิ่งที่มันบอกไม่ได้คือ *ทำไม* มันถึงสำคัญ: coverage แยกแยะได้แค่ "บรรทัดนี้รัน" กับ "บรรทัดนี้ไม่เคยรัน" — มันไม่มีทางบอกว่า "และถ้าเงื่อนไขของบรรทัดนี้พัง จะไม่มี test ไหนสังเกตเห็นเลย" ความแตกต่างนั้นคือสิ่งที่ A/B proof ข้างบนแสดงให้เห็นและ coverage เพียงอย่างเดียวทำไม่ได้: การทำให้ logic ของ guard พังสมบูรณ์ (`or` → `and`) ไม่เปลี่ยนบรรทัดที่รันเลยบน test input ที่มีอยู่ ดังนั้น coverage report ก่อนและหลังการนำ regression นี้เข้ามาจะดูเหมือนกันเป๊ะ
+
+<Callout title="pytest ที่ผ่านสีเขียวไม่ใช่หลักฐานของอะไรเลย นอกจาก 'ไม่มี assertion ไหน fail'">
+ทุก bug ในบทนี้ให้ suite ที่ผ่านเกือบทั้งหมดหรือทั้งหมด บทเรียนไม่ใช่ "อย่าเชื่อ pytest" — แต่คือ suite ที่ผ่านมีความแข็งแรงเท่ากับ assertion และ mock target ที่คนเขียนใส่ไว้ในนั้นพอดี อ่านสิ่งที่ test assert จริง ๆ และ string ของ `@patch` ชี้ไปที่ไหน ด้วยความสงสัยระดับเดียวกับที่คุณจะใช้กับ production code ที่มันทดสอบ ดูส่วน resources & security ของ **[Review Checklist](/python/th/reading-python/review-checklist/)** สำหรับการเช็ค `@patch`-target โดยเฉพาะ
+</Callout>
+
+export const quizWorkedReview4 = [
+  {
+    q: "`test_apply_discount_uses_multiplier` ผ่านใน suite ต้นฉบับ assertion ที่เข้มงวดกว่า (`assert result == 100 * 0.9 * 2.0`) เผยให้เห็นอะไรที่ `assert result` ต้นฉบับไม่เห็น?",
+    options: [
+      "Nothing different -- both assertions test the exact same thing",
+      "The mocked multiplier (2.0) was never actually applied -- the real, unmocked get_current_multiplier() (1.0) ran instead, because @patch(\"external_pricing.get_current_multiplier\") never touches the separate name pricing.py bound via its own from-import",
+      "pytest itself has a bug that makes weak assertions pass incorrectly",
+      "The test would fail either way due to an unrelated import error"
+    ],
+    answer: 1,
+    explain: "assert result เช็คแค่ truthiness -- 90.0 (ผลลัพธ์จริงที่ไม่ถูก mock) กับ 180.0 (ผลลัพธ์ที่ mock ถูกต้องควรจะเป็น) truthy ทั้งคู่ assertion ที่อ่อนแอจึงแยกแยะไม่ได้ assertion ที่เข้มงวดกว่าเผยว่า mock มีผลเป็นศูนย์"
+  },
+  {
+    q: "ทำไม `test_second_assumes_empty_cache` fail ด้วย `cache = {'seen': True}` ทั้งที่ test นั้นไม่เคยใส่อะไรลงใน cache เองเลย?",
+    options: [
+      "pytest fixtures always share state across every test file in the project",
+      "@pytest.fixture(scope=\"module\") constructs the fixture value ONCE per module and hands the same object to every test in that file -- test_first_uses_cache's mutation is still present when test_second runs",
+      "This is a bug in pytest's fixture implementation",
+      "dict objects cannot be used safely in any pytest fixture"
+    ],
+    answer: 1,
+    explain: "scope=\"module\" แปลว่า fixture function รันครั้งเดียวสำหรับทั้งไฟล์ test และทุก test ที่ขอมันได้ object เดียวกันเป๊ะ test ไหนก็ตามที่ mutate มัน (เช่น test_first_uses_cache) จะทำให้การ mutation นั้นรั่วไปยังทุก test ถัดไปใน module เดียวกัน"
+  },
+  {
+    q: "guard `if pct < 0 or pct > 1: raise ValueError(...)` ถูกทำให้พังโดยตั้งใจ (or -> and) และ test suite เดียวกันเป๊ะยังรายงาน '1 failed, 3 passed' -- เหมือนเวอร์ชันที่ไม่พังทุกประการ สิ่งนี้พิสูจน์อะไร?",
+    options: [
+      "The test suite is working correctly and this proves nothing",
+      "No test in the suite ever calls apply_discount with an out-of-range pct, so a completely disabled validation guard produces zero change in test outcomes -- the error path has no test coverage protecting it",
+      "pytest cannot detect changes to if statements",
+      "The bug only affects performance, not correctness, so tests wouldn't be expected to catch it"
+    ],
+    answer: 1,
+    explain: "นี่คือการพิสูจน์โดยตรงและ reproduce ได้ (A/B test บน source) ว่า suite ให้การป้องกัน regression เป็นศูนย์สำหรับ validation guard -- เนื่องจากไม่มี test ที่มีอยู่ทดสอบ pct<0 หรือ pct>1 การทำให้ logic นั้นพังสมบูรณ์ไม่เปลี่ยนอะไรเลยว่า test ไหนผ่านหรือ fail"
+  },
+  {
+    q: "`pytest --cov` รายงาน coverage 80% บน pricing.py ที่มี bug โดย flag บรรทัด `raise ValueError` ว่าไม่เคยรันอย่างถูกต้อง ทำไม coverage report นั้นเพียงอย่างเดียวถึงไม่เผยว่าเงื่อนไขของ guard (`or` เทียบกับ `and`) สามารถพังได้แบบเงียบ ๆ?",
+    options: [
+      "It does reveal this -- 80% coverage is direct proof the guard is broken",
+      "Coverage only measures whether a line executed at least once during any test, not whether its logic was verified with an input designed to exercise it -- an intentionally broken guard (or -> and) changes zero lines that run, so a before/after coverage report would look identical",
+      "This is a bug in the coverage tool itself",
+      "Coverage tools cannot analyze if/raise statements at all"
+    ],
+    answer: 1,
+    explain: "coverage flag 'บรรทัดนี้ไม่เคยรัน' ได้ถูกต้อง แต่นั่นเป็นข้อเท็จจริงที่อ่อนกว่า 'เงื่อนไขของบรรทัดนี้ถูกต้อง' A/B test ในบทนี้ทำให้ guard พังสมบูรณ์โดยที่ทุกบรรทัดที่รันยังเหมือนเดิม -- พิสูจน์ว่า coverage เพียงอย่างเดียวแยกแยะ guard ที่ถูกต้องแต่ไม่ถูกทดสอบ กับ guard ที่พังแต่ไม่ถูกทดสอบไม่ได้"
+  }
+];
+
+<Quiz client:visible id="reading-python/worked-review-4" questions={quizWorkedReview4} />
+
+<ProgressTracker client:visible id="reading-python/worked-review-4" />

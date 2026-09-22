@@ -1,6 +1,6 @@
 ---
 title: Data Structures
-description: 'An overview of Python built-in collections — list, tuple, dict, and set — with a runnable demo.'
+description: 'An overview of Python built-in collections — list, tuple, dict, and set — with a mutable/hashable/ordered comparison and a runnable demo.'
 sidebar:
   order: 1
 ---
@@ -9,19 +9,23 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Python's built-in collections
 
 Python ships four general-purpose container types in the language core — no imports required.
 
-| Type | Syntax | Mutable | Ordered | Duplicates |
-|------|--------|---------|---------|------------|
-| `list` | `[1, 2, 3]` | yes | yes | yes |
-| `tuple` | `(1, 2, 3)` | no | yes | yes |
-| `dict` | `{"a": 1}` | yes | yes (3.7+) | keys: no |
-| `set` | `{1, 2, 3}` | yes | no | no |
+| Type | Syntax | Mutable | Ordered | Duplicates | Hashable |
+|------|--------|---------|---------|------------|----------|
+| `list` | `[1, 2, 3]` | yes | yes | yes | no |
+| `tuple` | `(1, 2, 3)` | no | yes | yes | only if every element is |
+| `dict` | `{"a": 1}` | yes | yes (3.7+) | keys: no | no |
+| `set` | `{1, 2, 3}` | yes | no | no | no |
+| `frozenset` | `frozenset({1, 2})` | no | no | no | yes |
 
-Each type has a distinct strength: lists for ordered sequences, tuples for fixed records, dicts for key-value lookup, and sets for membership tests and set algebra.
+Each type has a distinct strength: lists for ordered sequences, tuples for fixed records, dicts for key-value lookup, and sets for membership tests and set algebra. `frozenset` is the immutable sibling of `set` — trading mutation for the ability to be a dict key or live inside another set.
+
+**Mutable and hashable are opposites.** Every mutable type here (`list`, `dict`, `set`) is unhashable — its value could change after being used as a key, which would corrupt whatever hashed it. `tuple` is hashable only conditionally: hashable if and only if every element it holds is itself hashable, because a tuple holding a mutable element (like a list) inherits that element's instability.
 
 ## Choosing the right collection
 
@@ -33,8 +37,6 @@ Each type has a distinct strength: lists for ordered sequences, tuples for fixed
 ## Runnable overview
 
 export const dataStructuresIndexCode = `
-from collections import namedtuple
-
 # --- list ---
 nums = [1, 2, 3, 4, 5]
 print('list:', nums)
@@ -54,39 +56,119 @@ print('alice score:', scores['alice'])
 unique = {3, 1, 4, 1, 5, 9, 2, 6, 5}
 print('set:', sorted(unique))
 
-# --- namedtuple: lightweight named record ---
-Point = namedtuple('Point', ['x', 'y'])
-p = Point(3, 4)
-print('namedtuple:', p.x, p.y)
+# --- hashability decides what can be a dict key or set member ---
+by_coords = {coords: 'a point'}   # tuple works: it's hashable
+print('tuple as dict key:', by_coords)
+
+try:
+    by_list = {nums: 'broken'}    # list does not: it's mutable, unhashable
+except TypeError as e:
+    print('TypeError:', e)
 `.trim();
 
 <Playground code={dataStructuresIndexCode} />
 
+## Mental Model
+
+```text
+list      [ 1 | 2 | 3 ]   mutable, ordered      -- reorder/replace freely
+tuple     ( 1 | 2 | 3 )   immutable, ordered     -- fixed once built
+dict      { k: v, ... }   mutable, ordered keys  -- lookup by hash(key)
+set       { 1, 2, 3 }     mutable, unordered     -- membership by hash(value)
+frozenset immutable set                          -- hashable, unlike set
+
+hashable  = can compute a stable hash() -> usable as a dict key / set member
+mutable   = value can change after creation without changing identity
+these two are opposites: every built-in mutable type here is unhashable
+```
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| `list` | ordered, mutable, indexable by position | `O(n)` membership test (`in`); `O(n)` insert/remove anywhere but the end |
+| `tuple` | immutable, lightweight, hashable if its elements are | can't grow, shrink, or reorder after creation |
+| `dict` | `O(1)` average key lookup, preserves insertion order | every key must be hashable |
+| `set` / `frozenset` | `O(1)` average membership test, deduplicates for free | unordered — no indexing, no guaranteed iteration order; `set` itself can't be a dict key (only `frozenset` can) |
+
+## Common Misconceptions
+
+- **"`{}` creates an empty set"** — fact: `{}` creates an empty **dict**. The only way to create an empty set is `set()`.
+- **"All four collections support the same operations"** — fact: only `list` and `dict` support assigning into an existing position (`lst[0] = x`, `d[k] = v`); `tuple`, `set`, and `frozenset` never support item assignment.
+- **"Picking a collection type is a style choice"** — fact: it changes the complexity class of your operations (`O(1)` vs `O(n)` lookup) and the mutability guarantees callers can rely on — this is a correctness and performance decision, not a style one.
+- **"A tuple is always hashable because tuples are immutable"** — fact: only if every element inside it is also hashable; a tuple holding a list is not hashable.
+
+## Reading AI-generated code
+
+- Does the code write `seen = {}` and then call `.add(...)` on it? `{}` is a dict, not a set — `.add` does not exist on `dict`, and this raises `AttributeError` the first time it runs.
+- Does a loop do repeated `x in some_collection` checks against something that started life as a `list` and keeps growing? That's an `O(n)` check on every iteration; a `set` makes the same check `O(1)` on average.
+- Is a tuple treated as if it supports `.append()` or item assignment "just this once"? Both raise immediately — `AttributeError` or `TypeError`.
+- Does code assume a `set`'s iteration order is meaningful or reproducible? It isn't — only `list`, `tuple`, and `dict` (3.7+) give ordering guarantees.
+
+<SpotTheBug code={`def unique_ids(records):
+    seen = {}
+    result = []
+    for record in records:
+        if record['id'] not in seen:
+            seen.add(record['id'])
+            result.append(record)
+    return result
+
+
+print(unique_ids([{'id': 1}, {'id': 2}, {'id': 1}]))`}>
+`seen = {}` creates an empty **dict**, not a set — `{}` is always a dict literal in Python; the empty-set spelling is `set()`. `record['id'] not in seen` still works (checking membership against a dict checks its keys), but `seen.add(record['id'])` fails immediately, because `dict` has no `.add` method — only `set` does. Verified on Python 3.14: `AttributeError: 'dict' object has no attribute 'add'`. The fix is `seen = set()`.
+</SpotTheBug>
+
 <Callout title="collections module extends the built-ins">
 The standard library `collections` module adds `namedtuple`, `deque`, `defaultdict`, `Counter`, and `OrderedDict` on top of the four core types.
-You will see these in depth as you progress through the module.
+You will see these in depth as you progress through the module — `namedtuple` in particular is covered alongside tuples, once you know what a tuple actually is.
 </Callout>
 
 export const quizDataStructuresIndex = [
     {
         q: "Which built-in collection type does NOT allow duplicate values?",
         options: ["list", "tuple", "dict (values)", "set"],
-        answer: 3
+        answer: 3,
+        explain: "A set automatically discards duplicates on construction and on add() — it can only ever hold each distinct hashable value once. list, tuple, and a dict's values may all repeat freely."
     },
     {
-        q: "Since Python 3.7, which collection preserves insertion order?",
-        options: ["set", "frozenset", "dict", "Both dict and set"],
-        answer: 2
+        q: "What does this raise?\n\nseen = {}\nseen.add(1)",
+        options: [
+            "Nothing — it adds 1 to the set",
+            "TypeError: 'dict' object is not callable",
+            "AttributeError: 'dict' object has no attribute 'add'",
+            "KeyError: 1"
+        ],
+        answer: 2,
+        explain: "{} is an empty dict literal, not an empty set -- Python has no {}-based spelling for an empty set, only set(). dict has no .add method (it uses seen[key] = value or .update()), so calling .add on it raises AttributeError immediately."
     },
     {
-        q: "Which collection is immutable?",
-        options: ["list", "tuple", "dict", "set"],
-        answer: 1
-    },
-    {
-        q: "Which type is best for fast membership testing of a large number of unique items?",
+        q: "Which built-in type is both ordered AND immutable?",
         options: ["list", "tuple", "set", "dict"],
-        answer: 2
+        answer: 1,
+        explain: "tuple preserves the order elements were given in and cannot be modified after creation. list is ordered but mutable; set is neither ordered nor immutable; dict is ordered (3.7+) but mutable."
+    },
+    {
+        q: "What does this raise?\n\ndata = (1, 2, [3, 4])\nprint(hash(data))",
+        options: [
+            "Nothing — prints a valid hash value",
+            "TypeError: unhashable type: 'list'",
+            "TypeError: unhashable type: 'tuple'",
+            "IndexError: tuple index out of range"
+        ],
+        answer: 1,
+        explain: "A tuple's hashability depends entirely on its elements: a tuple of only hashable elements is hashable, but this tuple contains a list, which is mutable and therefore unhashable -- the tuple inherits that unhashability, and hash() raises TypeError naming the actual offending type, 'list'."
+    },
+    {
+        q: "A function does `x in collection` inside a loop that runs thousands of times, where `collection` can grow to thousands of items. Which choice avoids an O(n) check on every call?",
+        options: [
+            "Keep collection as a list — 'in' is the same cost for every type",
+            "Convert collection to a tuple — tuples are faster to search",
+            "Convert collection to a set — average O(1) membership testing",
+            "Convert collection to a dict with None values, since dicts are always fastest"
+        ],
+        answer: 2,
+        explain: "'in' on a list or tuple is O(n) -- it checks elements one at a time. A set hashes the value and checks a bucket directly, O(1) on average regardless of size. A dict-with-None-values would also give O(1) 'in' on its keys, but it carries pointless per-item overhead compared to a plain set when there is no value to store."
     }
 ];
 

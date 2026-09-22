@@ -9,6 +9,7 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Function เป็น first-class object
 
@@ -73,6 +74,112 @@ for op in ops:
 
 <Playground code={indexDemoCode} />
 
+## Dispatch ด้วย data แทนที่จะเป็น if/elif chain
+
+เพราะ function เป็นค่าธรรมดา ๆ ตัวหนึ่ง เราจึงเก็บมันเป็น **value** ของ dict ได้ โดยใช้ key เป็นอะไรก็ได้ที่เลือก behavior — string, enum, type ก็ได้ทั้งนั้น การค้นหา function ใน dict แล้วเรียกมันแทนที่ `if/elif` chain ยาว ๆ ได้ด้วยการ lookup dict ครั้งเดียว และการเพิ่ม case ใหม่ก็แค่เพิ่ม entry เดียวใน dict แทนที่จะเพิ่ม `elif` อีกอัน
+
+export const indexDispatchCode = `
+def area_circle(r):
+    return 3.14159 * r ** 2
+
+def area_square(s):
+    return s ** 2
+
+def area_rectangle(w, h):
+    return w * h
+
+# Dict dispatch instead of an if/elif chain
+SHAPE_AREA = {
+    "circle": area_circle,
+    "square": area_square,
+    "rectangle": area_rectangle,
+}
+
+def compute_area(shape, *args):
+    handler = SHAPE_AREA.get(shape)
+    if handler is None:
+        raise ValueError(f"unknown shape: {shape}")
+    return handler(*args)
+
+print(compute_area("circle", 2))
+print(compute_area("square", 3))
+print(compute_area("rectangle", 2, 5))
+
+# callable() asks "does this support ()?" for any object, not just def-defined functions
+print(callable(area_circle))
+print(callable(SHAPE_AREA))
+print(callable(42))
+
+try:
+    compute_area("triangle", 1, 2)
+except ValueError as e:
+    print(type(e).__name__ + ":", e)
+`.trim();
+
+<Playground code={indexDispatchCode} />
+
+`SHAPE_AREA.get(shape)` คืนค่า `None` เมื่อ shape ไม่เคยถูกลงทะเบียนไว้ ซึ่ง `compute_area` แปลงเป็น `ValueError` ที่ชัดเจน — เทียบเท่ากับ `else` สุดท้ายของ `if/elif` chain แต่ในรูปแบบ dict dispatch `callable(x)` คือการเช็กทั่วไปว่า "ใส่ `()` ตามหลังสิ่งนี้ได้ไหม": มันเป็น `True` สำหรับ function ธรรมดา แต่เป็น `False` สำหรับ dict — แม้ว่า *value* ทุกตัวใน dict นั้นจะเป็น function ก็ตาม
+
+## Recursion: มี limit และไม่มี tail-call optimization
+
+recursive function คือ function ที่เรียกตัวเองซ้ำ ๆ เพื่อคืบหน้าไปสู่ base case ทุกการเรียกจะรักษา stack frame ของตัวเองไว้จนกว่าจะ return — CPython **ไม่ทำ tail-call optimization เลย** ดังนั้นสิ่งนี้เป็นจริงแม้ว่าการเรียกซ้ำจะเป็นสิ่งสุดท้ายที่ function ทำก็ตาม `sys.getrecursionlimit()` บอกว่า Python ยอมให้เรียกซ้อนกันได้กี่ครั้งก่อนจะยอมแพ้ด้วย `RecursionError` ไม่ใช่การ crash แบบ stack overflow
+
+export const indexRecursionCode = `
+import sys
+
+def count_down(n):
+    if n <= 0:
+        return "liftoff"
+    return count_down(n - 1)  # not tail-call optimized -- Python keeps every frame
+
+print("recursion limit:", sys.getrecursionlimit())
+print(count_down(50))
+
+def infinite_recursion(n):
+    return infinite_recursion(n + 1)
+
+try:
+    infinite_recursion(0)
+except RecursionError as e:
+    print(type(e).__name__ + ":", e)
+`.trim();
+
+<Playground code={indexRecursionCode} />
+
+`count_down(50)` ต้องการแค่ 50 การเรียกซ้อนกัน ต่ำกว่า limit ปกติที่ 1000 มาก จึง return ได้ปกติ ส่วน `infinite_recursion` ไม่มี base case เลย — ทุกการเรียกก็เรียกซ้ำอีกครั้ง — มันจึงชนกับ recursion limit เสมอ และ Python จะ raise `RecursionError` แทนที่จะใช้หน่วยความจำจนหมดเครื่อง
+
+## Mental Model
+
+function ก็แค่ object ตัวหนึ่งที่มีความสามารถพิเศษเพิ่มมาหนึ่งอย่าง: ใส่ `()` ต่อท้ายแล้วมันจะรัน ทุกอย่างที่โมดูลนี้จะสอนต่อจากนี้ — closure, decorator, generator, `*args`/`**kwargs` — ล้วนสร้างขึ้นบนความจริงข้อเดียวนี้ dict ที่ map string ไปหา function (เช่น `{"circle": area_circle}`) ทำงานได้เพราะ function เป็นค่าธรรมดาที่วางไว้ตรงไหนที่ค่าหนึ่งวางได้ก็ได้ทั้งนั้น `callable(obj)` ถามว่า `obj` รองรับ `()` หรือเปล่า สำหรับ object ใด ๆ ก็ได้ ไม่ใช่แค่สิ่งที่นิยามด้วย `def`
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| dict dispatch แทน `if`/`elif` | case ใหม่คือ dict entry เดียว ไม่ใช่อีกหนึ่ง branch; ตัว mapping เองก็เป็น data ที่เราสร้าง ขยาย หรือตรวจสอบตอน runtime ได้ | key ที่ขาดหายจะ raise `KeyError` (หรือถูกเมินเฉยแบบเงียบ ๆ ถ้าใช้ `.get`) แทนที่ Python จะบอกว่าเราลืมเขียน `elif` อันไหน |
+| recursion แทน loop | สะท้อนโครงสร้างแบบ recursive ของปัญหาเอง มักสั้นและใกล้เคียงกับนิยามของปัญหามากกว่า | ทุกการเรียกรักษา stack frame ของตัวเองไว้ — ไม่มี tail-call optimization ใน CPython — recursion ที่ลึกจึงกินหน่วยความจำจริง และอาจชนกับ `sys.getrecursionlimit()` ได้ |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"Python ทำ tail-call optimization แบบภาษาอื่น ๆ"** — ความจริง: CPython ไม่ทำ tail-call optimization เลยแม้แต่น้อย recursive function ที่จะรันไม่มีที่สิ้นสุดจะ raise `RecursionError` ในที่สุด ไม่ว่าการเรียกซ้ำจะถูกวางไว้ตรงไหนก็ตาม
+- **"`KeyError` จาก dispatch dict แปลว่า dict นั้นมีปัญหา"** — ความจริง: มันมักแปลว่า *input* ไม่ตรงกับ case ไหนที่ลงทะเบียนไว้เลย — สถานการณ์เดียวกับที่ `if/elif` chain จะตกไปถึง `else` สุดท้าย เพียงแต่รายงานออกมาเป็น exception แทนการ fallthrough แบบเงียบ ๆ
+- **"`callable(x)` บอกว่า `x` เป็น function"** — ความจริง: มันบอกแค่ว่า `x` รองรับการถูกเรียกด้วย `()` class, bound method และ instance ใด ๆ ที่ class ของมันนิยาม `__call__` ไว้ก็ callable ได้เหมือนกันโดยไม่ต้องเป็น function
+
+## อ่านโค้ดที่ AI เขียน
+
+- dispatch table แบบ dict มี fallback สำหรับ key ที่ไม่ได้ลงทะเบียนไหม (`.get(key, default)` หรือ `try/except KeyError`) — หรือ key ที่ขาดหายจะทำให้ call chain ทั้งหมดพังด้วย exception ที่ไม่ได้ถูกจับ?
+- recursive function มี base case อยู่จริงไหม และทุก input ที่เป็นไปได้ไปถึง base case นั้นได้จริงหรือเปล่า — หรือ base case นั้นขึ้นอยู่กับเงื่อนไขที่ argument ไม่มีวันสนองได้เลย?
+- มีการใช้ recursion แบบลึกไม่จำกัดในจุดที่ loop แบบเทียบเท่าจะใช้ stack space คงที่เล็ก ๆ ไม่ว่า input จะขนาดไหนไหม?
+- มีการใช้ `callable(x)` ในจุดที่จริง ๆ ตั้งใจจะเช็กแบบ `isinstance(x, SomeClass)` ไหม — สองอย่างนี้ถามคนละคำถามกัน ใช้แทนกันไม่ได้?
+
+<SpotTheBug code={`def factorial(n):
+    return n * factorial(n - 1)
+
+
+print(factorial(5))`}>
+`factorial` ไม่มี base case เลย — ทุกการเรียกก็เรียกซ้ำอีกครั้ง รวมถึง `factorial(0)`, `factorial(-1)`, `factorial(-2)` ไปเรื่อย ๆ ไม่มีที่สิ้นสุด ตรวจสอบแล้วบน Python 3.14: มันไม่มีวันไปถึงคำตอบที่ถูกต้อง มันจะเรียกซ้ำจน call stack เกิน `sys.getrecursionlimit()` แล้ว Python จะ raise `RecursionError: maximum recursion depth exceeded` ทางแก้คือใส่ base case ที่หยุด recursion เช่น `if n <= 1: return 1` ก่อนบรรทัดที่เรียกซ้ำ — เป็นบั๊กรูปแบบเดียวกับ `if/elif` chain หรือ dict-dispatch table ที่ไม่มี case รองรับ input บางตัว เพียงแต่ถูกค้นพบผ่าน stack ของการเรียกแทนที่จะเป็นการ lookup ครั้งเดียว
+</SpotTheBug>
+
 <Callout title="Function เป็น object">
 ทุก function ใน Python เป็น instance ของ built-in type ที่ชื่อ `function` เราตรวจสอบได้เอง
 `type(greet)` จะคืนค่า `<class 'function'>` นี่คือเหตุผลว่าทำไมการส่ง function เข้าไปใน `map()`, `sorted()`
@@ -88,12 +195,14 @@ export const quizIndex = [
       "Function ที่นิยามที่ระดับ module จะมี global scope",
       "Function ถูก compile ก่อนการทำงาน"
     ],
-    answer: 1
+    answer: 1,
+    explain: "first-class แปลว่า function เป็นค่าธรรมดาตัวหนึ่งใน Python — มัน assign ให้ตัวแปรได้ เก็บใน data structure ได้ ส่งเป็น argument ได้ และ return จาก function อื่นได้ โดยไม่ต้องใช้ syntax พิเศษอะไรเลย"
   },
   {
     q: "Built-in function ตัวใดที่รับ function และ iterable เป็น argument?",
     options: ["apply()", "map()", "call()", "exec()"],
-    answer: 1
+    answer: 1,
+    explain: "map(fn, iterable) เรียก fn กับทุก element ของ iterable แล้วคืน iterator ของผลลัพธ์ — สิ่งนี้ทำงานได้เพราะ fn เป็นค่าธรรมดาตัวหนึ่งที่ map() รับและเรียกใช้ได้"
   },
   {
     q: "หลังจากเขียน `f = greet` แล้ว ข้อใดถูกต้อง?",
@@ -103,7 +212,41 @@ export const quizIndex = [
       "f และ greet อ้างถึง function object ตัวเดียวกัน",
       "f จะเรียกใช้ได้ก็ต่อเมื่อ greet ถูกลบทิ้งก่อน"
     ],
-    answer: 2
+    answer: 2,
+    explain: "การ assign ไม่เคย copy ใน Python เลย — f = greet ทำให้ f เป็นชื่อที่สองที่ผูกกับ function object ตัวเดียวกับ greet เป๊ะ ๆ การเรียก f(...) กับการเรียก greet(...) จึงรัน function ตัวเดียวกันจริง ๆ"
+  },
+  {
+    q: "โค้ดนี้พิมพ์อะไร?\n\nops = {\"add\": lambda a, b: a + b, \"sub\": lambda a, b: a - b}\n\ndef calc(op, a, b):\n    return ops[op](a, b)\n\nprint(calc(\"add\", 2, 3))\nprint(calc(\"mul\", 2, 3))",
+    options: [
+      "5\n-1",
+      "5\nKeyError: 'mul'",
+      "5\nNone",
+      "TypeError: 'mul' is not callable"
+    ],
+    answer: 1,
+    explain: "calc(\"add\", 2, 3) ค้นหา \"add\" ใน ops แล้วเรียก lambda ที่ตรงกัน พิมพ์ 5 ออกมา ส่วน calc(\"mul\", 2, 3) ค้นหา key ที่ไม่เคยถูกลงทะเบียนใน ops เลย — ops[op] จึง raise KeyError: 'mul' ก่อนที่การเรียกใด ๆ จะเกิดขึ้น เป็นสถานการณ์เดียวกับที่ if/elif chain จะตกไปถึง else สุดท้าย เพียงแต่รายงานเป็น exception แทนการ fallback แบบเงียบ ๆ"
+  },
+  {
+    q: "โค้ดนี้จะเกิดอะไรขึ้นเมื่อรัน?\n\ndef countdown(n):\n    return countdown(n - 1)\n\ncountdown(0)",
+    options: [
+      "return None ทันที",
+      "วนลูปไปตลอดกาลโดยไม่ raise error เลย",
+      "raise RecursionError: maximum recursion depth exceeded",
+      "raise StopIteration"
+    ],
+    answer: 2,
+    explain: "countdown ไม่มี base case ที่จะหยุด recursion เลย — ทุกการเรียกก็เรียกซ้ำอีกครั้ง เพราะ CPython ไม่ทำ tail-call optimization ทุกการเรียกจึงรักษา stack frame ของตัวเองไว้ พอจำนวน frame เกิน sys.getrecursionlimit() (ค่า default คือ 1000) Python จะ raise RecursionError: maximum recursion depth exceeded"
+  },
+  {
+    q: "`callable(5)` จะคืนค่าอะไร และเพราะอะไร?",
+    options: [
+      "True — object ทุกตัวใน Python callable ได้หมด",
+      "False — instance ของ int ไม่ได้ implement __call__",
+      "True — เพราะ 5 เป็น literal ไม่ใช่ตัวแปร",
+      "raise TypeError"
+    ],
+    answer: 1,
+    explain: "callable(x) เป็น True ก็ต่อเมื่อ type ของ x implement __call__ ไว้ ซึ่งหมายความว่า x รองรับการตามด้วย () function, class และ instance ของ class ที่นิยาม __call__ ไว้ล้วน callable ได้ทั้งนั้น ส่วน int อย่าง 5 ไม่มี __call__ ดังนั้น callable(5) จึงเป็น False"
   }
 ];
 

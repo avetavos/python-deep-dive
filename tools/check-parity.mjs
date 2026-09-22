@@ -313,11 +313,22 @@ for (const enPath of files) {
   }
 
   // 6. no Thai characters inside a fenced ```python block or code literal in TH file
-  fencedPythonBlocks(thSrc).forEach((block, i) => {
-    if (THAI_RE.test(block)) {
-      report(`${thPath}: Thai characters inside fenced \`\`\`python block #${i}`);
+  //    (a block byte-identical to its EN counterpart is exempt: Thai string
+  //    data such as a UTF-8 demo is legitimate when EN carries the same bytes)
+  {
+    const enF = fencedPythonBlocks(enSrc), thF = fencedPythonBlocks(thSrc);
+    thF.forEach((block, i) => {
+      if (THAI_RE.test(block) && block !== enF[i]) {
+        report(`${thPath}: Thai characters inside fenced \`\`\`python block #${i}`);
+      }
+    });
+    // 7. every fenced ```python block is byte-identical EN vs TH
+    if (enF.length !== thF.length) {
+      report(`${enPath}: python fence count EN=${enF.length} TH=${thF.length}`);
+    } else {
+      enF.forEach((b, i) => { if (b !== thF[i]) report(`${enPath}: python fence #${i} differs EN vs TH`); });
     }
-  });
+  }
   for (const [name, code] of Object.entries(thCode)) {
     if (THAI_RE.test(code)) {
       report(`${thPath}: Thai characters inside ${name} playground literal`);

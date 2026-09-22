@@ -1,6 +1,6 @@
 ---
 title: Decorators
-description: 'Functions that wrap functions — logging decorators, functools.wraps, and parameterized decorators in Python.'
+description: 'Functions that wrap functions — functools.wraps, lru_cache/cache pitfalls, partial, class decorators, and parameterized decorators in Python.'
 sidebar:
   order: 4
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Functions that transform functions
 
@@ -76,6 +78,39 @@ print(add.__doc__)    # Return the sum of a and b.
 
 Always apply `@functools.wraps(func)` to the inner `wrapper` function in every decorator you write.
 
+### Broken vs fixed, side by side — including `inspect.signature`
+
+`functools.wraps` copies more than `__name__`/`__doc__` — it also lets `inspect.signature` report the *wrapped* function's real signature instead of `wrapper`'s generic `(*args, **kwargs)`. Tools that generate API docs or CLI help text from `inspect.signature` silently show the wrong signature when `wraps` is missing:
+
+```python
+import functools
+import inspect
+
+def broken_decorator(func):
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+def fixed_decorator(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+@broken_decorator
+def add(a: int, b: int) -> int:
+    """Return the sum of a and b."""
+    return a + b
+
+@fixed_decorator
+def sub(a: int, b: int) -> int:
+    """Return a minus b."""
+    return a - b
+
+print(add.__name__, inspect.signature(add))   # wrapper (*args, **kwargs)
+print(sub.__name__, inspect.signature(sub))   # sub (a: int, b: int) -> int
+```
+
 ## A practical logging decorator
 
 ```python
@@ -96,6 +131,114 @@ def timed(func):
 def compute(n: int) -> int:
     return sum(range(n))
 ```
+
+## `functools.lru_cache` and `functools.cache`
+
+`functools.cache` (and its older, more configurable sibling `functools.lru_cache`) is a decorator that memoizes a function's return value keyed by its arguments. Repeated calls with the same arguments skip the body entirely:
+
+```python
+import functools
+
+@functools.lru_cache(maxsize=32)
+def fib(n: int) -> int:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+fib(20)
+print(fib.cache_info())   # CacheInfo(hits=18, misses=21, maxsize=32, currsize=21)
+```
+
+Three sharp edges to know before reaching for it:
+
+- **Arguments must be hashable.** The cache key is built from the arguments, so a `list` (or any unhashable object) argument raises `TypeError: unhashable type: 'list'` — not silently skip the cache.
+- **`maxsize=None` (or `@functools.cache`, which is exactly `lru_cache(maxsize=None)`) never evicts.** Every distinct set of arguments the function has ever been called with stays cached for the process's lifetime — an unbounded, growing cache is a memory leak if the input space is large or unbounded.
+- **`@lru_cache` on a method caches `self` too.** `self` is part of the cache key, so every instance that has ever called the cached method is kept alive by the cache — even instances no other code still references. This defeats normal garbage collection of those instances until the cache is cleared or the class itself is deleted. Prefer `functools.cached_property` for a per-instance cache, or cache a module-level function that takes plain, hashable data instead of `self`.
+
+```python
+class Doubler:
+    def __init__(self, factor: int) -> None:
+        self.factor = factor
+
+    @functools.lru_cache(maxsize=None)
+    def compute(self, x: int) -> int:
+        return x * self.factor
+
+d1 = Doubler(2)
+d1.compute(5)
+d2 = Doubler(3)
+d2.compute(5)
+print(d2.compute.cache_info())
+# CacheInfo(hits=0, misses=2, maxsize=None, currsize=2)
+# both d1 and d2 are now referenced by the cache, forever, until cache_clear()
+```
+
+## `functools.partial`
+
+`functools.partial` bakes in some of a function's arguments ahead of time, returning a new callable that only needs the rest:
+
+```python
+import functools
+
+def power(base: float, exponent: float) -> float:
+    return base ** exponent
+
+square = functools.partial(power, exponent=2)
+cube = functools.partial(power, exponent=3)
+print(square(5))   # 25
+print(cube(2))     # 8
+```
+
+`partial` is a plain object (not a function wrapped by decoration) — it exposes `.func` and `.keywords` so you can introspect what was fixed. It is also the standard fix for [late-binding closures in a loop](/en/functions-deep/closures/): `partial(f, i=i)` freezes the current value of `i` the same way a default argument does.
+
+## Class decorators
+
+A decorator does not have to wrap a function — it can wrap a **class**, receiving the class object and returning a class (usually the same one, mutated or extended):
+
+```python
+def add_repr(cls):
+    """Class decorator: attach a generic __repr__ built from __dict__."""
+    def __repr__(self):
+        fields = ", ".join(f"{k}={v!r}" for k, v in self.__dict__.items())
+        return f"{cls.__name__}({fields})"
+    cls.__repr__ = __repr__
+    return cls
+
+@add_repr
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+print(Point(1, 2))   # Point(x=1, y=2)
+```
+
+`@dataclass` is the most common class decorator in the standard library — it works exactly this way, attaching `__init__`, `__repr__`, and `__eq__` to the class it decorates.
+
+## `@property` is just a decorator
+
+`property` is not special syntax — it is a built-in class, and `@property` decorates a method the same way any other decorator decorates a function: it replaces the name with a new object.
+
+```python
+class Temperature:
+    def __init__(self, celsius: float) -> None:
+        self._celsius = celsius
+
+    @property
+    def celsius(self) -> float:
+        return self._celsius
+
+    @celsius.setter
+    def celsius(self, value: float) -> None:
+        self._celsius = value
+
+t = Temperature(20.0)
+print(t.celsius)          # 20.0 — looks like attribute access, runs a method
+t.celsius = 25.0          # runs the setter
+print(type(Temperature.celsius).__name__)   # property
+```
+
+`celsius = property(_get_celsius, _set_celsius)` is exactly what `@property` / `@celsius.setter` expand to — the same "decorator replaces the name with a new object" mechanism as every decorator in this lesson, just returning a `property` instead of a wrapped function.
 
 ## Decorators that take arguments
 
@@ -126,6 +269,7 @@ def fetch(url: str) -> str:
 
 `@retry(max_attempts=3)` first calls `retry(max_attempts=3)`, which returns `decorator`.
 Python then applies `decorator` to `fetch` — so the full call chain is `fetch = retry(3)(fetch)`.
+That is three levels of nested function, one for each `(`: `retry` (the factory, called with the decorator's own arguments), `decorator` (called once, with the function being decorated), and `wrapper` (called every time the decorated function is called).
 
 ## Full runnable demo
 
@@ -174,10 +318,206 @@ print(add.__doc__)
 
 <Playground code={decoratorsCode} />
 
+## Depth demo: `wraps`, `lru_cache`, `partial`, class decorators, `property`
+
+The playground below runs every depth topic above, including the two failures — the broken decorator losing its signature, and `lru_cache` raising `TypeError` on an unhashable argument:
+
+export const decoratorsDepthCode = `
+import functools
+import inspect
+
+# --- functools.wraps: broken vs fixed ---
+def broken_decorator(func):
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+def fixed_decorator(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+@broken_decorator
+def add(a: int, b: int) -> int:
+    """Return the sum of a and b."""
+    return a + b
+
+@fixed_decorator
+def sub(a: int, b: int) -> int:
+    """Return a minus b."""
+    return a - b
+
+print("--- functools.wraps ---")
+print("broken __name__:", add.__name__)
+print("broken __doc__:", add.__doc__)
+print("broken signature:", inspect.signature(add))
+print("fixed __name__:", sub.__name__)
+print("fixed __doc__:", sub.__doc__)
+print("fixed signature:", inspect.signature(sub))
+
+# --- lru_cache / cache ---
+print("\\n--- functools.lru_cache ---")
+
+@functools.lru_cache(maxsize=32)
+def fib(n: int) -> int:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+print("fib(20):", fib(20))
+print("cache_info:", fib.cache_info())
+
+fib.cache_clear()
+print("after cache_clear:", fib.cache_info())
+
+@functools.cache
+def total(items):
+    return sum(items)
+
+try:
+    total([1, 2, 3])
+except TypeError as e:
+    print(type(e).__name__ + ":", e)
+
+class Doubler:
+    def __init__(self, factor: int) -> None:
+        self.factor = factor
+
+    @functools.lru_cache(maxsize=None)
+    def compute(self, x: int) -> int:
+        return x * self.factor
+
+d1 = Doubler(2)
+d1.compute(5)
+print("cache after d1.compute(5):", d1.compute.cache_info())
+d2 = Doubler(3)
+d2.compute(5)
+print("cache after d2.compute(5) — self is part of the key, entry #2 kept alive:", d2.compute.cache_info())
+
+# --- functools.partial ---
+print("\\n--- functools.partial ---")
+
+def power(base: float, exponent: float) -> float:
+    return base ** exponent
+
+square = functools.partial(power, exponent=2)
+cube = functools.partial(power, exponent=3)
+print("square(5):", square(5))
+print("cube(2):", cube(2))
+print("square.func.__name__:", square.func.__name__)
+print("square.keywords:", square.keywords)
+
+# --- class decorator ---
+print("\\n--- class decorator ---")
+
+def add_repr(cls):
+    """Class decorator: attach a generic __repr__ built from __dict__."""
+    def __repr__(self):
+        fields = ", ".join(f"{k}={v!r}" for k, v in self.__dict__.items())
+        return f"{cls.__name__}({fields})"
+    cls.__repr__ = __repr__
+    return cls
+
+@add_repr
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+print(Point(1, 2))
+
+# --- @property is just a decorator ---
+print("\\n--- @property is a decorator ---")
+
+class Temperature:
+    def __init__(self, celsius: float) -> None:
+        self._celsius = celsius
+
+    @property
+    def celsius(self) -> float:
+        return self._celsius
+
+    @celsius.setter
+    def celsius(self, value: float) -> None:
+        self._celsius = value
+
+t = Temperature(20.0)
+print("read:", t.celsius)
+t.celsius = 25.0
+print("after write:", t.celsius)
+print("Temperature.celsius is a:", type(Temperature.celsius).__name__)
+`.trim();
+
+<Playground code={decoratorsDepthCode} />
+
+## Mental Model
+
+Reading `@log_calls(level="DEBUG")` above `def add(...)` bottom-up shows the three call levels a parameterized decorator always has — one function call per pair of parentheses in the source:
+
+export const decoratorsMentalModel = `flowchart TD
+  A["retry(max_attempts=3)\\n(the factory — called once, with the decorator's own args)"] --> B["decorator\\n(called once, with the function being decorated)"]
+  B --> C["wrapper\\n(called every time fetch(...) is called)"]
+  C --> D["func(*args, **kwargs)\\n(the original fetch)"]`;
+
+<Mermaid code={decoratorsMentalModel} title="Three call levels of a parameterized decorator: factory -> decorator -> wrapper -> original function" />
+
+Stacked decorators (`@a` `@b` `@c` above `def f()`) apply bottom-up but *run* outside-in: `c` wraps `f`, `b` wraps `c`'s result, `a` wraps `b`'s result — so at call time `a`'s wrapper code runs first, then `b`'s, then `c`'s, then finally `f` itself.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| `@functools.wraps(func)` | `__name__`/`__doc__`/`inspect.signature` all report the real function | One more import and one more line per decorator — easy to forget |
+| `@functools.lru_cache`/`@cache` | Skip recomputation entirely on repeat calls | Arguments must be hashable; unbounded (`maxsize=None`) growth is a memory leak; caching a method keeps every `self` alive |
+| `functools.partial` | No new function definition needed to fix some arguments | The result is a `partial` object, not a function — `__name__`/`__doc__` are not copied automatically |
+| Class decorator | Same "wrap and replace" mechanism as a function decorator, reusable across classes | Mutating `cls` in place (as opposed to returning a new class) can surprise code that kept a reference to the original class object |
+| `@property` | Attribute-looking syntax that can validate, compute, or log on read/write | Every read/write is a method call — do not put expensive or side-effecting work behind what looks like a plain attribute |
+
+## Common Misconceptions
+
+- **"A decorator without `functools.wraps` still behaves identically, just with a different `__name__`"** — fact: `inspect.signature` also breaks, so anything that introspects the function (documentation generators, some CLI/DI frameworks) sees `(*args, **kwargs)` instead of the real parameters.
+- **"`lru_cache`/`cache` is always safe to slap on any function"** — fact: it raises `TypeError` on unhashable arguments, and with `maxsize=None` it never forgets, which is a memory leak for functions called with a large or unbounded variety of inputs — and on a method, it keeps every calling instance alive.
+- **"`@property` requires special interpreter support"** — fact: it is an ordinary decorator around an ordinary class, `property` — the same mechanism (replace the name with the decorator's return value) as every other decorator in this lesson.
+- **"Decorators are only for logging/timing examples"** — fact: `@dataclass`, `@functools.cache`, `@app.route(...)` in web frameworks, `@pytest.fixture`, and `@property` are all decorators doing real structural work, not just wrapping with print statements.
+- **"Stacked decorators run in the order they're applied (top to bottom)"** — fact: they *apply* bottom-up (closest to the function first) but the resulting wrappers *run* outside-in at call time — the topmost decorator's code is the first to execute.
+
+## Reading AI-generated code
+
+- Does every decorator's inner `wrapper` have `@functools.wraps(func)` right above it? Its absence is easy to miss in a review and breaks `__name__`, `__doc__`, and `inspect.signature`.
+- Is `@lru_cache` or `@cache` applied to a method (a function whose first parameter is `self`)? Check whether the instances are meant to be cached forever — if not, this is a memory leak.
+- Does a cached function ever receive a `list`, `dict`, or other unhashable argument? That call raises `TypeError` at the call site, not at decoration time.
+- Is a decorator applied to a class instead of a function? Confirm it returns the class (or a valid replacement) — a class decorator that returns `None` silently destroys the class name.
+- For a decorator that takes arguments, count the parentheses: is there really a three-level nest (factory → decorator → wrapper), or did the author forget one level and pass the function directly to the factory?
+
+<SpotTheBug code={`import functools
+
+
+class ReportGenerator:
+    def __init__(self, dataset_id: str) -> None:
+        self.dataset_id = dataset_id
+
+    @functools.lru_cache(maxsize=None)
+    def summary(self, rows: int) -> str:
+        return f"{self.dataset_id}: summarized {rows} rows"
+
+
+def build_report(dataset_id: str, rows: int) -> str:
+    generator = ReportGenerator(dataset_id)
+    return generator.summary(rows)
+
+
+for i in range(100_000):
+    build_report(f"dataset-{i}", rows=10)
+
+print("done")`}>
+`@functools.lru_cache(maxsize=None)` on `summary` includes `self` in the cache key. Every one of the 100,000 short-lived `ReportGenerator` instances created in the loop gets cached forever — nothing is ever evicted, so none of them can be garbage-collected, and the cache grows without bound for the life of the process (confirmed: `ReportGenerator.summary.cache_info().currsize` reaches `100000` after the loop, and it never shrinks). The fix is to not cache a method that carries per-instance state at all — cache a plain function of hashable data instead (`functools.cache(lambda dataset_id, rows: f"{dataset_id}: summarized {rows} rows")`), or use `functools.cached_property`-style per-instance caching if the value should live and die with one instance.
+</SpotTheBug>
+
 <Callout title="@deco is sugar for func = deco(func)">
 The `@` syntax is pure syntactic sugar — there is no special protocol behind it.
 `@my_decorator` applied to `def f(): ...` is exactly `f = my_decorator(f)`.
-This means decorators compose from bottom to top:
+This means decorators compose from bottom to top when applied, and outside-in when called:
 
 ```python
 @a
@@ -187,7 +527,7 @@ def f(): ...
 # equivalent to: f = a(b(c(f)))
 ```
 
-The innermost decorator (`c`) is applied first, then `b`, then `a`.
+The innermost decorator (`c`) wraps `f` first, then `b` wraps that, then `a` wraps that — but when `f(...)` is actually *called*, `a`'s wrapper code is the first to run.
 </Callout>
 
 export const quizDecorators = [
@@ -199,17 +539,41 @@ export const quizDecorators = [
       "Calls the function immediately at import time",
       "Marks the function as deprecated"
     ],
-    answer: 1
+    answer: 1,
+    explain: "@my_decorator above def f(): ... is exactly f = my_decorator(f) — the decorator is called once with the original function, and the name f is rebound to whatever it returns."
   },
   {
     q: "Why should you use `@functools.wraps(func)` inside a decorator?",
     options: [
       "It makes the wrapper function run faster",
-      "It preserves the original function's __name__, __doc__, and other metadata",
+      "It preserves the original function's __name__, __doc__, and inspect.signature",
       "It prevents the decorator from being applied more than once",
       "It is required for the decorator syntax to work"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Without functools.wraps, the wrapper function replaces __name__, __doc__, and — crucially — inspect.signature reports (*args, **kwargs) instead of the wrapped function's real parameters. functools.wraps copies all of that metadata onto the wrapper."
+  },
+  {
+    q: "What does this print?\n\nimport functools\n\n@functools.lru_cache(maxsize=None)\ndef f(items):\n    return sum(items)\n\nprint(f([1, 2, 3]))",
+    options: [
+      "6",
+      "TypeError: unhashable type: 'list'",
+      "None",
+      "It hangs forever"
+    ],
+    answer: 1,
+    explain: "lru_cache builds its cache key from the function's arguments, which requires them to be hashable. A list is not hashable, so calling f([1, 2, 3]) raises TypeError: unhashable type: 'list' immediately — the function body never runs."
+  },
+  {
+    q: "A class defines a method decorated with `@functools.lru_cache(maxsize=None)`. What is the main risk?",
+    options: [
+      "The method can no longer accept keyword arguments",
+      "self is part of the cache key, so every instance that has called the method is kept alive by the cache forever",
+      "The method becomes a staticmethod automatically",
+      "lru_cache cannot be applied to methods at all — it raises TypeError at class definition time"
+    ],
+    answer: 1,
+    explain: "lru_cache keys its cache on all arguments, including self for a bound method call. Because the cache holds a reference to each self it has seen, those instances are never garbage-collected while the cache entry exists — an unbounded, growing memory leak for short-lived instances."
   },
   {
     q: "Given `@retry(max_attempts=3)` above `def fetch(): ...`, what is the call order?",
@@ -219,12 +583,19 @@ export const quizDecorators = [
       "fetch = retry(fetch)(max_attempts=3)",
       "fetch = max_attempts(retry(fetch, 3))"
     ],
-    answer: 1
+    answer: 1,
+    explain: "retry(max_attempts=3) is called first (the factory), returning decorator. Python then applies decorator to fetch — so the full chain is fetch = retry(max_attempts=3)(fetch)."
   },
   {
-    q: "If decorators are stacked `@a` then `@b` then `@c` on `def f()`, which is applied first?",
-    options: ["a", "b", "c", "All at the same time"],
-    answer: 2
+    q: "What does `type(Temperature.celsius)` print, given `celsius` is defined with `@property`?",
+    options: [
+      "<class 'function'>",
+      "<class 'property'>",
+      "<class 'method'>",
+      "float"
+    ],
+    answer: 1,
+    explain: "@property replaces the method with an instance of the built-in property class — the same 'decorator replaces the name with its return value' mechanism as every other decorator, just returning a property object instead of a wrapped function."
   }
 ];
 

@@ -1,6 +1,6 @@
 ---
 title: Dunder Methods
-description: 'The Python Data Model: __repr__, __str__, __eq__, __len__, __getitem__, and operator overloading with __add__.'
+description: 'The Python Data Model: __repr__, __str__, __eq__/__hash__, __iter__/__next__, __call__, __getattr__, and operator overloading.'
 sidebar:
   order: 3
 ---
@@ -9,20 +9,22 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## What are dunder methods?
 
 **Dunder methods** (short for *double-underscore*) are special methods like `__repr__`, `__eq__`, and `__add__` that Python calls automatically in response to built-in syntax and functions.
 They are the mechanism behind the **Python Data Model** — the contract that lets your objects behave like built-in types.
 
-## `__repr__` and `__str__`
+## `__repr__` and `__str__` — who calls which
 
 Both produce string representations, but they serve different audiences:
 
 | Method | When called | Purpose |
 |---|---|---|
-| `__repr__` | `repr(obj)`, interactive shell | Unambiguous developer representation |
-| `__str__` | `str(obj)`, `print(obj)` | Human-friendly display |
+| `__repr__` | `repr(obj)`, interactive shell, **elements inside a container** | Unambiguous developer representation |
+| `__str__` | `str(obj)`, `print(obj)`, f-string `{obj}` | Human-friendly display |
 
 If only `__repr__` is defined, Python uses it for both.
 The convention for `__repr__` is to return a string that, if passed to `eval()`, would recreate the object.
@@ -40,6 +42,8 @@ class Point:
         return f"({self.x}, {self.y})"
 ```
 
+A detail that surprises people who define both: `print([Point(1, 2)])` prints `[Point(1, 2)]`, **not** `[(1, 2)]`. A list never calls `__str__` on its elements — it always calls `__repr__`, even though `print()` on the list itself uses the list's own `__str__` (which for a list *is* built from each element's `repr`). `__str__` is only reached when you convert or print the object *directly*.
+
 ## `__eq__` — equality
 
 Python calls `__eq__` when you write `a == b`.
@@ -52,13 +56,47 @@ def __eq__(self, other: object) -> bool:
     return self.x == other.x and self.y == other.y
 ```
 
-Return `NotImplemented` (not `False`) when the types are incompatible — this lets Python try the reflected operation on the other operand.
+## `__eq__` sets `__hash__` to `None` — the real `TypeError`, and two fixes
+
+Defining `__eq__` on a class disables the default `__hash__` it inherited from `object` — Python sets `__hash__ = None` automatically, because two objects that compare equal must hash equal, and your custom `__eq__` broke that guarantee the interpreter could previously assume. The instance is now **unhashable**:
+
+```python
+class User:
+    def __init__(self, uid: int) -> None:
+        self.uid = uid
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, User) and self.uid == other.uid
+
+cache = {}
+cache[User(1)] = "active"
+```
+
+Run on 3.14, this raises `TypeError: cannot use 'User' as a dict key (unhashable type: 'User')` — and `hash(User(1))` directly raises `TypeError: unhashable type: 'User'`. Two fixes:
+
+1. **Define `__hash__` yourself**, built from the same fields `__eq__` compares: `def __hash__(self) -> int: return hash(self.uid)`.
+2. **Use a frozen dataclass** (`@dataclass(frozen=True)`) — it generates both a correct `__eq__` and a matching `__hash__` for you, as long as every field is itself hashable.
+
+Either fix restores `hash(obj)` and lets instances live in sets and as dict keys again.
+
+## `NotImplemented` and reflected operators
+
+`NotImplemented` is a special singleton — not an exception — that a dunder method returns to say "I don't know how to do this with that other type; ask someone else." Python then tries the **reflected** method (`__radd__` for `+`, `__req__`-style for other operators) on the *other* operand. If every candidate returns `NotImplemented`, Python falls back to a default (`==` and `!=` fall back to identity; other operators raise `TypeError`).
+
+```python
+def __radd__(self, other: object) -> "Vector":
+    # supports sum([...]), which starts by computing 0 + first_item
+    if other == 0:
+        return self
+    return NotImplemented
+```
+
+Mixing this up with `NotImplementedError` (a real exception, meant for abstract methods) is a common bug: `Good(1) == "not a Good"` returns `False` because `NotImplemented` triggers Python's normal fallback, but a class that `raise NotImplementedError` from `__eq__` instead makes the *entire comparison* explode — `Bad(1) == "not a Bad"` raises `NotImplementedError: cannot compare` instead of quietly returning `False`. Verified on 3.14: both behaviors are exactly as described.
 
 ## `__len__` and `__getitem__`
 
 Implement `__len__` to support `len(obj)`.
 Implement `__getitem__` to support `obj[index]` subscript access.
-`__getitem__` alone is also enough to make the object iterable via a `for` loop: Python's legacy iteration fallback calls `__getitem__` with 0, 1, 2, ... until it raises `IndexError`, and stops there — `__len__` is not involved in that fallback at all.
 
 ```python
 def __len__(self) -> int:
@@ -67,6 +105,92 @@ def __len__(self) -> int:
 def __getitem__(self, index: int) -> float:
     return (self.x, self.y)[index]
 ```
+
+## `__iter__`/`__next__` vs the `__getitem__` fallback
+
+The real iterator protocol is two methods: `__iter__` returns an iterator (often `self`), and `__next__` returns the next value or raises `StopIteration` to signal the end:
+
+```python
+class Countdown:
+    def __iter__(self) -> "Countdown":
+        self.current = self.start
+        return self
+
+    def __next__(self) -> int:
+        if self.current <= 0:
+            raise StopIteration
+        self.current -= 1
+        return self.current + 1
+```
+
+`__getitem__` alone is also enough to make an object iterable, through a **separate, legacy fallback**: if a class has no `__iter__`, Python's `for` loop calls `__getitem__` with `0, 1, 2, ...` until it raises `IndexError`, and stops there — `__len__` is not involved in that fallback at all. `list(LegacySequence([10, 20, 30]))` runs fine and prints `[10, 20, 30]` on CPython. But **both `uvx mypy --strict` and `uvx pyright` reject it** — they only model the modern `Iterable` protocol (`__iter__`), not the legacy `__getitem__` fallback: mypy reports `No overload variant of "list" matches argument type "LegacySequence"  [call-overload]`, and pyright reports `"LegacySequence" is incompatible with protocol "Iterable[_T@list]" — "__iter__" is not present`. This is a real gap between what CPython runs and what today's type checkers understand — prefer `__iter__`/`__next__` for anything you want a type checker to accept.
+
+## `__len__`, `__bool__`, `__contains__`
+
+```python
+def __len__(self) -> int:
+    return len(self.items)
+
+def __bool__(self) -> bool:
+    return len(self.items) > 0
+
+def __contains__(self, item: object) -> bool:
+    return item in self.items
+```
+
+`bool(obj)` calls `__bool__` if defined; without it, Python falls back to `__len__` (a length of `0` is falsy). `in` calls `__contains__` if defined; without it, `in` falls back to iterating with `__iter__`/`__getitem__`.
+
+## `__call__` — making instances callable
+
+Defining `__call__` lets you call an instance like a function — `obj(...)` becomes `obj.__call__(...)`:
+
+```python
+class Multiplier:
+    def __init__(self, factor: int) -> None:
+        self.factor = factor
+
+    def __call__(self, value: int) -> int:
+        return value * self.factor
+
+double = Multiplier(2)
+double(21)          # 42
+callable(double)    # True
+```
+
+This is how decorators-as-classes and configurable callbacks work — the object carries state (`factor`) that a plain function couldn't hold without a closure.
+
+## `__getattr__` vs `__getattribute__`
+
+`__getattribute__` runs for **every** attribute access on the instance, found or not — overriding it is rare and easy to get wrong (infinite recursion if it calls `self.name` instead of `object.__getattribute__(self, name)`). `__getattr__` is the safer hook: it runs **only when normal lookup already failed** (instance `__dict__` and the class's MRO both missed), making it ideal for computed fallbacks or friendlier errors.
+
+```python
+def __getattr__(self, name: str) -> str:
+    # only called when normal attribute lookup FAILS
+    return f"<no setting {name!r}>"
+```
+
+`cfg.loaded` (a real attribute) never reaches `__getattr__` at all; `cfg.missing_setting` does, because normal lookup fails first.
+
+## `__del__` is not reliable
+
+`__del__` runs when an object's reference count hits zero — for a simple, cycle-free object under CPython, that happens right when the last reference is deleted, so it looks deterministic. It stops looking deterministic the moment two objects reference each other in a cycle: reference counting alone can never bring a cycle's count to zero, so `__del__` doesn't run until the *cyclic garbage collector* (`gc.collect()`, or its automatic periodic run) breaks the cycle — which can be much later, or, in the worst case (an exception during interpreter shutdown, or `gc` disabled), never. Verified: deleting two nodes that reference each other prints nothing until `gc.collect()` runs; a cycle-free object's `__del__` prints immediately on `del`. Never rely on `__del__` to release an external resource (a file, a socket, a lock) — use a context manager (`__enter__`/`__exit__`) instead.
+
+## `functools.total_ordering`
+
+Implementing every comparison operator (`__lt__`, `__le__`, `__gt__`, `__ge__`) by hand is repetitive. `@total_ordering` fills in the rest from just `__eq__` and *one* of the others:
+
+```python
+from functools import total_ordering
+
+@total_ordering
+class Money:
+    def __eq__(self, other: object) -> bool:
+        ...
+    def __lt__(self, other: "Money") -> bool:
+        return self.cents < other.cents
+```
+
+`sorted(prices)` and `Money(100) <= Money(200)` both work — `<=` was never written by hand; `total_ordering` derived it from `__eq__` and `__lt__`.
 
 ## Operator overloading with `__add__`
 
@@ -88,6 +212,10 @@ def __add__(self, other: "Vector") -> "Vector":
 ## Full runnable demo
 
 export const dunderCode = `
+from functools import total_ordering
+from dataclasses import dataclass
+
+
 class Vector:
     def __init__(self, x: float, y: float) -> None:
         self.x = x
@@ -107,6 +235,11 @@ class Vector:
     def __add__(self, other: "Vector") -> "Vector":
         return Vector(self.x + other.x, self.y + other.y)
 
+    def __radd__(self, other: object) -> "Vector":
+        if other == 0:
+            return self
+        return NotImplemented
+
     def __len__(self) -> int:
         return 2
 
@@ -118,22 +251,213 @@ v1 = Vector(1, 2)
 v2 = Vector(3, 4)
 print(repr(v1))
 print(str(v1))
+print(v1)
+print([v1, v2])  # containers always use repr for elements, even though __str__ exists
 print(v1 == Vector(1, 2))
 print(v1 + v2)
+print(sum([v1, v2]))  # 0 + v1 -> Vector.__radd__ since int.__add__(0, v1) fails
 print(len(v1))
 print(v1[0], v1[1])
 
-# hash(v1)  # TypeError: unhashable type: 'Vector'
+try:
+    hash(v1)
+except TypeError as e:
+    print(f"TypeError: {e}")
+
+
+class HashableVector:
+    def __init__(self, x: float, y: float) -> None:
+        self.x = x
+        self.y = y
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, HashableVector):
+            return NotImplemented
+        return self.x == other.x and self.y == other.y
+
+    def __hash__(self) -> int:  # Fix 1: define __hash__ alongside __eq__
+        return hash((self.x, self.y))
+
+
+hv1 = HashableVector(1, 2)
+hv2 = HashableVector(1, 2)
+print(hash(hv1) == hash(hv2))
+print(len({hv1, hv2}))  # equal + same hash -> the set dedupes them to 1
+
+
+@dataclass(frozen=True)
+class FrozenVector:  # Fix 2: frozen=True generates a working __hash__ for free
+    x: float
+    y: float
+
+
+print(hash(FrozenVector(1, 2)) == hash(FrozenVector(1, 2)))
+
+
+class Countdown:
+    def __init__(self, start: int) -> None:
+        self.start = start
+
+    def __iter__(self) -> "Countdown":
+        self.current = self.start
+        return self
+
+    def __next__(self) -> int:
+        if self.current <= 0:
+            raise StopIteration
+        self.current -= 1
+        return self.current + 1
+
+
+print(list(Countdown(3)))
+
+
+class LegacySequence:
+    def __init__(self, data: list[int]) -> None:
+        self._data = data
+
+    def __getitem__(self, index: int) -> int:
+        return self._data[index]  # raises IndexError once index runs out -- for loop relies on that
+
+
+print(list(LegacySequence([10, 20, 30])))
+
+
+class Basket:
+    def __init__(self, items: list[str]) -> None:
+        self.items = items
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __bool__(self) -> bool:
+        return len(self.items) > 0
+
+    def __contains__(self, item: object) -> bool:
+        return item in self.items
+
+
+empty = Basket([])
+full = Basket(["apple"])
+print(bool(empty), bool(full))
+print("apple" in full)
+print(len(full))
+
+
+class Multiplier:
+    def __init__(self, factor: int) -> None:
+        self.factor = factor
+
+    def __call__(self, value: int) -> int:
+        return value * self.factor
+
+
+double = Multiplier(2)
+print(double(21))
+print(callable(double))
+
+
+class LazyConfig:
+    def __init__(self) -> None:
+        self.loaded = {"debug": False}
+
+    def __getattr__(self, name: str) -> str:
+        # only called when normal attribute lookup FAILS
+        return f"<no setting {name!r}>"
+
+    def __getattribute__(self, name: str) -> object:
+        # called for EVERY attribute access, found or not
+        print(f"looking up {name!r}")
+        return object.__getattribute__(self, name)
+
+
+cfg = LazyConfig()
+print(cfg.loaded)
+print(cfg.missing_setting)
+
+
+@total_ordering
+class Money:
+    def __init__(self, cents: int) -> None:
+        self.cents = cents
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Money):
+            return NotImplemented
+        return self.cents == other.cents
+
+    def __lt__(self, other: "Money") -> bool:
+        return self.cents < other.cents
+
+
+prices = [Money(300), Money(100), Money(200)]
+print([m.cents for m in sorted(prices)])
+print(Money(100) <= Money(200))  # generated by total_ordering from __eq__ + __lt__
 `.trim();
 
 <Playground code={dunderCode} />
 
 <Callout title="Dunder methods hook into built-in syntax and functions">
 You never call `v1.__add__(v2)` directly in application code — you write `v1 + v2` and Python resolves the dunder method for you.
-This is what makes user-defined objects feel native: `len(v)`, `v[0]`, `v1 == v2`, and `print(v)` all just work once the corresponding dunders are defined.
-The full list is in the Python Data Model reference — there are dunders for context managers (`__enter__`/`__exit__`), iteration (`__iter__`/`__next__`), attribute access (`__getattr__`), and much more.
-Defining `__eq__` also sets `__hash__` to `None`, making instances unhashable — as the commented line above shows (full treatment in a later lesson).
+This is what makes user-defined objects feel native: `len(v)`, `v[0]`, `v1 == v2`, `v(...)`, and `print(v)` all just work once the corresponding dunders are defined.
+The full list is in the Python Data Model reference — there are dunders for context managers (`__enter__`/`__exit__`), which a later module covers.
+Defining `__eq__` also sets `__hash__` to `None`, making instances unhashable — fix it with a hand-written `__hash__` or `@dataclass(frozen=True)`.
 </Callout>
+
+## Mental Model
+
+<Mermaid code={`flowchart TD
+  A["a + b"] --> B{"a.__add__(b) returns NotImplemented?"}
+  B -->|"no"| R1["use a.__add__(b)'s result"]
+  B -->|"yes"| C{"b.__radd__(a) exists and returns NotImplemented?"}
+  C -->|"no"| R2["use b.__radd__(a)'s result"]
+  C -->|"yes"| E["TypeError: unsupported operand type(s)"]`} title="NotImplemented drives Python's operator dispatch, left operand first" />
+
+Every piece of built-in syntax is really a lookup-and-call: `a + b` is `type(a).__add__(a, b)`, tried first; only if that returns `NotImplemented` does Python try `type(b).__radd__(b, a)`. The same shape — "try the direct dunder, fall back to a related one, only then give up" — reappears everywhere in this lesson: `bool(x)` tries `__bool__` then falls back to `__len__`; `for` tries `__iter__`/`__next__` then falls back to the `__getitem__` protocol; attribute access tries normal lookup then falls back to `__getattr__`. Reading a dunder-heavy class means asking, for each piece of syntax: which method runs first, and what does Python do if it opts out?
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Custom `__eq__` | Value-based equality instead of identity | Disables `__hash__` — you must add it back by hand if you need hashing |
+| `__iter__`/`__next__` | Real iterator protocol, understood by type checkers | Two methods instead of one |
+| `__getitem__`-only iteration | Works with a single method, useful for existing indexable data | Not recognized as `Iterable` by mypy/pyright; only integer-indexed, `IndexError`-terminated data qualifies |
+| `__call__` | Instances behave like functions and carry state | Easy to overuse where a plain function or method would read more clearly |
+| `__getattr__` | Clean fallback for missing/computed attributes | Silently answering for typo'd attribute names can hide real bugs |
+| `@total_ordering` | Write 2 comparisons, get all 4 | Slightly slower than hand-written operators (an extra function call per comparison) |
+
+## Common Misconceptions
+
+- **`__str__` is used everywhere `__repr__` isn't.** Containers (lists, dicts, tuples) always use `__repr__` for their elements — `print([obj])` never calls `obj.__str__()`.
+- **Any class with `__eq__` can be put in a set or used as a dict key, same as before.** Defining `__eq__` sets `__hash__` to `None` unless you also define `__hash__` — the class becomes unhashable, with a `TypeError` at the point of use, not at definition time.
+- **Returning `False` and raising `NotImplementedError` from `__eq__` are similarly "safe" ways to say no.** `NotImplemented` (no parentheses, not an exception) lets Python try the other operand and fall back gracefully; `NotImplementedError` is a real exception that blows up the whole comparison.
+- **`__len__` is required for a `for` loop to work.** It is not involved in iteration at all — `__iter__`/`__next__`, or the `__getitem__` fallback, are what `for` actually uses.
+- **`__del__` is a reliable place to release resources, like a destructor in C++.** It only runs promptly for cycle-free objects under CPython's refcounting; a reference cycle delays it until the cyclic GC runs, and it may never run before interpreter shutdown in edge cases. Use a context manager instead.
+
+## Reading AI-generated code
+
+Before trusting a generated class full of dunders, check for:
+
+- Is `__eq__` defined without a matching `__hash__`? The class silently becomes unhashable — fine until someone puts an instance in a set or dict key, where it raises `TypeError` far from where `__eq__` was written.
+- Does a comparison dunder `raise NotImplementedError` instead of `return NotImplemented`? That turns "try the other operand" into a crash.
+- Is `__getitem__` used as the *only* iteration mechanism in code that will also be type-checked? `mypy --strict`/`pyright` reject passing such an object to `list(...)` or any `Iterable[...]` parameter, even though it runs on CPython.
+- Does `__getattribute__` (not `__getattr__`) get overridden without ending in `object.__getattribute__(self, name)`? Calling `self.name` or `getattr(self, name)` instead recurses infinitely.
+- Does cleanup logic (closing a file, releasing a lock) live only in `__del__`? That resource may stay open far longer than intended, or never close in a cycle.
+
+<SpotTheBug code={`class User:
+    def __init__(self, uid: int) -> None:
+        self.uid = uid
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, User) and self.uid == other.uid
+
+
+cache = {}
+u = User(1)
+cache[u] = "active"
+print(cache)`} lang="python">
+Defining `__eq__` without also defining `__hash__` sets `__hash__` to `None` on the class — the instance becomes unhashable. `cache[u] = "active"` raises `TypeError: cannot use 'User' as a dict key (unhashable type: 'User')` on 3.14, right at the assignment, not at class-definition time. Fix it by adding a matching `__hash__`: `def __hash__(self) -> int: return hash(self.uid)` — built from the same field(s) `__eq__` compares — or switch to `@dataclass(frozen=True)`, which generates a correct pair automatically.
+</SpotTheBug>
 
 export const quizDunder = [
   {
@@ -144,7 +468,8 @@ export const quizDunder = [
       "__str__ is for developers, __repr__ is for end users",
       "__repr__ is only used in f-strings"
     ],
-    answer: 1
+    answer: 1,
+    explain: "__repr__ aims to be unambiguous (ideally eval()-able); __str__ aims to be readable for end users. If only __repr__ is defined, Python uses it for both."
   },
   {
     q: "When should `__eq__` return `NotImplemented` instead of `False`?",
@@ -154,7 +479,8 @@ export const quizDunder = [
       "When self is None",
       "When the comparison would raise an exception"
     ],
-    answer: 1
+    answer: 1,
+    explain: "NotImplemented tells Python 'I can't judge this, try the other operand's __eq__ or fall back' -- returning False outright would wrongly claim the objects are definitely unequal."
   },
   {
     q: "Which dunder method does `v1 + v2` call on `v1`?",
@@ -164,17 +490,63 @@ export const quizDunder = [
       "__add__",
       "__combine__"
     ],
-    answer: 2
+    answer: 2,
+    explain: "Arithmetic operators map directly to dunder names -- + is __add__, - is __sub__, * is __mul__, and so on."
   },
   {
-    q: "A class defines only `__getitem__` (no `__iter__`, no `__len__`). How does a `for` loop know when to stop?",
+    q: "```python\nclass Item:\n    def __getitem__(self, i):\n        return [10, 20, 30][i]\n\nfor v in Item():\n    print(v)\n```\nHow does the `for` loop know when to stop?",
     options: [
       "Python calls __getitem__ with 0, 1, 2, ... until it raises IndexError",
       "Python calls __len__ first to know how many items to fetch",
       "It never stops; the loop runs forever",
       "It stops as soon as __getitem__ returns None"
     ],
-    answer: 0
+    answer: 0,
+    explain: "With no __iter__ defined, Python's legacy iteration fallback calls __getitem__(0), __getitem__(1), ... and stops the moment one call raises IndexError. __len__ plays no role in this fallback at all."
+  },
+  {
+    q: "```python\nclass Thing:\n    def __eq__(self, other):\n        return True\n\nt = Thing()\nd = {}\nd[t] = 1\n```\nWhat happens?",
+    options: [
+      "d becomes {t: 1} normally",
+      "TypeError: unhashable type: 'Thing' when d[t] = 1 runs",
+      "A DeprecationWarning is printed but it works",
+      "The assignment silently does nothing"
+    ],
+    answer: 1,
+    explain: "Defining __eq__ sets __hash__ to None unless __hash__ is also defined. Thing has no __hash__, so using an instance as a dict key raises TypeError at that line."
+  },
+  {
+    q: "```python\nclass V:\n    def __eq__(self, other):\n        if not isinstance(other, V):\n            raise NotImplementedError\n        return True\n\nprint(V() == \"x\")\n```\nWhat does this print (or raise)?",
+    options: [
+      "False",
+      "True",
+      "It raises NotImplementedError -- the comparison never completes",
+      "It raises TypeError automatically converted from NotImplementedError"
+    ],
+    answer: 2,
+    explain: "raise NotImplementedError is a real exception, not the NotImplemented singleton -- it propagates out of == immediately instead of letting Python try the other operand or fall back."
+  },
+  {
+    q: "A class defines `__len__` but not `__bool__`. What does `bool(obj)` do when `len(obj) == 0`?",
+    options: [
+      "Raises TypeError because __bool__ is required",
+      "Returns True unconditionally",
+      "Falls back to __len__ and returns False for a length of 0",
+      "Returns None"
+    ],
+    answer: 2,
+    explain: "Without __bool__, Python falls back to __len__: a length of 0 is falsy, any other length is truthy."
+  },
+  {
+    q: "What is the key difference between `__getattr__` and `__getattribute__`?",
+    options: [
+      "They are exact synonyms",
+      "__getattribute__ runs for every attribute access; __getattr__ only runs when normal lookup already failed",
+      "__getattr__ runs for every attribute access; __getattribute__ only runs on failure",
+      "__getattribute__ only works on class attributes, __getattr__ only on instance attributes"
+    ],
+    answer: 1,
+    explain: "__getattribute__ intercepts ALL attribute access, found or not -- overriding it safely requires delegating to object.__getattribute__. __getattr__ is only invoked as a fallback after normal lookup fails, which is why it's the safer hook for computed defaults."
   }
 ];
 

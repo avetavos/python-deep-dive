@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Type hints คืออะไร
 
@@ -71,6 +73,26 @@ def find_user(user_id: int) -> str | None:
 
 ทั้งสองรูปแบบเทียบเท่ากัน แนะนำ `X | None` ใน Python สมัยใหม่
 
+### Optional narrowing — `if x:` ไม่ใช่การเช็ค None
+
+`Optional[int]` (หรือ `int | None`) แปลว่า "เป็น `int` หรือ `None` อย่างใดอย่างหนึ่ง" การเช็คด้วย `if x:` narrow ค่า
+`None` ออกไปก็จริง แต่มัน narrow ค่า falsy อื่น ๆ ที่ type นี้อนุญาตออกไปด้วย: `0`, `0.0`, `""`, `[]` โค้ดที่ AI เขียนมักเขียน
+`if x:` ทั้งที่ต้องการ `if x is not None:` และสองแบบนี้ต่างกันแบบเงียบ ๆ ทันทีที่ `0` เป็นค่าที่ถูกต้อง:
+
+```python
+def describe(count: int | None) -> str:
+    if count:               # BUG: also treats 0 as falsy
+        return f"count={count}"
+    return "no count"
+
+describe(0)     # "no count" -- wrong, 0 is a valid count
+describe(None)  # "no count" -- correct, by accident
+```
+
+ทางแก้คือเช็ค identity กับ `None` ตรง ๆ: `if count is not None:` ทั้ง mypy และ pyright ไม่จับ bug นี้เลย —
+`if count:` ถูกต้องตาม type สำหรับ `int | None` ทุกประการ ดังนั้น bug นี้จึงมองไม่เห็นสำหรับ checker ทั้งสองตัว
+เห็นได้เฉพาะเป็นคำตอบที่ผิดตอน runtime เท่านั้น
+
 ## Union — หนึ่งในหลายประเภท
 
 `Union[X, Y]` หมายถึงค่าอาจเป็น `X` หรือ `Y` ก็ได้ ใน Python 3.10+ ใช้ operator `|` ได้โดยตรง
@@ -85,6 +107,78 @@ def process(value: Union[int, str]) -> str:
 def process_modern(value: int | str) -> str:
     return str(value)
 ```
+
+## `Any` ลบการตรวจสอบทิ้ง
+
+`Any` เข้ากันได้กับทุก type ทั้งสองทิศทาง: parameter ที่ type เป็น `Any` รับอะไรก็ได้ และ value ที่ type เป็น `Any`
+สามารถ assign ให้อะไรก็ได้ นี่คือสิ่งที่ทำให้มันอันตราย — มันไม่ได้แปลว่า "ไม่รู้ type แต่สอดคล้องกัน" แต่แปลว่า
+**checker หยุดตรวจสอบ** ตรงจุดนั้นในโปรแกรมไปเลย
+
+```python
+from typing import Any
+
+def add_any(a: Any, b: Any) -> int:
+    return a + b   # checker trusts the -> int annotation; nothing verifies it
+
+add_any("ab", "cd")   # returns 'abcd', a str, not an int -- no checker complains
+```
+
+`Any` คือวิธีที่พบบ่อยที่สุดที่โค้ด AI เขียน "ดูเหมือน" ถูก type ครบทุกที่ทั้งที่ไม่บังคับใช้อะไรเลย มองหามันในโค้ดที่ AI สร้าง
+ด้วยการ grep หา `Any`, `# type: ignore` และ `**kwargs` ที่ไม่ annotate — แต่ละอย่างคือรูโหว่ที่ checker มองทะลุไม่ได้
+ควรใช้ type จริง, `object` (ซึ่งบังคับให้ narrow ก่อนใช้งาน) หรือ `Protocol` แทนการหยิบ `Any` มาใช้เพราะสะดวก
+
+## Invariance — `list[Dog]` ไม่ใช่ `list[Animal]`
+
+generic container ใน Python เป็น **invariant** โดย default: `list[Dog]` ไม่ใช่ subtype ของ `list[Animal]`
+ถึงแม้ `Dog` จะเป็น subtype ของ `Animal` ก็ตาม เรื่องนี้ทำให้เกือบทุกคนที่มาจากภาษาที่มี covariant array แปลกใจ
+
+```python
+class Animal:
+    def speak(self) -> str: ...
+
+class Dog(Animal):
+    def speak(self) -> str:
+        return "Woof"
+
+def make_all_speak_bad(animals: list[Animal]) -> list[str]:
+    return [a.speak() for a in animals]
+
+dogs: list[Dog] = [Dog(), Dog()]
+make_all_speak_bad(dogs)   # list[Dog] is not list[Animal] -- list is invariant
+```
+
+checker ทั้งสองปฏิเสธการเรียกนี้ mypy `--strict`:
+
+```
+error: Argument 1 to "make_all_speak_bad" has incompatible type "list[Dog]"; expected "list[Animal]"  [arg-type]
+note: "list" is invariant -- see https://mypy.readthedocs.io/en/stable/common_issues.html#variance
+note: Consider using "Sequence" instead, which is covariant
+```
+
+pyright:
+
+```
+error: Argument of type "list[Dog]" cannot be assigned to parameter "animals" of type "list[Animal]" in function "make_all_speak_bad"
+    "list[Dog]" is not assignable to "list[Animal]"
+      Type parameter "_T@list" is invariant, but "Dog" is not the same as "Animal"
+      Consider switching from "list" to "Sequence" which is covariant (reportArgumentType)
+```
+
+เหตุผลคือเรื่อง mutation: ถ้า `list[Dog]` ถูกยอมรับในที่ที่คาดหวัง `list[Animal]` function นั้นก็สามารถ
+append `Cat()` เข้าไปในสิ่งที่ caller เชื่อว่าเป็น `list[Dog]` ได้ ทางแก้ตามที่ทั้งสอง message บอกไว้คือรับ type ที่
+**covariant** และอ่านอย่างเดียวแทน — `Sequence[Animal]` (หรือ `Iterable[Animal]`) เมื่อ function อ่านจาก collection
+เพียงอย่างเดียว:
+
+```python
+from collections.abc import Sequence
+
+def make_all_speak(animals: Sequence[Animal]) -> list[str]:
+    return [a.speak() for a in animals]
+
+make_all_speak(dogs)   # fine -- Sequence is covariant, and never mutated
+```
+
+นี่คือกฎ invariance เดียวกับที่อยู่เบื้องหลังตัวอย่าง `TypeIs` ด้านล่างของบทนี้
 
 ## Type aliases
 
@@ -121,6 +215,19 @@ class Box[T]:
 type Pair[T] = tuple[T, T]     # generic alias
 ```
 
+### การ bound type parameter
+
+type parameter สามารถถูกจำกัดให้เป็นชุด type ที่แน่นอนด้วย `T: (A, B, C)` หรือ bound ให้เป็น supertype ด้วย
+`T: Base` เฉพาะ operation ที่ใช้ได้กับทุก type ใน bound เท่านั้นที่ทำได้ภายใน function:
+
+```python
+def smaller[T: (int, float, str)](a: T, b: T) -> T:
+    return a if a < b else b   # < is valid on int, float, and str
+```
+
+การเรียก `smaller(3, "x")` จะถูกปฏิเสธ — `T` ต้อง resolve เป็น type เดียวจากในชุด constraint ต่อการเรียกหนึ่งครั้ง
+การผสม type จึงเป็น type error ไม่ใช่ runtime error
+
 รูปแบบเดิมยังใช้ได้ และเป็นสิ่งที่คุณจะเห็นใน code ที่ target 3.11 หรือเก่ากว่า:
 
 ```python
@@ -131,6 +238,235 @@ T = TypeVar("T")
 def first(items: list[T]) -> T:
     return items[0]
 ```
+
+## `Protocol` vs `ABC` — structural กับ nominal typing
+
+ทั้งคู่ให้ function รับ "อะไรก็ได้ที่มีรูปร่างแบบ X" แต่ตรวจสอบความเข้ากันได้คนละแบบ
+
+- **`Protocol`** (structural / duck typing ตรวจแบบ static): class จะ satisfy `Protocol` ได้แค่มี method
+  ที่ถูกต้องเท่านั้น — ไม่ต้อง inherit
+- **`ABC`** (nominal บังคับตอน runtime): class ต้อง inherit จาก abstract base อย่างชัดเจน และ Python เองจะปฏิเสธ
+  การสร้าง instance ของ subclass ที่ยังไม่ได้ implement `@abstractmethod` ครบทุกตัว
+
+```python
+from abc import ABC, abstractmethod
+from typing import Protocol
+
+class Greeter(Protocol):
+    def greet(self) -> str: ...
+
+class FormalGreeter:            # no inheritance from Greeter needed
+    def greet(self) -> str:
+        return "Good day."
+
+def welcome(g: Greeter) -> str:
+    return g.greet()
+
+welcome(FormalGreeter())        # accepted -- structural match is enough
+
+class Shape(ABC):
+    @abstractmethod
+    def area(self) -> float: ...
+
+Shape()   # TypeError: Can't instantiate abstract class Shape without an implementation for abstract method 'area'
+```
+
+ใช้ `Protocol` เมื่อไม่ได้เป็นเจ้าของ class ที่จะถูกส่งเข้ามา (object ของ third-party, test double) ใช้ `ABC` เมื่อ
+เป็นเจ้าของ hierarchy ทั้งหมดและต้องการให้ Python เอง — ไม่ใช่แค่ checker — ปฏิเสธ subclass ที่ยังไม่สมบูรณ์
+
+## `TypedDict` — dictionary ที่มี type
+
+`dict[str, object]` ธรรมดาไม่บอก checker เลยว่ามี key อะไรบ้างหรือแต่ละ key เก็บอะไร `TypedDict` แก้ปัญหานี้:
+มันอธิบายรูปร่างของ dict ทีละ key ทั้งหมดในระดับ type เท่านั้น — ตอน runtime มันคือ `dict` ธรรมดา ไม่มีการ validate ใด ๆ
+
+```python
+from typing import NotRequired, Required, TypedDict
+
+class Movie(TypedDict, total=False):
+    title: Required[str]     # always required, even though total=False
+    year: NotRequired[int]   # optional even though total=True is not set
+
+m1: Movie = {"title": "Arrival"}
+m2: Movie = {"title": "Dune", "year": 2021}
+```
+
+`total=True` (ค่า default) หมายความว่าทุก key จำเป็นเว้นแต่ถูกครอบด้วย `NotRequired[...]` `total=False` กลับด้าน
+default นี้ ทำให้ทุก key เป็น optional เว้นแต่ถูกครอบด้วย `Required[...]` การผสมสองแบบ — อย่างด้านบน — ทำให้
+`TypedDict` หนึ่งตัวสื่อได้ว่า "ต้องมี title เสมอ ส่วน year เป็น optional"
+
+เพราะ `TypedDict` สร้าง `dict` ธรรมดาออกมา ไม่มีอะไรห้ามการสร้างมันเองด้วยมือโดยขาด key หรือสะกดชื่อ key ผิดตอน
+runtime — มีแค่ checker เท่านั้นที่จับได้ และจับได้เฉพาะตอนที่ literal ถูก assign ตรงเข้า target ที่ annotate เป็น `Movie`
+
+## `Literal`, `Final` และ `ClassVar`
+
+- **`Literal[...]`** จำกัด type ให้เหลือค่าที่ระบุไว้แทนที่จะเป็นทั้ง type — `Literal["read", "write"]` รับแค่สอง
+  string นั้น ไม่ใช่ `str` ทั่วไป
+- **`Final`** ทำเครื่องหมายว่าชื่อนี้จะไม่ถูก assign ซ้ำหลังผูกครั้งแรก checker ปฏิเสธการ assign ครั้งที่สอง Python
+  เองไม่บังคับใช้
+- **`ClassVar[T]`** ทำเครื่องหมายว่า attribute เป็นของ class ไม่ใช่ของแต่ละ instance — บอกว่าค่าถูกแชร์ และเตือนถ้า
+  พยายาม set ผ่าน `self`
+
+```python
+from typing import ClassVar, Final, Literal
+
+MAX_RETRIES: Final = 3
+Mode = Literal["read", "write"]
+
+class Counter:
+    total: ClassVar[int] = 0
+    def __init__(self) -> None:
+        Counter.total += 1   # mutating through the class name, not self
+
+def open_mode(mode: Mode) -> str:
+    return f"opened in {mode} mode"
+```
+
+## `@overload` — หนึ่ง signature ต่อรูปแบบการเรียก
+
+`@overload` ให้ function เดียวประกาศ type signature ได้หลายแบบสำหรับรูปแบบ argument ที่ต่างกัน มีแค่ definition
+สุดท้ายที่ไม่มี decorator เท่านั้นที่มี implementation จริง ส่วน stub ที่ decorate ด้วย `@overload` มีไว้สำหรับ checker
+เท่านั้น
+
+```python
+from typing import overload
+
+@overload
+def first(items: list[int]) -> int: ...
+@overload
+def first(items: list[str]) -> str: ...
+def first(items: list[int] | list[str]) -> int | str:
+    return items[0]
+
+first([1, 2, 3])     # checker infers -> int
+first(["a", "b"])     # checker infers -> str
+```
+
+ถ้าไม่มี `@overload` signature เดียว `list[int] | list[str] -> int | str` จะบังคับให้ caller ทุกที่ narrow
+return value เอง ทั้งที่ input บอก output type ชัดเจนอยู่แล้ว
+
+## `TypeGuard` vs `TypeIs` — narrowing เทียบข้างกัน
+
+ทั้ง `TypeGuard[T]` และ `TypeIs[T]` ทำเครื่องหมาย function ว่าเป็น runtime type check ที่ checker ควรเชื่อ
+ความต่างอยู่ที่สิ่งที่เกิดขึ้นใน branch `else`:
+
+```python
+def is_int_guard(val: object) -> TypeGuard[int]:
+    return isinstance(val, int)
+
+def is_int_is(val: int | str) -> TypeIs[int]:
+    return isinstance(val, int)
+```
+
+เมื่อตรวจด้วย `reveal_type` ใน `if`/`else` บน `val: int | str` ทั้ง mypy `--strict` และ pyright เห็นตรงกันในความต่างนี้:
+
+| Function | branch `if` | branch `else` |
+|---|---|---|
+| `TypeGuard[int]` | `int` | `int \| str` — **ไม่ถูก narrow** |
+| `TypeIs[int]` | `int` | `str` — **narrow ให้ตัด `int` ออก** |
+
+`TypeGuard` รับประกันแค่ branch positive เท่านั้น checker ไม่สามารถสมมติได้ว่าอะไรถูกตัดออกเมื่อเช็คไม่ผ่าน
+(การเช็คอาจเป็นกฎกำหนดเองที่ไม่ใช่ subtype test จริง) `TypeIs` เข้มงวดกว่าเรื่องสิ่งที่มันอนุญาตให้ตรวจ — มันต้องการให้
+narrowed type เป็น subtype ของ input type — และแลกกับสิ่งนั้น checker จะ narrow ทั้งสอง branch ให้ ใช้ `TypeIs`
+เมื่อการเช็คนั้นเป็น "นี่คือสมาชิกของ subtype หรือไม่" จริง ๆ และเก็บ `TypeGuard` ไว้สำหรับ narrowing ที่ไม่สามารถแสดง
+เป็น subtype test ธรรมดาได้
+
+## `cast` — คำโกหกที่ checker เชื่อ
+
+`cast(T, value)` บอก checker ว่า "เชื่อฉันเถอะ นี่คือ `T`" และไม่มีการตรวจตอน runtime **เลย** ต่างจาก `isinstance`
+มันไม่เปลี่ยนอะไรเกี่ยวกับ object นั้นเลย — มันเปลี่ยนแค่สิ่งที่ checker เชื่อเกี่ยวกับมันนับจากจุดนั้นไป
+
+```python
+from typing import cast
+
+def get_config_value(data: dict[str, object], key: str) -> str:
+    return cast(str, data[key])   # cast performs NO runtime check
+
+config: dict[str, object] = {"port": 8080}   # port is actually an int
+port = get_config_value(config, "port")
+port.upper()   # AttributeError: 'int' object has no attribute 'upper' -- cast lied
+```
+
+checker เห็น `port: str` และไม่ complain อะไรเกี่ยวกับ `.upper()` เลย crash จะเกิดขึ้นตอน runtime เท่านั้น ห่างไกล
+จากจุดที่โกหกเกิดขึ้นมาก ใช้ `cast` เฉพาะเมื่อมีข้อมูลที่ checker ไม่สามารถอนุมานได้จริง ๆ (และมั่นใจว่าถูกต้อง) —
+ไม่ใช่เป็นทางลัดผ่าน type error จริง
+
+## `Never` และ `assert_never` — พิสูจน์ exhaustiveness
+
+`Never` (สะกดว่า `NoReturn` ในโค้ดเก่า) คือ type ของ function ที่ไม่มีวัน return แบบปกติ — มันจะ raise หรือวนลูป
+ตลอดไปเสมอ `assert_never(x)` คือ pattern มาตรฐานสำหรับพิสูจน์ทั้งในระดับ checker และ runtime ว่า branch หนึ่ง
+ไม่มีทาง reach ได้:
+
+```python
+from typing import Literal, Never, assert_never
+
+def handle_mode(mode: Literal["read", "write"]) -> str:
+    match mode:
+        case "read":
+            return "reading"
+        case "write":
+            return "writing"
+        case _:
+            assert_never(mode)   # checker: unreachable if Literal is exhaustive
+
+def unreachable() -> Never:
+    raise RuntimeError("this function never returns normally")
+```
+
+ถ้ามีการเพิ่ม literal ตัวที่สาม (เช่น `"append"`) ให้ `Mode` alias โดยไม่อัปเดต `handle_mode` checker จะ flag การเรียก
+`assert_never(mode)` ว่า reachable ได้ด้วย argument ที่ไม่ใช่ `Never` — เป็นการตรวจ exhaustiveness ตอน compile-time
+สำหรับ `match`/`if` chain ตอน runtime `assert_never` ก็ไม่ใช่ no-op เช่นกัน: ถ้า caller ข้าม checker ไป (ด้วย `cast`,
+จากโค้ดที่ไม่มี type, หรือจาก external input) แล้วมีค่าที่ไม่คาดคิดจริง ๆ มาถึงมัน `assert_never` จะ raise
+`AssertionError` เป็นกรณีหายากที่ typing tool เป็น runtime guard จริงด้วย
+
+## `Self`
+
+`Self` หมายถึง "class ที่ method นี้ถูกเรียกจริง ๆ" รวมถึง subclass ด้วย — ต่างจากการสะกดชื่อ class ตรง ๆ ซึ่ง
+หมายถึง class นั้นเป๊ะ ๆ เสมอ:
+
+```python
+from typing import Self
+
+class Builder:
+    def __init__(self) -> None:
+        self.parts: list[str] = []
+    def add(self, part: str) -> Self:
+        self.parts.append(part)
+        return self
+
+Builder().add("a").add("b").parts   # ['a', 'b']
+```
+
+ใช้ `Self` กับ method แบบ chaining/fluent และ alternate constructor (`@classmethod`) เพื่อให้เรียกบน subclass
+แล้วยังคง type ของ subclass ไว้ แทนที่จะแคบกลับไปเป็น base class
+
+## `Callable` และ `ParamSpec`
+
+`Callable[[ArgTypes], ReturnType]` ให้ type กับ function value แต่ไม่พอสำหรับ decorator ที่ต้อง forward
+signature ที่ *ไม่รู้ล่วงหน้า* ให้เหมือนเดิม — `ParamSpec` จับ "parameter อะไรก็ตามที่ function ที่ห่ออยู่มี"
+ทำให้ return type ของ decorator สะท้อน input ของมันตรงเป๊ะ:
+
+```python
+from collections.abc import Callable
+from typing import ParamSpec, TypeVar
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+def logged(fn: Callable[P, R]) -> Callable[P, R]:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        print(f"calling {fn.__name__}")
+        return fn(*args, **kwargs)
+    return wrapper
+
+@logged
+def add(a: int, b: int) -> int:
+    return a + b
+
+add(2, 3)   # the checker still knows add takes (int, int) -> int through the decorator
+```
+
+ถ้าไม่มี `ParamSpec` `logged` จะต้อง type `wrapper` เป็น `Callable[..., R]` และทุกจุดที่เรียกจะเสียการตรวจสอบ
+type ของ argument บน function ที่ decorate ไปเลย
 
 ## Annotation ถูก evaluate แบบ lazy (Python 3.14)
 
@@ -153,6 +489,40 @@ from annotationlib import Format, get_annotations
 get_annotations(Node.link, format=Format.VALUE)       # resolved objects
 get_annotations(Node.link, format=Format.STRING)      # the source text
 get_annotations(Node.link, format=Format.FORWARDREF)  # ForwardRef where it cannot resolve
+```
+
+`Format.VALUE` คือตัวที่กัดได้: มันบังคับให้ทุก annotation resolve เป็น object จริง ดังนั้น annotation ที่อ้างชื่อที่
+ไม่มีอยู่จริงที่ไหนเลยจะ raise `NameError` — แต่จะเกิดเฉพาะตอนที่มีคนขอ `Format.VALUE` เท่านั้น ซึ่งอาจนานหลังจาก
+function ถูกนิยามไปแล้ว:
+
+```python
+def broken(x: DoesNotExist) -> None: ...   # defining this is completely fine under PEP 649
+
+get_annotations(broken, format=Format.STRING)   # {'x': 'DoesNotExist', 'return': 'None'} -- no error
+get_annotations(broken, format=Format.VALUE)    # NameError: name 'DoesNotExist' is not defined
+```
+
+static checker ไม่ได้ lazy แบบนี้ให้ฟรี ๆ: ทั้ง mypy และ pyright resolve ทุกชื่อที่ annotate ไว้แบบ eager
+ระหว่างการวิเคราะห์ ดังนั้นทั้งสองจะ flag `DoesNotExist` ทันทีที่บรรทัด `def` — นานก่อนที่การเรียก `Format.VALUE`
+ใด ๆ จะ raise ตอน runtime ดูการเทียบ checker ด้านล่าง
+
+## `TYPE_CHECKING` — import ที่มีไว้สำหรับ checker เท่านั้น
+
+`typing.TYPE_CHECKING` เป็น `False` ตอน runtime และ type checker ทุกตัวถือว่าเป็น `True` การครอบ import ด้วยมัน
+ทำให้ reference type ใน annotation ได้โดยไม่ต้องเสีย cost การ import จริง (หรือเสี่ยง circular import) — ตราบใดที่
+annotation เป็น string หรือ PEP 649 defer มันนานพอที่ไม่มีอะไรพยายาม resolve แบบ eager
+
+```python
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable   # never imported at runtime
+
+def total_of(values: "Iterable[int]") -> int:
+    return sum(values)
+
+total_of([1, 2, 3])                # 6 -- works fine, Iterable was never needed at runtime
+"Iterable" in globals()             # False
 ```
 
 ## เครื่องมือ typing สมัยใหม่ที่เหลือ
@@ -185,6 +555,11 @@ class Child(Base):
 ```
 
 พารามิเตอร์ต้องเป็น `Sequence[object]` ไม่ใช่ `list[object]`: `list` เป็น **invariant** ทำให้ `list[str]` ไม่ใช่ subtype ของ `list[object]` และ return type ของ `TypeIs` ต้องเป็น subtype ของ type พารามิเตอร์เสมอ ถ้าใช้ `list[object]` จะได้ error จริงดังนี้ — mypy `--strict`: `Narrowed type "list[str]" is not a subtype of input type "list[object]"  [narrowed-type-not-subtype]`; pyright: `Return type of TypeIs ("list[str]") is not consistent with value parameter type ("list[object]") (reportGeneralTypeIssues)` ส่วน `Sequence` เป็น covariant ทำให้ narrow จาก `Sequence[object]` ไป `Sequence[str]` ถูกต้อง
+
+runtime validation ด้วย library อย่าง pydantic ไม่ใช่ตัวแทนของ toolkit ทั้งหมดนี้ และในทางกลับกันก็เช่นกัน:
+static type (บทนี้) ถูกตรวจก่อนโปรแกรมรันและไม่มีต้นทุนตอน runtime เลย ส่วน pydantic validate ข้อมูลจริง
+(JSON จาก network request, config file) *ตอน* runtime และ raise เมื่อ input ไม่ถูกต้อง ใช้ static type ทุกที่
+แล้วเพิ่ม runtime validation เฉพาะจุดที่ข้อมูลที่ไม่น่าเชื่อถือเข้ามาในโปรแกรม
 
 ## Demo แบบ runnable เต็มรูปแบบ
 
@@ -239,6 +614,343 @@ print(add("oops", " still works"))  # Python does not enforce at runtime
 Type hints ถูกบังคับใช้เฉพาะโดย static checker อย่าง **mypy** หรือ **pyright** เท่านั้น รัน `mypy yourfile.py` เพื่อดัก type violation ก่อนที่จะกลายเป็น bug ในโปรดักชัน
 </Callout>
 
+## Depth demo: ทุกอย่างข้างบน รันจริง
+
+export const typeHintsDepthCode = `
+from collections.abc import Callable, Sequence
+from typing import (
+    Any, ClassVar, Final, Literal, Never, ParamSpec, Self, TYPE_CHECKING,
+    Protocol, TypeGuard, TypeIs, TypeVar, assert_never, cast, overload,
+)
+from annotationlib import Format, get_annotations
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+# --- Any erases checking ---
+def add_any(a: Any, b: Any) -> int:
+    return a + b  # mypy --strict flags this (no-any-return); pyright does not -- see below
+
+print("=== Any ===")
+result = add_any("ab", "cd")  # both checkers accept the call itself
+print(f"  add_any('ab', 'cd') = {result!r} (type {type(result).__name__}, not int)")
+
+# --- invariance: list[Dog] is not list[Animal] ---
+class Animal:
+    def speak(self) -> str:
+        return "..."
+
+class Dog(Animal):
+    def speak(self) -> str:
+        return "Woof"
+
+def make_all_speak(animals: Sequence[Animal]) -> list[str]:
+    return [a.speak() for a in animals]
+
+print("=== invariance ===")
+dogs: list[Dog] = [Dog(), Dog()]
+print(f"  make_all_speak(dogs) = {make_all_speak(dogs)}")  # fine at runtime AND with Sequence
+
+# --- Optional narrowing: "if x:" is not a None check ---
+def describe(count: int | None) -> str:
+    if count:  # BUG: also treats 0 as falsy -- not the same as "count is not None"
+        return f"count={count}"
+    return "no count"
+
+print("=== Optional narrowing ===")
+print(f"  describe(5)    -> {describe(5)!r}")
+print(f"  describe(0)    -> {describe(0)!r}")     # WRONG: 0 is a valid count
+print(f"  describe(None) -> {describe(None)!r}")
+
+# --- TypedDict: total, Required/NotRequired ---
+from typing import NotRequired, Required, TypedDict
+
+class Movie(TypedDict, total=False):
+    title: Required[str]
+    year: NotRequired[int]
+
+m1: Movie = {"title": "Arrival"}
+m2: Movie = {"title": "Dune", "year": 2021}
+print("=== TypedDict ===")
+print(f"  m1 = {m1}")
+print(f"  m2 = {m2}")
+
+# --- Literal / Final / ClassVar ---
+MAX_RETRIES: Final = 3
+Mode = Literal["read", "write"]
+
+class Counter:
+    total: ClassVar[int] = 0
+    def __init__(self) -> None:
+        Counter.total += 1
+
+def open_mode(mode: Mode) -> str:
+    return f"opened in {mode} mode"
+
+print("=== Literal / Final / ClassVar ===")
+Counter(); Counter()
+print(f"  MAX_RETRIES={MAX_RETRIES}  Counter.total={Counter.total}")
+print(f"  {open_mode('read')}")
+
+# --- @overload ---
+@overload
+def first(items: list[int]) -> int: ...
+@overload
+def first(items: list[str]) -> str: ...
+def first(items: list[int] | list[str]) -> int | str:
+    return items[0]
+
+print("=== overload ===")
+print(f"  first([1, 2, 3]) = {first([1, 2, 3])}")
+print(f"  first(['a', 'b']) = {first(['a', 'b'])}")
+
+# --- TypeGuard vs TypeIs ---
+def is_str_seq_guard(vals: Sequence[object]) -> TypeGuard[Sequence[str]]:
+    return all(isinstance(v, str) for v in vals)
+
+def is_str_seq_is(vals: Sequence[object]) -> TypeIs[Sequence[str]]:
+    return all(isinstance(v, str) for v in vals)
+
+print("=== TypeGuard vs TypeIs (runtime identical; checker differs -- see below) ===")
+mixed: Sequence[object] = ["a", "b"]
+print(f"  is_str_seq_guard(mixed) = {is_str_seq_guard(mixed)}")
+print(f"  is_str_seq_is(mixed)    = {is_str_seq_is(mixed)}")
+
+# --- cast is a lie the checker believes ---
+def get_config_value(data: dict[str, object], key: str) -> str:
+    return cast(str, data[key])  # cast performs NO runtime check
+
+config: dict[str, object] = {"port": 8080}  # port is actually an int
+print("=== cast ===")
+port = get_config_value(config, "port")
+print(f"  get_config_value(config, 'port') = {port!r}, actual type {type(port).__name__}")
+try:
+    port.upper()  # str method on what is really an int -- cast lied
+except AttributeError as e:
+    print(f"  port.upper() raised: {e}")
+
+# --- Never / assert_never exhaustiveness ---
+def handle_mode(mode: Literal["read", "write"]) -> str:
+    match mode:
+        case "read":
+            return "reading"
+        case "write":
+            return "writing"
+        case _:
+            assert_never(mode)  # checker: unreachable if Literal is exhaustive
+
+def unreachable() -> Never:
+    raise RuntimeError("this function never returns normally")
+
+print("=== Never / assert_never ===")
+print(f"  handle_mode('read') = {handle_mode('read')!r}")
+bad_mode = cast(Literal["read", "write"], "delete")  # bypass the checker on purpose
+try:
+    handle_mode(bad_mode)
+except AssertionError as e:
+    print(f"  assert_never caught a real bad runtime value: {e}")
+
+# --- Self ---
+class Builder:
+    def __init__(self) -> None:
+        self.parts: list[str] = []
+    def add(self, part: str) -> Self:
+        self.parts.append(part)
+        return self
+
+print("=== Self ===")
+print(f"  Builder().add('a').add('b').parts = {Builder().add('a').add('b').parts}")
+
+# --- Callable / ParamSpec ---
+P = ParamSpec("P")
+R = TypeVar("R")
+
+def logged(fn: Callable[P, R]) -> Callable[P, R]:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        print(f"  calling {fn.__name__}{args}")
+        return fn(*args, **kwargs)
+    return wrapper
+
+@logged
+def add(a: int, b: int) -> int:
+    return a + b
+
+print("=== Callable / ParamSpec ===")
+print(f"  add(2, 3) = {add(2, 3)}")
+
+# --- PEP 649: annotations are lazy; Format.VALUE forces evaluation ---
+def broken(x: DoesNotExist) -> None: ...  # deliberately undefined -- both checkers flag this eagerly
+
+print("=== PEP 649 / annotationlib ===")
+print(f"  Format.STRING -> {get_annotations(broken, format=Format.STRING)}")
+try:
+    get_annotations(broken, format=Format.VALUE)
+except NameError as e:
+    print(f"  Format.VALUE raised: {e}")
+
+# --- Protocol: structural typing, no inheritance needed ---
+class Greeter(Protocol):
+    def greet(self) -> str: ...
+
+class FormalGreeter:
+    def greet(self) -> str:
+        return "Good day."
+
+def welcome(g: Greeter) -> str:
+    return g.greet()
+
+print("=== Protocol (structural) ===")
+print(f"  welcome(FormalGreeter()) = {welcome(FormalGreeter())!r}")
+
+# --- ABC: nominal typing, enforced at runtime ---
+from abc import ABC, abstractmethod
+
+class Shape(ABC):
+    @abstractmethod
+    def area(self) -> float: ...
+
+class Circle(Shape):
+    def __init__(self, r: float) -> None:
+        self.r = r
+    def area(self) -> float:
+        return 3.14159 * self.r ** 2
+
+print("=== ABC (nominal, runtime-enforced) ===")
+print(f"  Circle(2).area() = {Circle(2).area()}")
+try:
+    Shape()  # type: ignore[abstract]  # ABC blocks instantiation of an unimplemented abstractmethod
+except TypeError as e:
+    print(f"  Shape() raised: {e}")
+
+# --- PEP 695 bound: constrain T to a fixed set of types ---
+def smaller[T: (int, float, str)](a: T, b: T) -> T:
+    return a if a < b else b
+
+print("=== PEP 695 bound ===")
+print(f"  smaller(3, 5) = {smaller(3, 5)}")
+print(f"  smaller('pear', 'apple') = {smaller('pear', 'apple')!r}")
+
+# --- TYPE_CHECKING: the import above never runs at runtime ---
+def total_of(values: "Iterable[int]") -> int:
+    return sum(values)
+
+print("=== TYPE_CHECKING ===")
+print(f"  total_of([1, 2, 3]) = {total_of([1, 2, 3])}")
+print(f"  'Iterable' in globals() at runtime: {'Iterable' in globals()}")
+`.trim();
+
+<Playground code={typeHintsDepthCode} />
+
+## ตรวจ demo ของบทนี้: mypy กับ pyright
+
+การรัน depth demo ด้านบนผ่านทั้งสอง checker (mypy 2.3.1, pyright 1.1.414) เจอ error จริงที่ตั้งใจเก็บไว้สองจุด
+และจุดที่สองตัวเห็นต่างกันหนึ่งจุด:
+
+```
+$ uvx mypy --strict type_hints_depth.py
+type_hints_depth.py: error: Returning Any from function declared to return "int"  [no-any-return]
+type_hints_depth.py: error: Name "DoesNotExist" is not defined  [name-defined]
+Found 2 errors in 1 file (checked 1 source file)
+
+$ uvx pyright type_hints_depth.py
+type_hints_depth.py - error: "DoesNotExist" is not defined (reportUndefinedVariable)
+1 error, 0 warnings, 0 informations
+```
+
+- **ตรงกัน** ที่ `DoesNotExist`: checker ทั้งสอง resolve ชื่อใน annotation แบบ eager ระหว่างการวิเคราะห์ ดังนั้นชื่อที่
+  ไม่มีตัวตนใน demo ของ PEP 649 ถูก flag โดยทั้งคู่ ทั้งที่ *runtime* จะ raise ก็ต่อเมื่อ `Format.VALUE` บังคับมันเท่านั้น
+  — ตัวอย่างที่ชัดเจนของ "timeline ของ checker ไม่ใช่ timeline ของ runtime"
+- **เห็นต่าง** ที่ `add_any`: mypy `--strict` มีเช็คเฉพาะชื่อ `no-any-return` ที่ flag การ return ค่า type `Any` จาก
+  function ที่ประกาศว่าคืนอะไรที่เฉพาะเจาะจงกว่า — ถึงแม้ `Any` จะเกี่ยวข้องอยู่ก็ตาม การตั้งค่า default ของ pyright
+  ไม่มีเช็คแบบนี้เปิดอยู่ จึงไม่รายงานอะไรสำหรับบรรทัดเดียวกัน นี่คือช่องว่างความเข้มงวดจริงระหว่าง default ของ checker
+  ทั้งสอง ไม่ใช่ bug ของฝั่งไหน
+- การเรียก `Shape()` ที่เป็น abstract instantiation ถูกกดไว้ด้วย `# type: ignore[abstract]` ใน demo — ถ้าไม่มีมัน
+  mypy จะรายงาน `error: Cannot instantiate abstract class "Shape" with abstract attribute "area"  [abstract]`
+  และ pyright จะรายงาน `error: Cannot instantiate abstract class "Shape" ... "Shape.area" is not implemented (reportAbstractUsage)`
+  — checker ทั้งสองเห็นตรงกันตรงนี้เช่นกัน แค่สะกด message ต่างกัน
+
+ตัวอย่าง invariance และ `TypeGuard`/`TypeIs` ก่อนหน้านี้ในบทถูกตรวจด้วยวิธีเดียวกัน message ที่ตรงเป๊ะถูก quote
+ไว้ตรงจุดที่มันปรากฏ
+
+<Mermaid code={`flowchart LR
+  subgraph CT["Check time (mypy / pyright)"]
+    A["source with annotations"] --> B{"types consistent?"}
+    B -->|no| C["error, nothing runs"]
+  end
+  subgraph RT["Runtime (CPython)"]
+    D["same source, annotations ignored"] --> E["runs regardless of type errors"]
+  end
+  B -->|yes| D
+  C -.->|"code can still run\nif you ignore the error"| D`} title="Check time กับ runtime คือสองรอบที่แยกกันบน source เดียวกัน" />
+
+## Mental Model
+
+แยก timeline สองอันไว้ให้ชัด: **check time** (mypy/pyright อ่าน source แล้วปฏิเสธ type ที่ไม่สอดคล้องกัน โดยไม่รัน
+โค้ดสักบรรทัดเดียว) กับ **runtime** (CPython รัน source จริงและไม่เคยดู annotation เลย เว้นแต่จะเรียก
+`annotationlib.get_annotations(..., format=Format.VALUE)` หรือคล้ายกันตรง ๆ) ไม่มีอะไรเชื่อมสองอย่างนี้อัตโนมัติ —
+error จาก checker ไม่ได้หยุดไม่ให้ `python file.py` รัน และ checker ที่ผ่านสะอาดก็ไม่ได้รับประกันพฤติกรรมตอน
+runtime ที่ถูกต้อง (ตามที่ `if count:`, `Any` และ `cast` แสดงให้เห็นข้างบน) Type hints คือ pass ที่สอง ที่เป็น
+ทางเลือก บนโค้ดของคุณ ที่คุณเลือกจะรันและเลือกจะเชื่อฟังเอง
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| Type hints (mypy/pyright) | จับ bug หลายประเภทได้ก่อนรันโค้ด | ไม่มีการป้องกันตอน runtime เลย — ต้องรัน checker จริงใน CI |
+| `Any` | ทางออกสำหรับโค้ดที่ dynamic จริง ๆ หรือกำลัง migrate | ปิดการตรวจสอบแบบเงียบ ๆ ทุกที่ที่มันปรากฏ |
+| `cast` | สื่อข้อมูลที่ checker อนุมานเองไม่ได้ | ไม่มีการตรวจตอน runtime — `cast` ที่ผิดจะพังไกลจากจุดต้นเหตุมาก |
+| `TypedDict` / `Protocol` | มีโครงสร้างโดยไม่ต้องมี runtime class หรือต้นทุน validation | ไม่มีอะไรห้าม dict/object ที่สร้างเองด้วยมือละเมิดรูปร่างนั้น |
+| Runtime validation (pydantic, เช็คเอง) | ปฏิเสธข้อมูลที่ผิดจริง ๆ ตรงจุดที่รับเข้ามา | มีต้นทุนตอน runtime จริง ยังต้องใช้ static type กับส่วนที่เหลือทั้งหมดอยู่ดี |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"โค้ดฉัน type hints ครบทุกที่ ปลอดภัยแน่นอน"** — Type hints แข็งแรงเท่าที่ checker ที่รันจริงกับมันเท่านั้น และ
+  `Any`/`cast`/`# type: ignore` สามารถทำลายทุกอย่างแบบเงียบ ๆ ได้ grep หาสามอย่างนี้ก่อนเชื่อว่าโค้ด "typed ครบ"
+- **"`Optional[int]` แปลว่า `if x:` คือการเช็ค None"** — มัน narrow `None` ออกก็จริง แต่ narrow `0` ออกด้วย — ดูหัวข้อ
+  ด้านบน ใช้ `if x is not None:` เมื่อ zero (หรือ `""`, `[]`) เป็นค่าที่ถูกต้อง
+- **"`list[Dog]` ควรใช้ได้ทุกที่ที่ `list[Animal]` ใช้ได้ — Dog *ก็คือ* Animal"** — ใช้ได้แค่ตอนอ่านอย่างเดียว
+  `list` เป็น invariant เพราะมัน mutable ใช้ `Sequence`/`Iterable` สำหรับ parameter ที่อ่านอย่างเดียว
+- **"mypy กับ pyright เห็นตรงกันเสมอ เพราะ implement 'ระบบ type' เดียวกัน"** — ทั้งคู่ implement typing spec
+  ตาม PEP เดียวกันจริง แต่ default ความเข้มงวดและเช็คพิเศษต่างกัน — `no-any-return` ข้างบนคือตัวอย่างจริง รันทั้งคู่
+  เมื่อ claim เกี่ยวกับ "checker" มีความสำคัญ
+- **"Type hints ทำให้โปรแกรมช้าลง"** — ไม่มีต้นทุนตอน runtime เลย — annotation เป็นแค่ metadata (ถูก defer ตาม
+  PEP 649 ไม่เคยถูก evaluate เว้นแต่มีคนขอ) ต้นทุนทั้งหมดอยู่ตอน check time ใน CI
+
+## อ่านโค้ดที่ AI เขียน
+
+เวลารีวิว type hints ของ function ที่ AI generate ให้ตรวจสิ่งเหล่านี้ก่อนเชื่อมัน:
+
+- parameter ถูก type เป็น `Any` หรือมี `# type: ignore` วางอยู่บนบรรทัดที่ "แค่อยากให้มันทำงาน" หรือเปล่า? ทั้งสอง
+  แปลว่า checker ไม่ได้ตรวจอะไรตรงนั้นเลย
+- function รับ `list[Base]` แต่จุดที่เรียกส่ง `list[Subclass]` เข้ามาหรือเปล่า? ถ้า function อ่านจาก parameter
+  อย่างเดียว มันควร type เป็น `Sequence[Base]` ถ้ามัน type เป็น `list[Base]` แล้วยังรับ argument แบบ
+  `list[Subclass]` ได้อยู่ แปลว่าไม่เคยมีการรัน checker กับโค้ดนี้จริง
+- `x: Optional[int]` (หรือ `int | None`) ถูกเช็คด้วย `if x:` แทนที่จะเป็น `if x is not None:` หรือเปล่า? มองหา
+  type ไหนก็ตามที่ `0`, `""` หรือ `[]` เป็นค่าที่ถูกต้อง
+- มี `cast(...)` ปรากฏที่ไหนบ้าง? ทุก `cast` คือ claim ที่ไม่มีการตรวจสอบ — เช็คว่า claim นั้นเป็นจริงหรือเปล่า
+- type hints มีอยู่แต่ function ไม่เคยถูกรันผ่าน `mypy` หรือ `pyright` ใน CI เลยหรือเปล่า? type ที่เป็นของประดับ
+  โดยไม่มีการบังคับใช้ให้ความมั่นใจที่ผิด ๆ
+
+<SpotTheBug code={`def shipping_fee(order_total: float, free_shipping_threshold: float | None) -> float:
+    if free_shipping_threshold:
+        return 0.0 if order_total >= free_shipping_threshold else 5.0
+    return 5.0
+
+print(shipping_fee(10.0, 0))  # threshold=0 should mean "always free shipping"
+print(shipping_fee(10.0, None))  # no threshold configured -- always charge
+`} lang="python">
+`free_shipping_threshold=0` ตั้งใจให้หมายถึง "ฟรีเสมอ" (order total เท่าไหร่ก็ >= 0) แต่ `if free_shipping_threshold:`
+ถือว่า `0` เป็น falsy แล้วตกไปที่ branch เดียวกับ `None` — คิดเงิน `5.0` แทนที่จะเป็น `0.0` ทั้ง mypy `--strict` และ
+pyright ยอมรับโค้ดนี้โดยไม่มี error เลยสักตัว: `float | None` คือ type ที่ `if x:` ได้รับอนุญาตให้เช็คพอดี ทางแก้คือ
+`if free_shipping_threshold is not None:`
+</SpotTheBug>
+
+<Callout title="Type hints ไม่บังคับใช้ตอน runtime — ใช้ mypy และ pyright ทั้งคู่ และรู้ว่ามันต่างกันตรงไหน">
+Type hints ถูกตรวจโดย static tool ไม่ใช่โดย Python เอง รัน `mypy --strict` **และ** `pyright` ใน CI — ทั้งคู่ใช้
+spec ร่วมกันแต่ default ความเข้มงวดต่างกัน (ตามที่ `no-any-return` แสดงให้เห็น) ดังนั้น checker ตัวหนึ่งผ่านสะอาด
+ไม่ได้พิสูจน์ว่าอีกตัวเห็นด้วย `Any` กับ `cast` คือสองวิธีที่ง่ายที่สุดที่ทำให้โค้ด "typed ครบ" ไม่บังคับใช้อะไรเลย
+</Callout>
+
 export const quizTypeHints = [
   {
     q: "ใน Python 3.14 ทำไม forward reference ถึงไม่ต้องใส่ quote แล้ว?",
@@ -248,37 +960,69 @@ export const quizTypeHints = [
       "ทุก module มี `from __future__ import annotations` ให้โดยปริยาย",
       "annotation แบบใส่ quote ไม่เคยจำเป็นตั้งแต่แรก"
     ],
-    answer: 1
+    answer: 1,
+    explain: "PEP 649 เก็บแต่ละ annotation เป็น function ที่ทำงานเมื่อมีคนขอเท่านั้น (เช่น Format.VALUE) ชื่อที่ถูกนิยามทีหลังในไฟล์จึงพร้อมใช้แล้วตอนที่มัน resolve"
   },
   {
     q: "Syntax ของ Python 3.10+ สำหรับ 'str หรือ None' คืออะไร?",
     options: ["Optional[str]", "str | None", "Union[str, None]", "Nullable[str]"],
-    answer: 1
+    answer: 1,
+    explain: "str | None คือ syntax ตาม PEP 604 ส่วน Optional[str] และ Union[str, None] คือรูปแบบเก่าที่เทียบเท่ากัน"
   },
   {
-    q: "Python ทำอะไรถ้าส่ง string ไปยังพารามิเตอร์ที่ annotate เป็น `int`?",
+    q: "```python\ndef describe(count: int | None) -> str:\n    if count:\n        return f\"count={count}\"\n    return \"no count\"\n\nprint(describe(0))\n```\nโค้ดนี้พิมพ์อะไร และทำไมถึงเป็น bug?",
     options: [
-      "Raise TypeError ทันที",
-      "แปลง string เป็น int อัตโนมัติ",
-      "รันโค้ดตามปกติ — type hints ไม่บังคับใช้ตอน runtime",
-      "Log DeprecationWarning"
+      "'count=0' -- ถูกต้อง เพราะส่ง 0 เข้าไป",
+      "'no count' -- if count: ถือว่า 0 เป็น falsy ไม่ใช่แค่ None",
+      "raise TypeError เพราะ 0 ไม่ใช่ None",
+      "'no count' -- เพราะ int | None เก็บ 0 ไม่ได้"
     ],
-    answer: 2
+    answer: 1,
+    explain: "`if count:` narrow ค่า falsy ทั้งหมดที่ type อนุญาตออกไป ไม่ใช่แค่ None เพราะ 0 เป็น falsy โค้ดนี้จึงจัดการ input ที่ถูกต้องผิดแบบเงียบ ๆ ทั้ง mypy และ pyright ไม่จับ เพราะ `if count:` ถูกต้องตาม type สำหรับ `int | None`"
   },
   {
-    q: "การ annotate list ของ integer ที่ถูกต้องใน Python 3.9+ คืออะไร?",
-    options: ["List[int]", "list[int]", "Array[int]", "int[]"],
-    answer: 1
-  },
-  {
-    q: "Type alias คืออะไร?",
+    q: "ทำไม `def f(animals: list[Animal])` ถึงปฏิเสธ argument แบบ `list[Dog]` ทั้งที่ `Dog` เป็น subclass ของ `Animal`?",
     options: [
-      "Runtime cast ที่แปลงค่า",
-      "การตั้งชื่อให้กับ type annotation ที่ซับซ้อนเพื่อให้อ่านง่ายขึ้น",
-      "Decorator ที่บังคับใช้ type ตอน runtime",
-      "Class พิเศษที่โมดูล `typing` มีให้"
+      "list[Dog] กับ list[Animal] มี representation ตอน runtime ต่างกัน",
+      "list เป็น invariant -- การรับ list[Dog] ในที่ที่คาดหวัง list[Animal] จะทำให้ function ใส่ Animal ที่ไม่ใช่ Dog เข้าไปใน list ของ caller ได้",
+      "Python 3.14 เอา subclass polymorphism ของ generic ออกไปแล้ว",
+      "เป็น bug ของ mypy; pyright ยอมรับการเรียกเดียวกัน"
     ],
-    answer: 1
+    answer: 1,
+    explain: "list เป็น mutable และ invariant โดยตั้งใจ: ถ้า list[Dog] ถูกยอมรับเป็น list[Animal] function จะสามารถ append Animal อะไรก็ได้ (เช่น Cat) เข้าไปในสิ่งที่ caller เชื่อว่าเป็น list[Dog] ทั้ง mypy --strict และ pyright ปฏิเสธการเรียกนี้และแนะนำ Sequence[Animal] สำหรับการอ่านอย่างเดียว"
+  },
+  {
+    q: "`cast(str, value)` ทำอะไรจริง ๆ ตอน runtime?",
+    options: [
+      "แปลง value เป็น str เหมือน str(value)",
+      "raise TypeError ถ้า value ไม่ใช่ str อยู่แล้ว",
+      "ไม่ทำอะไรเลย -- คืน value เดิมและมีผลแค่กับสิ่งที่ checker เชื่อเกี่ยวกับ type ของมัน",
+      "เพิ่ม isinstance check ตอน runtime ที่ mypy แทรกให้อัตโนมัติ"
+    ],
+    answer: 2,
+    explain: "cast ไม่ทำงานอะไรตอน runtime เลย มันมีไว้แค่บอก checker ให้ถือว่า value เป็น type ที่ระบุนับจากจุดนั้นไป ถ้า claim นั้นผิด checker จะเงียบและโปรแกรมอาจ crash ทีหลังมาก"
+  },
+  {
+    q: "```python\ndef is_int_guard(val: object) -> TypeGuard[int]: ...\ndef is_int_is(val: int | str) -> TypeIs[int]: ...\n```\nหลัง `if is_int_is(val): ... else: ...` checker infer type ของ `val` ใน branch `else` เป็นอะไร (val เดิมเป็น `int | str`)?",
+    options: [
+      "int | str -- TypeIs ไม่เคย narrow branch else",
+      "str -- TypeIs narrow branch negative ให้ตัด int ออก",
+      "object -- TypeIs ขยาย type เมื่อเช็คไม่ผ่าน",
+      "checker error เพราะ TypeIs ปรากฏใน else branch ไม่ได้"
+    ],
+    answer: 1,
+    explain: "TypeIs ต้องการให้ narrowed type เป็น subtype ของ input type และแลกกับสิ่งนั้น checker จะ narrow ทั้งสอง branch: branch if กลายเป็น int และ branch else กลายเป็น str ส่วน TypeGuard ในสถานการณ์เดียวกันจะทิ้ง branch else ไว้เป็น int | str เดิม"
+  },
+  {
+    q: "function หนึ่ง type hints ดูถูกต้องหมด แต่โค้ดคือ `def f(x: Any) -> int: return x` `mypy --strict` พูดถึงเรื่องนี้ว่าอย่างไร?",
+    options: [
+      "ไม่พูดอะไรเลย -- x: Any เข้ากันได้กับทุกอย่างแบบเงียบ ๆ",
+      "error: Returning Any from function declared to return \"int\" [no-any-return] -- และ pyright ที่ default configuration ไม่ flag บรรทัดเดียวกัน",
+      "ทั้ง mypy --strict และ pyright ปฏิเสธเหมือนกันทุกประการ",
+      "SyntaxError เพราะ Any ใช้เป็น parameter type ไม่ได้"
+    ],
+    answer: 1,
+    explain: "mypy --strict มีเช็คเฉพาะชื่อ no-any-return สำหรับรูปแบบนี้พอดี ส่วน default configuration ของ pyright ไม่มีเช็คแบบนี้เปิดอยู่ ทั้งสอง checker จึงเห็นต่างกันจริง -- ยืนยันแล้วโดยรันทั้งคู่กับ demo ของบทนี้เอง"
   }
 ];
 

@@ -1,0 +1,212 @@
+---
+title: 'Runtime Internals: Reading Python From the Inside'
+description: 'ทำไมการเข้าใจ interpreter ของ CPython — object model, memory, bytecode และ GIL — คือสิ่งที่ทำให้ตัดสินโค้ดที่ไม่คุ้นเคยได้ ไม่ใช่แค่รันมันดู'
+sidebar:
+  order: 1
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+## ทำไมผู้อ่านต้องมี interpreter model
+
+ทุกโมดูลก่อนหน้านี้ในคอร์สนี้สอนให้คุณ *เขียน* Python: syntax, โครงสร้างข้อมูล, class, ฟังก์ชัน, typing, async ไม่มีตัวไหนต้องรู้เลยว่าสิ่งเหล่านั้นรันจริงยังไง คุณเขียน class ที่ทำงานถูกต้อง เขียน decorator ที่ถูกต้อง วน `for` loop บน dict ได้ โดยไม่ต้องถามเลยว่า `self` ชี้ไปที่ object อะไรจริง ๆ, `for` loop คอมไพล์เป็นอะไร, หรือทำไมสอง thread ที่แข่งกันทำ `count += 1` ถึงทำ update หายได้
+
+ช่องว่างนี้คือจุดที่โค้ด Python ที่ AI สร้างพังบ่อยที่สุด — และเป็นจุดที่ reviewer ที่ไม่เคยดูกลไกข้างในจับไม่ได้ โค้ดที่ AI สร้างอาจดูเป็น idiomatic อ่านผ่าน ๆ แล้วดูถูก แต่ยังรั่วผ่าน reference cycle, ทำ shared counter พังภายใต้ thread, หรือทำสิ่งที่ผิดแบบเงียบ ๆ เพราะกลไกของ attribute lookup ทำงานแบบนั้นจริง ๆ ไม่มีข้อไหนเป็น syntax error เลยสักข้อ ทุกข้อเป็นข้อเท็จจริงเชิง runtime
+
+โมดูลนี้มีหน้าที่เดียว: ให้ความรู้เชิง runtime 4 อย่างที่ทำให้คุณมองโค้ด **Python ของคนอื่น** — ไม่ต้องรัน ไม่ต้อง profile แค่อ่าน — แล้วตอบคำถาม 4 ข้อนี้ได้อย่างมั่นใจ:
+
+1. **ชื่อนี้ผูกกับ object อะไรจริง ๆ และมันถูกแชร์อยู่หรือเปล่า?** (object model — `id`, `is`, refcount)
+2. **object นี้จะหายไปจริง ๆ เมื่อไหร่ และมันรั่วได้ไหม?** (memory และ garbage collector)
+3. **บรรทัดนี้รันอะไรจริง ๆ และรันตามลำดับไหน?** (bytecode, frame, interpreter loop)
+4. **สอง thread แตะ object นี้พร้อมกันได้ไหม และถ้าแตะพร้อมกันจะเกิดอะไรขึ้น?** (GIL และ free-threading)
+
+## จากข้อความ source ไปเป็น object ที่รันอยู่
+
+ทุกไฟล์ `.py` ที่คุณเขียนในคอร์สนี้ผ่าน 4 ขั้นตอนเดียวกันก่อนที่ logic ของคุณสักบรรทัดจะรัน โมดูลนี้จัดเรียงตามลำดับนั้น:
+
+<Mermaid code={`flowchart LR
+  SRC["Source text\n(.py file)"] --> COMP["Compiler\n(parse + compile)"]
+  COMP --> CODE["Code object\n(co_consts, co_names,\nco_varnames, bytecode)"]
+  CODE --> LOOP["Eval loop\n(frames, value stack,\none opcode at a time)"]
+  LOOP --> OBJ["Objects\n(PyObject: refcount + type\nheap-allocated, GC-tracked)"]
+  OBJ -. mutated/read by .-> LOOP
+  LOOP -. GIL serializes access .-> THREADS["Threads"]`} title="จาก source ไปเป็นโปรแกรมที่รัน: 4 ขั้นตอนที่โมดูลนี้ครอบคลุม" />
+
+- **`object-model.mdx`** ครอบคลุมกล่องขวาสุด: object ของ Python จริง ๆ แล้วในหน่วยความจำคืออะไร ชื่อผูกกับมันยังไง และ attribute lookup ตัดสินว่า `obj.attr` คืนอะไรยังไง
+- **`memory-and-gc.mdx`** ครอบคลุมสิ่งที่เกิดกับ object เหล่านั้นตามเวลา: เมื่อไหร่ refcounting อย่างเดียวก็ free ได้ เมื่อไหร่ cycle collector ต้องเข้ามาช่วย และมันรั่วได้ยังไงอยู่ดี
+- **`bytecode-and-interpreter.mdx`** ครอบคลุมสองกล่องตรงกลาง: source กลายเป็น code object ยังไง eval loop รันมัน frame ต่อ frame ยังไง และ interpreter ปรับตัวเองระหว่างรันยังไง
+- **`gil-and-free-threading.mdx`** ครอบคลุมลูกศรเส้นประ: อะไรที่ทำให้การเข้าถึง object เหล่านั้นเป็นแบบเรียงลำดับเมื่อมีมากกว่าหนึ่ง thread เกี่ยวข้อง และอะไรเปลี่ยนไปเมื่อไม่มีสิ่งนั้น
+
+## demo ที่รันได้จริง: ครบทั้ง 4 ขั้นตอนในตัวอย่างเดียว
+
+```python
+import dis
+import sys
+
+source = "y = 1 + 2\nprint(y)\n"
+code_obj = compile(source, "<demo>", "exec")
+print("co_consts:", code_obj.co_consts)
+print("co_names:", code_obj.co_names)
+
+print("--- bytecode ---")
+dis.dis(code_obj)
+
+print("--- running it ---")
+exec(code_obj)
+```
+
+Output จริง จาก `python3.14`:
+
+```text
+co_consts: (1, None)
+co_names: ('y', 'print')
+--- bytecode ---
+  0           RESUME                   0
+
+  1           LOAD_SMALL_INT           3
+              STORE_NAME               0 (y)
+
+  2           LOAD_NAME                1 (print)
+              PUSH_NULL
+              LOAD_NAME                0 (y)
+              CALL                     1
+              POP_TOP
+              LOAD_CONST               1 (None)
+              RETURN_VALUE
+
+3
+```
+
+สังเกตว่า `1 + 2` ไม่เคยปรากฏเป็น `1`, `2` แล้วมี instruction บวกเลย — compiler ทำ constant folding ให้เป็น `3` ตั้งแต่ compile time และ `3` เล็กพอที่จะได้ opcode เฉพาะของตัวเอง (`LOAD_SMALL_INT`) แทนที่จะไปหาใน `co_consts` (`co_consts` ตรงนี้มีแค่ `1` — เศษจาก parsing — กับ `None` ซึ่งเป็นค่าที่ module คืนโดย implicit) นั่นคือขั้นตอน compiler `dis.dis` แสดงขั้นตอน code object `exec` รันมันผ่าน eval loop เลข `3` ที่มันพิมพ์ออกมาเป็น Python object ที่มีชีวิตจริง และถูก immortal-cache ไว้ (ดู `object-model.mdx`) ตั้งแต่วินาทีที่มันถูกสร้าง 4 ขั้นตอน โค้ดแค่ย่อหน้าเดียว — ส่วนที่เหลือของโมดูลนี้จะเจาะลึกแต่ละขั้นตอน
+
+export const runtimeIntroCode = `
+import dis
+
+source = "y = 1 + 2\\nprint(y)\\n"
+code_obj = compile(source, "<demo>", "exec")
+print("co_consts:", code_obj.co_consts)
+print("co_names:", code_obj.co_names)
+print("--- bytecode ---")
+dis.dis(code_obj)
+print("--- running it ---")
+exec(code_obj)
+`.trim();
+
+<Playground code={runtimeIntroCode} />
+
+## Mental Model
+
+โปรแกรม Python ที่กำลังรันคือ output ของ compiler (ต้นไม้ของ code object) ที่ถูก C loop ตัวเดียวเดินผ่านทีละ bytecode instruction จัดการกับ heap ของ object ที่นับ reference อยู่ พฤติกรรมลึกลับทุกอย่างที่เจอในคอร์สนี้จนถึงตอนนี้ — ทำไม `is` บางทีโกหก ทำไม cycle ไม่ free ตัวเอง ทำไม `for` loop เร็วกว่า `while` ที่เทียบเท่ากัน ทำไมสอง thread ที่ "ทำแค่เลขคณิต" ถึงยังไม่ได้ speedup 2 เท่า — มีคำตอบเชิงกลไกอยู่ที่ขั้นตอนใดขั้นตอนหนึ่งใน 4 ขั้นตอนนี้ คุณไม่จำเป็นต้องท่องจำ C source ของ CPython คุณแค่ต้องรู้ข้อเท็จจริงหลัก 4 ข้อที่โมดูลนี้ตรวจสอบให้ เพื่อที่เวลาอ่านโค้ดคนอื่น จะรู้ว่าควรสงสัยขั้นตอนไหนใน 4 ขั้นตอนนี้
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| เรียนรู้ object model แบบชัดเจน | `is` เทียบกับ `==`, `__slots__`, ลำดับความสำคัญของ descriptor เลิกเป็นเรื่องเซอร์ไพรส์ | เพิ่มอีกหนึ่ง layer ที่ต้องเรียนก่อน "เขียนโค้ดไปเลย" |
+| เข้าใจ GC และ refcounting | จับ cycle ที่รั่วหรือ `lru_cache` ที่รั่วได้ก่อน ship | ต้องรู้คำศัพท์เพิ่ม (generation, weakref) สำหรับต้นทุนที่แทบไม่ต้องจ่ายเองด้วยมือ |
+| อ่าน bytecode | ยุติข้อถกเถียง "อันไหนเร็วกว่า" ด้วย `dis` ไม่ใช่การเดา | output ของ `dis` เปลี่ยนไปในแต่ละเวอร์ชัน Python — มันไม่ใช่ API ที่เสถียร |
+| รู้กลไกของ GIL | รู้ว่า thread ช่วยได้เมื่อไหร่ (I/O) และช่วยไม่ได้เมื่อไหร่ (CPU-bound บน GIL build) | free-threaded Python มีจริงใน 3.14 แต่ยังใหม่ — tooling และ library ยังตามไม่ทัน |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"ไม่ต้องรู้ว่า interpreter ทำงานยังไงก็เขียน Python ดี ๆ ได้"** คุณเขียน Python ที่ *ทำงานได้* โดยไม่รู้เรื่องนี้ก็จริง แต่คุณอ่าน Python ของ *คนอื่น* ได้อย่างน่าเชื่อถือไม่ได้ — โดยเฉพาะ Python ที่ AI สร้าง ซึ่งลื่นไหลแต่ไม่มีใครรับผิดชอบ — ถ้าไม่รู้ว่า 4 อาการพังคลาสสิก (bug เรื่อง identity, cycle/leak, bug เรื่องลำดับ, race condition) มาจากไหนจริง ๆ
+- **"CPython bytecode เป็น API ที่เสถียรและมีเอกสารรองรับ"** มันเปลี่ยนทุก minor version — บทเรียน `bytecode-and-interpreter.mdx` ในโมดูลนี้แสดง opcode จริงของ 3.14 (`LOAD_FAST_BORROW`, `RESUME_CHECK`) ที่ไม่เคยมีมาก่อนเมื่อไม่กี่เวอร์ชันที่แล้ว ใช้ `dis` เพื่อ *เข้าใจ* เท่านั้น อย่าพึ่งพา opcode ตายตัวในโค้ด production
+- **"GIL แปลว่า thread ใน Python ไม่มีประโยชน์"** มันแปลว่า thread ไม่มีประโยชน์สำหรับงาน *CPU-bound* บน GIL build เท่านั้น — threading สำหรับงาน I/O-bound ใช้ได้มาตลอด `gil-and-free-threading.mdx` และบท `gil-threads` ของโมดูล async ทั้งคู่อธิบายเหตุผลไว้แล้ว
+- **"garbage collection แปลว่าไม่ต้องคิดเรื่อง memory ใน Python เลย"** reference cycle, cache ระดับ module และ `functools.lru_cache` บน bound method ล้วนรั่วได้ในโค้ด Python ที่ดู idiomatic ปกติ — `memory-and-gc.mdx` reproduce ทั้งสามกรณีจริง
+
+## อ่านโค้ดที่ AI เขียน
+
+โมเดลที่สร้างโค้ด Python ที่ลื่นไหลไม่มีกลไกใด ๆ ที่จะรู้ว่าโค้ดที่มันสร้างจะรั่ว จะ race หรือจะทำสิ่งที่ผิดแบบเงียบ ๆ ตอนรันจริงหรือเปล่า — มันแค่ pattern-match กับสิ่งที่ *ดูเหมือน* ถูกต้อง ก่อนจะเชื่อโค้ดที่ AI สร้างที่แตะ shared state, caching หรือ object ที่มีอายุยาว ให้ถาม:
+
+- โค้ดนี้สร้าง reference cycle ไหม (object สองตัวชี้หากัน หรือ parent ถือ child ที่ถือ callback กลับไปหา parent) โดยไม่มีแผนจัดการเลยหรือเปล่า? reference counting อย่างเดียวจะไม่มีวัน free มันได้
+- โค้ดนี้ใส่ `@functools.lru_cache` หรือ `@functools.cache` บน method หรือเปล่า? cache จะถือ reference ของ `self` ไว้ ทำให้ instance ทุกตัวมีชีวิตอยู่ตลอดอายุโปรแกรม — `memory-and-gc.mdx` reproduce เรื่องนี้ไว้ตรง ๆ
+- โค้ดนี้แชร์ variable, list หรือ dict ธรรมดาข้าม thread ด้วยแพทเทิร์นอ่านแล้วเขียน (`counter += 1`, `if key not in d: d[key] = ...`) หรือเปล่า? มี bytecode instruction หลายตัวรันระหว่างการอ่านกับการเขียน การสลับ thread ตรงกลางทำให้ update หายได้
+- มี comment อ้างว่าอะไรบางอย่าง "atomic" หรือ "thread-safe" โดยไม่ระบุว่า bytecode instruction เดียว (หรือ lock ระดับ C) ตัวไหนเป็นคนทำให้มันเป็นแบบนั้นหรือเปล่า?
+
+<SpotTheBug code={`import functools
+
+class ReportBuilder:
+    def __init__(self, name):
+        self.name = name
+
+    @functools.lru_cache(maxsize=None)
+    def render(self, section):
+        return f"{self.name}: {section}"
+
+for i in range(10_000):
+    builder = ReportBuilder(f"report-{i}")
+    builder.render("summary")
+`} lang="python">
+ทุกรอบของ loop สร้าง `ReportBuilder` ใหม่แล้วเรียก `render` ที่ตกแต่งด้วย `lru_cache` `lru_cache` ใช้ argument ที่ส่งเข้ามาทำ key ของ cache — และสำหรับ bound method argument แรกคือ `self` `builder` แต่ละตัวที่แยกกันจึงกลายเป็น cache key ถาวร ทำให้ `functools.lru_cache` ถือ strong reference ของ `ReportBuilder` ทั้ง 10,000 ตัวไว้ตลอดอายุที่เหลือของโปรแกรม ทั้งที่ไม่มีส่วนไหนของโปรแกรมต้องการมันอีกแล้ว งานภายในของ `render` เอง (แค่ f-string บรรทัดเดียว) ก็ไม่ได้ประโยชน์จาก caching ตั้งแต่แรกอยู่แล้ว เพราะ `section` ต่างกันทุกครั้งเทียบกับ `self` ที่ไม่ซ้ำกัน วิธีแก้ ซึ่งอยู่ใน `memory-and-gc.mdx` คือห้ามใส่ `@lru_cache` ตรง ๆ บน instance method เด็ดขาด ให้ cache ฟังก์ชันระดับ module หรือ `staticmethod` ที่รับเฉพาะค่าที่ซ้ำกันจริง ๆ แทน
+</SpotTheBug>
+
+<Callout title="4 ขั้นตอน interpreter เดียว">
+Source กลายเป็น code object (compiler) code object ถูก eval loop เดินผ่าน (interpreter) eval loop จัดการ object ที่นับ reference (object model + GC) และเมื่อมีมากกว่าหนึ่ง thread เกี่ยวข้อง GIL (หรือการไม่มี GIL ใน free-threaded build) เป็นตัวตัดสินว่า "พร้อมกัน" แปลว่าอะไรจริง ๆ ทุกบทในโมดูลนี้พูดถึงหนึ่งใน 4 ขั้นตอนนี้ — อ่านตามลำดับ หรือกระโดดไปบทที่ตอบคำถามที่โค้ดชิ้นหนึ่งเพิ่งทำให้คุณสงสัย
+</Callout>
+
+export const quizRuntimeIndex = [
+  {
+    q: "Mermaid diagram ของโมดูลนี้ไล่จากไฟล์ .py ไปเป็นโปรแกรมที่รันอยู่ผ่าน 4 ขั้นตอนอะไรบ้าง?",
+    options: [
+      "Lexer, parser, linker, executable",
+      "Source text, compiler/code object, eval loop, objects",
+      "Import, compile, cache, run",
+      "Tokenize, type-check, optimize, JIT-compile",
+    ],
+    answer: 1,
+    explain: "source text ถูกคอมไพล์เป็น code object (co_consts/co_names/co_varnames + bytecode) จากนั้น eval loop เดินผ่าน code object นั้นทีละ frame ทีละ opcode และ opcode เหล่านั้นสร้างและแก้ไข object บน heap -- นี่คือ 4 กล่องใน diagram และ 4 บทในโมดูลนี้",
+  },
+  {
+    q: "ทำไม `1 + 2` ถึงกลายเป็น `LOAD_SMALL_INT 3` ใน disassembly แทนที่จะโหลด 1 กับ 2 แยกกันแล้วบวก?",
+    options: [
+      "dis.dis always simplifies arithmetic for readability",
+      "The compiler constant-folds the expression at compile time, and 3 is small enough to get its own opcode instead of a co_consts entry",
+      "Python evaluates all arithmetic lazily at runtime, so this is a caching artifact",
+      "This only happens inside a REPL, not in a real .py file",
+    ],
+    answer: 1,
+    explain: "compiler ของ CPython ทำ constant folding นิพจน์ literal อย่าง 1 + 2 จึงถูกคำนวณครั้งเดียวตั้งแต่ compile time LOAD_SMALL_INT เป็น opcode ตั้งแต่ 3.12 เป็นต้นมาสำหรับเลขจำนวนเต็มขนาดเล็กที่พบบ่อย ที่หลีกเลี่ยงการค้นหาใน co_consts ไปเลย",
+  },
+  {
+    q: "ข้อไหนคือสิ่งที่ object model (ไม่ใช่ GC ไม่ใช่ interpreter loop ไม่ใช่ GIL) เป็นคนอธิบายโดยตรง?",
+    options: [
+      "Why dis output differs between Python versions",
+      "Why two threads racing on a shared counter can lose updates",
+      "Why `a is b` can be True for two equal-looking small integers but False for two equal-looking large ones",
+      "Why a reference cycle needs gc.collect() instead of freeing immediately",
+    ],
+    answer: 2,
+    explain: "พฤติกรรมของ identity (is) มาจากวิธีที่ object ถูกสร้างและ cache -- small-int cache กับ string interning ทั้งคู่เป็นหัวข้อ object-model ที่ครอบคลุมใน object-model.mdx ตัวเลือกอื่นเป็นเรื่องของบท interpreter/bytecode, GIL และ GC ตามลำดับ",
+  },
+  {
+    q: "```python\nimport functools\n\nclass Report:\n    def __init__(self, name):\n        self.name = name\n\n    @functools.lru_cache(maxsize=None)\n    def render(self):\n        return self.name.upper()\n```\nผลจริงของการตกแต่ง instance method แบบนี้คืออะไร?",
+    options: [
+      "Nothing unusual -- lru_cache only caches the return value, not self",
+      "Every Report instance ever passed to render() is kept alive forever by the cache, since self is part of the cache key",
+      "It raises a TypeError at class definition time",
+      "The cache is automatically cleared when each Report instance is garbage collected",
+    ],
+    answer: 1,
+    explain: "functools.lru_cache ใช้ positional argument ทั้งหมดทำ key ของ cache และสำหรับ bound method นั้นรวม self ด้วย dict ของ cache จึงถือ strong reference ของ self ทุกตัวที่เคยเห็น ทำให้ instance ไม่มีวันมีสิทธิ์ถูกเก็บขยะ -- memory leak จริงที่พลาดได้ง่าย ครอบคลุมใน memory-and-gc.mdx",
+  },
+  {
+    q: "comment บน shared global counter เขียนว่า `count += 1  # atomic, no lock needed` ควรเช็คบทไหนในโมดูลนี้เพื่อยืนยันหรือหักล้างคำกล่าวอ้างนั้น?",
+    options: [
+      "object-model.mdx, because it covers refcounts",
+      "bytecode-and-interpreter.mdx, to see how many bytecode instructions count += 1 actually compiles to",
+      "memory-and-gc.mdx, because leaks are unrelated to atomicity",
+      "None of them -- this requires reading the C source",
+    ],
+    answer: 1,
+    explain: "atomicity เป็นคำถามระดับ bytecode: count += 1 คอมไพล์เป็น LOAD, BINARY_OP และ STORE -- หลาย instruction แยกกันที่ interpreter สามารถถูกขัดจังหวะระหว่างกลางได้ gil-and-free-threading.mdx ใช้ dis output แบบนี้เป๊ะ ๆ เพื่อแสดงว่ามันไม่ atomic แต่กลไกในการตรวจสอบเป็นพื้นที่ของ bytecode-and-interpreter.mdx",
+  },
+];
+
+<Quiz client:visible id="runtime-internals/index" questions={quizRuntimeIndex} />
+
+<ProgressTracker client:visible id="runtime-internals/index" />

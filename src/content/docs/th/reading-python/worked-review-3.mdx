@@ -1,0 +1,301 @@
+---
+title: 'Worked review 3: inventory service'
+description: 'AI-style inventory service ที่ใช้ dataclass + cache มี bug ปลูกไว้ 4 ตัว -- shared class attribute, lru_cache ที่ค้าง, __eq__ ไม่มี __hash__ และ parameter ที่เป็น Any'
+sidebar:
+  order: 7
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+inventory service เล็ก ๆ ที่สร้างจาก dataclass และ cache decorator — ทั้งสองอย่างดูเหมือนใช้ถูกต้องแบบตำราเมื่อดูเดี่ยว ๆ แต่ผิดในแบบที่ AI assistant มักเอามารวมกัน
+
+<Playground code={inventoryBuggyCode} />
+
+export const inventoryBuggyCode = `from dataclasses import dataclass
+from functools import lru_cache
+from typing import Any
+
+
+@dataclass
+class Product:
+    sku: str
+    price: float
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Product):
+            return NotImplemented
+        return self.sku == other.sku
+
+
+class InventoryService:
+    _catalog: dict[str, Product] = {}  # class attribute -- shared by every instance
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def stock(self, product: Product) -> None:
+        self._catalog[product.sku] = product
+
+    @lru_cache
+    def get_price(self, sku: str) -> float:
+        return self._catalog[sku].price
+
+    def update_price(self, sku: str, new_price: float) -> None:
+        self._catalog[sku].price = new_price
+
+    def apply_bulk_update(self, updates: Any) -> None:
+        for sku, new_price in updates.items():
+            self.update_price(sku, new_price)
+
+
+warehouse_a = InventoryService("warehouse-a")
+warehouse_b = InventoryService("warehouse-b")
+
+warehouse_a.stock(Product(sku="WIDGET", price=9.99))
+print("warehouse_b sees WIDGET too:", "WIDGET" in warehouse_b._catalog)
+
+print("price before update:", warehouse_a.get_price("WIDGET"))
+warehouse_a.update_price("WIDGET", 12.99)
+print("price after update (still cached):", warehouse_a.get_price("WIDGET"))
+
+updates_from_csv = [("WIDGET", 15.99)]  # a list of tuples, not the dict the code assumes
+try:
+    warehouse_a.apply_bulk_update(updates_from_csv)
+except AttributeError as e:
+    print(f"apply_bulk_update crashed: {e}")
+
+seen: set[Product] = set()
+try:
+    seen.add(Product(sku="WIDGET", price=12.99))
+except TypeError as e:
+    print(f"seen.add crashed: {e}")
+`.trim();
+
+**output จริง** (การ crash ทั้งสองอันด้านล่างถูกจับและพิมพ์ออกมาโดยตั้งใจ เพื่อให้ demo ทั้งหมดรันจนจบ — แต่ละอันคือหนึ่งในสี่ finding):
+
+```text
+warehouse_b sees WIDGET too: True
+price before update: 9.99
+price after update (still cached): 9.99
+apply_bulk_update crashed: 'list' object has no attribute 'items'
+seen.add crashed: cannot use 'Product' as a set element (unhashable type: 'Product')
+```
+
+## สิ่งที่พบ
+
+<details>
+<summary>Bug 1: <code>_catalog</code> เป็น class attribute ที่แชร์ทุก instance ของ <code>InventoryService</code> (catalog #15)</summary>
+
+**อาการ:** `warehouse_b sees WIDGET too: True` — `warehouse_a.stock(...)` ถูกเรียก ไม่เคยเรียก `warehouse_b.stock(...)` เลย แต่ `"WIDGET" in warehouse_b._catalog` เป็น `True` อยู่ดี warehouse สองตัวที่สร้างแยกกันโดยอิสระแชร์ inventory เดียวกัน
+
+**หลักฐาน:** `_catalog: dict[str, Product] = {}` ประกาศระดับ class นอก `__init__` — dict เพียงตัวเดียวเป๊ะ ที่ class เป็นเจ้าของ ไม่ใช่ instance ไหนเลย
+
+**ทางแก้:** initialize mutable state ต่อ instance ใน `__init__`:
+
+```python
+def __init__(self, name: str) -> None:
+    self.name = name
+    self._catalog: dict[str, Product] = {}
+```
+
+</details>
+
+<details>
+<summary>Bug 2: <code>@lru_cache</code> บน <code>get_price</code> คืนค่าเก่าหลัง <code>update_price</code> (spec: lru_cache บน method ที่มี mutable state ข้างใต้)</summary>
+
+**อาการ:** `get_price("WIDGET")` คืน `9.99` ทั้งก่อน *และ* หลัง `update_price("WIDGET", 12.99)` รัน — การอัปเดตราคาไม่เคยมองเห็นได้ผ่าน getter ที่ cache ไว้เลย
+
+**หลักฐาน:** `lru_cache` ไม่รู้เลยว่า `self._catalog[sku].price` สามารถเปลี่ยนระหว่าง call ได้ — มันจำ return value *แรก* สำหรับ key `(self, sku)` ตัวหนึ่งไว้ตลอดไป และไม่มีอะไรใน `update_price` บอกให้มันลืม
+
+**ทางแก้:** ทางแก้ที่ง่ายที่สุดคือไม่ cache ค่าที่เปลี่ยนได้จากใต้มือ — `get_price` ที่นี่เป็น dict lookup แบบ O(1) อยู่แล้ว ดังนั้นการ cache ไม่ได้อะไรเลยและมีแต่ความเสี่ยงเรื่องค่าเก่าค้าง:
+
+```python
+def get_price(self, sku: str) -> float:
+    return self._catalog[sku].price
+```
+
+</details>
+
+<details>
+<summary>Bug 3: <code>updates</code> ที่ type เป็น <code>Any</code> ซ่อนความไม่ตรงกันของ shape จริง (catalog #16)</summary>
+
+**อาการ:** `apply_bulk_update(updates_from_csv)` crash ด้วย `AttributeError: 'list' object has no attribute 'items'` — ผู้เรียกส่ง list ของ tuple มา ไม่ใช่ dict ที่ function body สมมติไว้ และไม่มีอะไรจับสิ่งนี้ก่อนที่จะถึง runtime เลย
+
+**หลักฐาน:** ทั้ง `mypy --strict` และ `pyright` ที่รันกับไฟล์นี้เป๊ะ รายงาน zero issue — `Any` ปิดการเช็คที่ควรจะจับความไม่ตรงกันนี้พอดี (ดู **สิ่งที่เครื่องมือจับได้** ด้านล่าง)
+
+**ทางแก้:** ให้ `updates` มี type จริง:
+
+```python
+def apply_bulk_update(self, updates: dict[str, float]) -> None:
+    for sku, new_price in updates.items():
+        self.update_price(sku, new_price)
+```
+
+หลังจากเปลี่ยนแบบนี้ การส่ง `updates_from_csv` (`list` ไม่ใช่ `dict`) จะกลายเป็น error ของ `mypy`/`pyright` ที่จับได้ก่อนที่โค้ดจะรันเลยด้วยซ้ำ
+
+</details>
+
+<details>
+<summary>Bug 4: <code>__eq__</code> ไม่มี <code>__hash__</code> ทำให้ <code>Product</code> unhashable (catalog #14)</summary>
+
+**อาการ:** `seen.add(Product(sku="WIDGET", price=12.99))` raise `TypeError: cannot use 'Product' as a set element (unhashable type: 'Product')` — ถูกจับและพิมพ์ไว้ที่นี่แค่เพื่อให้ demo จบได้ ในโค้ดจริงนี่จะเป็น crash ที่ไม่มีใครจับ
+
+**หลักฐาน:** การนิยาม `__eq__` บน class ทำให้ Python ตั้ง `__hash__` เป็น `None` อัตโนมัติ เว้นแต่ `__hash__` จะถูกนิยามด้วย — นี่เป็นพฤติกรรม Python มาตรฐานที่มีเอกสารรองรับ ไม่ได้เฉพาะเจาะจงกับ dataclass
+
+**ทางแก้:** นิยาม `__hash__` คู่กับ `__eq__` ให้สอดคล้องกับสิ่งที่ `__eq__` เทียบจริง:
+
+```python
+def __hash__(self) -> int:
+    return hash(self.sku)
+```
+
+</details>
+
+## เวอร์ชันที่แก้แล้ว
+
+แก้ทั้งสี่ bug แล้ว: ย้าย `_catalog` เข้า `__init__`, เอา `lru_cache` ออกจาก `get_price`, ให้ `updates` มี type จริงเป็น `dict[str, float]` และให้ `Product` มี `__hash__` ที่สอดคล้องกัน ทางแก้ของ bug 2 ยังใช้ `dataclasses.replace` เพื่อสร้าง `Product` ใหม่ทุกครั้งที่อัปเดตราคาแทนที่จะ mutate ตัวเดิม ทำให้ `Product` ปลอดภัยพอที่จะทำเป็น `frozen=True` และ immutable/hashable ได้จริง:
+
+<Playground code={inventoryFixedCode} />
+
+export const inventoryFixedCode = `from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Product:
+    sku: str
+    price: float
+
+
+class InventoryService:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self._catalog: dict[str, Product] = {}  # per-instance, not shared
+
+    def stock(self, product: Product) -> None:
+        self._catalog[product.sku] = product
+
+    def get_price(self, sku: str) -> float:
+        return self._catalog[sku].price  # no cache -- always reflects the current price
+
+    def update_price(self, sku: str, new_price: float) -> None:
+        existing = self._catalog[sku]
+        self._catalog[sku] = Product(sku=existing.sku, price=new_price)
+
+    def apply_bulk_update(self, updates: dict[str, float]) -> None:
+        for sku, new_price in updates.items():
+            self.update_price(sku, new_price)
+
+
+warehouse_a = InventoryService("warehouse-a")
+warehouse_b = InventoryService("warehouse-b")
+
+warehouse_a.stock(Product(sku="WIDGET", price=9.99))
+print("warehouse_b sees WIDGET too:", "WIDGET" in warehouse_b._catalog)
+
+print("price before update:", warehouse_a.get_price("WIDGET"))
+warehouse_a.update_price("WIDGET", 12.99)
+print("price after update:", warehouse_a.get_price("WIDGET"))
+
+updates_from_csv = {"WIDGET": 15.99}
+warehouse_a.apply_bulk_update(updates_from_csv)
+print("price after bulk update:", warehouse_a.get_price("WIDGET"))
+
+seen: set[Product] = set()
+seen.add(Product(sku="WIDGET", price=15.99))
+print("Product is hashable now, set has", len(seen), "item")
+`.trim();
+
+**output จริง:**
+
+```text
+warehouse_b sees WIDGET too: False
+price before update: 9.99
+price after update: 12.99
+price after bulk update: 15.99
+Product is hashable now, set has 1 item
+```
+
+## สิ่งที่เครื่องมือจับได้
+
+**`ruff` บนไฟล์ที่มี bug** — สามในสี่ bug จับได้ตรง ๆ:
+
+```text
+PLW1641 Object does not implement `__hash__` method
+RUF012 Mutable default value for class attribute
+ANN401 Dynamically typed expressions (typing.Any) are disallowed in `updates`
+```
+
+**`mypy --strict` และ `pyright` บนไฟล์ที่มี bug** — สะอาดหมดจดทั้งคู่:
+
+```text
+mypy --strict:  Success: no issues found in 1 source file
+pyright:        0 errors, 0 warnings, 0 informations
+```
+
+Bug 2 — ค่า `lru_cache` ที่ค้างเก่า — ไม่มีเครื่องมือไหนใน catalog นี้จับได้เลย มันไม่ใช่ type error ไม่ใช่ security issue และไม่ใช่ style nit มันเป็นผลลัพธ์เชิงตรรกะของการ cache ค่าที่มาจาก mutable state และไม่มีเครื่องมือไหนที่นี่คิดเรื่อง cache invalidation เลย
+
+**`ruff`, `mypy --strict` และ `pyright` บนไฟล์ที่แก้แล้ว — สะอาดทั้งหมด:**
+
+```text
+ruff:           All checks passed!
+mypy --strict:  Success: no issues found in 1 source file
+pyright:        0 errors, 0 warnings, 0 informations
+```
+
+<Callout title="Any และ cache ที่ค้างเก่า มองไม่เห็นทั้งคู่จาก strict type checking">
+ไฟล์นี้เป็นเครื่องเตือนว่า `mypy --strict` และ `pyright` ที่รายงาน zero issue ไม่เหมือนกับโค้ดที่ถูกต้อง — bug 3 มองไม่เห็นทั้งคู่เพราะ `Any` เลือกที่จะไม่เช็ค และ bug 2 มองไม่เห็นทั้งคู่เพราะ type checker ไม่มี model ว่า *เมื่อไหร่* ค่าที่ cache ไว้จะเก่า การอ่าน type ของ argument จริงที่ `apply_bulk_update` ถูกเรียก และการอ่านว่าข้อมูลข้างใต้ `get_price` เปลี่ยนได้หรือเปล่า คือ judgment call ที่ **[Review Checklist](/python/th/reading-python/review-checklist/)** มีไว้กระตุ้นให้ทำพอดี
+</Callout>
+
+export const quizWorkedReview3 = [
+  {
+    q: "`warehouse_a.stock(...)` ถูกเรียก แต่ `warehouse_b._catalog` แสดง product เดียวกัน อะไรเป็นสาเหตุ?",
+    options: [
+      "InventoryService has a bug in its __init__ method",
+      "_catalog is declared at class level (outside __init__), making it one dict shared by every instance of InventoryService, not a per-instance dict",
+      "Python automatically synchronizes dict attributes between instances of the same class",
+      "This is expected -- all InventoryService instances are supposed to share inventory"
+    ],
+    answer: 1,
+    explain: "การกำหนดค่า attribute ระดับ class (`_catalog: dict[str, Product] = {}` ข้างใน class body นอก __init__) สร้าง object เพียงตัวเดียวเป๊ะที่ class เป็นเจ้าของ ทุก instance ที่ไม่ shadow มันด้วย instance attribute ชื่อเดียวกันของตัวเองจะแชร์ object เดียวนั้น"
+  },
+  {
+    q: "`get_price(\"WIDGET\")` คืน 9.99 แม้หลังจาก `update_price(\"WIDGET\", 12.99)` ถูกเรียกแล้ว ทำไม `@lru_cache` ถึงทำให้เกิดสิ่งนี้?",
+    options: [
+      "lru_cache has a bug that fails to update cached values",
+      "lru_cache remembers the return value for a given set of arguments and has no way to know the underlying data (self._catalog[sku].price) changed -- it will keep returning the first result until the cache is explicitly cleared",
+      "lru_cache only works on functions, not methods, so this code doesn't actually cache anything",
+      "update_price silently fails to actually update the price"
+    ],
+    answer: 1,
+    explain: "lru_cache เป็น memoization decorator ล้วน ๆ: มันแมป (args) -> return value และไม่รู้อะไรเลยเกี่ยวกับ mutable state ที่ function อ่าน พอ get_price(self, 'WIDGET') ถูก cache แล้ว การ mutate self._catalog จากภายนอกไม่ invalidate cache entry นั้นให้อัตโนมัติ"
+  },
+  {
+    q: "`apply_bulk_update(updates: Any)` crash ตอน runtime เมื่อส่ง list แทน dict แต่ mypy --strict และ pyright ทั้งคู่รายงาน zero error บนไฟล์ ทำไมทั้งคู่ถึงจับไม่ได้?",
+    options: [
+      "Both tools have an unrelated bug",
+      "Any tells both type checkers to skip validating anything about that parameter's usage -- it is a deliberate, total opt-out from type checking for that value, not a gap in either tool's implementation",
+      "The tools were run with the wrong configuration",
+      "Type checkers cannot analyze functions that use .items()"
+    ],
+    answer: 1,
+    explain: "Any ถูกออกแบบมาให้ปิดการเช็ค type ทุกที่ที่มันปรากฏ parameter ที่ type เป็น Any สามารถถูกเรียกด้วยอะไรก็ได้เลยโดยไม่มี checker ตัวไหน raise diagnostic -- crash จะมองเห็นได้ก็ต่อเมื่อรันจริงตอน runtime หรือหลังจากให้ parameter มี type จริง"
+  },
+  {
+    q: "ทำไมการนิยาม `__eq__` บน Product โดยไม่นิยาม `__hash__` ด้วย ทำให้ instance ใช้ใน set ไม่ได้ ทั้งที่ __eq__'s เองไม่ได้พูดถึง set membership เลย?",
+    options: [
+      "Sets require every element to define a custom __str__ method",
+      "Defining __eq__ makes Python automatically set __hash__ to None on that class (unless __hash__ is also explicitly defined), because two objects that compare equal must hash equal -- a guarantee Python cannot verify without your help",
+      "This only happens for dataclasses, not regular classes",
+      "__eq__ and __hash__ are unrelated; this must be a different bug"
+    ],
+    answer: 1,
+    explain: "data model ของ Python กำหนดว่า a == b ต้องนำไปสู่ hash(a) == hash(b) เนื่องจาก __eq__ ที่กำหนดเองอาจเทียบด้วยเกณฑ์ที่ต่างจาก object identity default Python จึงเก็บ __hash__ default ไว้ไม่ได้อย่างปลอดภัย -- มันตั้ง __hash__ เป็น None แทน ทำให้ object unhashable จนกว่าคุณจะนิยาม __hash__ เอง"
+  }
+];
+
+<Quiz client:visible id="reading-python/worked-review-3" questions={quizWorkedReview3} />
+
+<ProgressTracker client:visible id="reading-python/worked-review-3" />

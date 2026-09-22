@@ -1,0 +1,443 @@
+---
+title: The GIL and Free-Threading, Mechanism
+description: 'How the GIL actually switches, what is and is not atomic, the free-threaded build (PEP 703/779), a real 3.14 vs 3.14t benchmark, and subinterpreters (PEP 734).'
+sidebar:
+  order: 5
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+<Callout title="Mechanism here, usage in async-concurrency">
+This lesson is about **how** the GIL and free-threading actually work at the interpreter level: switching, atomicity, per-object locks, and real measured numbers. For **when to reach for** `threading.Thread`, `Lock`, and `ThreadPoolExecutor` in your own code, see [The GIL and Threading](/python/en/async-concurrency/gil-threads/) in the Async & Concurrency module — that lesson covers usage in depth and is not repeated here.
+</Callout>
+
+## What the GIL actually is
+
+The Global Interpreter Lock is a single mutex inside the CPython interpreter (on a standard, non-free-threaded build) that only one OS thread can hold at a time in order to execute Python bytecode. It exists because CPython's core data structures — including every object's `ob_refcnt` from `object-model.mdx` — are not safe to mutate from two threads simultaneously without some form of locking, and a single global lock around bytecode execution is a far simpler design than a lock per object.
+
+## How the GIL switches — `sys.getswitchinterval`
+
+A thread holding the GIL does not hold it forever; CPython releases it periodically so other threads get a turn, controlled by a switch interval:
+
+```python
+import sys
+
+print("default switch interval:", sys.getswitchinterval())
+```
+
+Real output, `python3.14`:
+
+```text
+default switch interval: 0.005
+```
+
+Every 5 milliseconds (by default), the interpreter checks whether another thread is waiting for the GIL and, if so, releases it. `sys.setswitchinterval(seconds)` can tune this — shorter intervals mean more responsive thread switching but more overhead from the switching itself; longer intervals mean less overhead but threads wait longer for their turn.
+
+## What is atomic, and what is not — `x += 1` is more than one instruction, but that alone is not the whole story
+
+"Atomic" in this context means "cannot be interrupted partway through by a thread switch." The common shorthand — "anything that compiles to more than one bytecode instruction is unsafe across threads" — starts from a true premise:
+
+```python
+import dis
+
+
+def incr():
+    x = 0
+    x += 1
+    return x
+
+
+dis.dis(incr)
+```
+
+Real output, `python3.14`:
+
+```text
+  4           RESUME                   0
+
+  5           LOAD_SMALL_INT           0
+              STORE_FAST               0 (x)
+
+  6           LOAD_FAST_BORROW         0 (x)
+              LOAD_SMALL_INT           1
+              BINARY_OP               13 (+=)
+              STORE_FAST               0 (x)
+
+  7           LOAD_FAST_BORROW         0 (x)
+              RETURN_VALUE
+```
+
+`x += 1` on line 6 is `LOAD_FAST_BORROW`, `LOAD_SMALL_INT`, `BINARY_OP`, `STORE_FAST` — four separate instructions, and nothing in the language specification promises they execute as one unit. **But verifying this against real CPython reveals a more precise picture than "4 instructions = unsafe":**
+
+```python
+import sys
+import threading
+
+sys.setswitchinterval(1e-6)  # force GIL switches as often as possible
+
+counter = 0
+
+
+def worker(n):
+    global counter
+    for _ in range(n):
+        counter += 1  # bare read-modify-write, no call in between
+
+
+threads = [threading.Thread(target=worker, args=(500_000,)) for _ in range(8)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+print(f"bare counter += 1: expected {8 * 500_000}, got {counter}")
+```
+
+Real output, `python3.14`, run three times:
+
+```text
+bare counter += 1: expected 4000000, got 4000000
+bare counter += 1: expected 4000000, got 4000000
+bare counter += 1: expected 4000000, got 4000000
+```
+
+Zero lost updates, every time, even with the switch interval forced to one microsecond across 8 threads. The reason: CPython only actually checks whether it should release the GIL (the "eval breaker") at specific checkpoints — loop back-edges and function/method calls — not literally between every pair of adjacent instructions in a straight-line sequence with no jump. `counter += 1` on its own has no such checkpoint inside it, so in practice it completes as one uninterrupted unit. The danger reappears the instant a real checkpoint — most commonly a function call — sits between the read and the write:
+
+```python
+import sys
+import threading
+
+sys.setswitchinterval(1e-6)
+
+counter = 0
+
+
+def noop():
+    pass
+
+
+def worker(n):
+    global counter
+    for _ in range(n):
+        temp = counter
+        noop()  # any function call is a real interpreter checkpoint
+        counter = temp + 1
+
+
+threads = [threading.Thread(target=worker, args=(20_000,)) for _ in range(8)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+print(f"read, call, write: expected {8 * 20_000}, got {counter}")
+```
+
+Real output, `python3.14`:
+
+```text
+read, call, write: expected 160000, got 43184
+```
+
+Over 100,000 of 160,000 increments lost, reliably, across repeated runs. The bytecode-instruction-count heuristic pointed at the right general danger (a read-modify-write spanning more than one instruction) but the precise, verified trigger is a **checkpoint** — a function call or loop iteration — sitting between the read and the write, not merely "more than one bytecode instruction" in isolation. This matters in real code: `if key not in cache: cache[key] = expensive_call()` has exactly this shape (a call between the check and the write) and is genuinely racy across threads; a bare `counter += 1` in a tight loop, verified above, is far safer in practice than its bytecode alone would suggest — though still not something the language specification guarantees, and not a pattern to rely on deliberately.
+
+## `sys._is_gil_enabled()` — checking at runtime
+
+```python
+import sys
+
+print(sys._is_gil_enabled())
+```
+
+Real output, `python3.14.7` (standard build):
+
+```text
+True
+```
+
+On a free-threaded build (built with `--disable-gil`, distributed as the `3.14t` variant), this same call returns `False` — the only reliable way to check, from within a running program, whether the GIL is actually protecting it.
+
+## The free-threaded build: PEP 703 and PEP 779
+
+CPython's free-threaded mode removes the GIL entirely, replacing global locking with **per-object locks** and **biased reference counting** (a scheme optimized for the common case where one thread owns an object and rarely needs to contend with others for its refcount). Per the official Python 3.14 What's New document:
+
+> "CPython's free-threaded mode (PEP 703), initially added in 3.13, has been significantly improved in Python 3.14." ... "PEP 779: Free-threaded Python is officially supported" as of 3.14, with "the specializing adaptive interpreter (PEP 659) ... now enabled in free-threaded mode." The same document states the measured single-threaded overhead as "roughly 5-10%, depending on the platform and C compiler used."
+
+That single-thread cost is the trade-off: per-object locking and reference-count bookkeeping that a GIL build gets "for free" (one lock, coarse-grained) become real per-operation overhead on a free-threaded build, even for a program that never spawns a second thread. Verifying which variant is installed:
+
+```python
+import sys
+
+print(sys.version)
+```
+
+```text
+# standard build
+3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 ...]
+
+# free-threaded build, installed separately via `uv python install 3.14t`
+3.14.6 free-threading build (main, Jun 11 2026, 03:55:38) [Clang 22.1.3]
+```
+
+## A real CPU-bound benchmark: `python3.14` vs `python3.14t`
+
+The clearest way to see what the GIL actually costs a CPU-bound, multi-threaded program is to run the identical benchmark on both builds. This uses plain `threading.Thread` running a pure-Python arithmetic loop with no I/O:
+
+```python
+import sys
+import threading
+import time
+
+
+def cpu_work(n: int) -> int:
+    total = 0
+    for i in range(n):
+        total += i * i
+    return total
+
+
+def run_threads(n_threads: int, n: int) -> float:
+    threads = [threading.Thread(target=cpu_work, args=(n,)) for _ in range(n_threads)]
+    start = time.perf_counter()
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return time.perf_counter() - start
+
+
+N = 5_000_000
+print("GIL enabled:", sys._is_gil_enabled())
+print(f"1 thread:  {run_threads(1, N):.3f}s")
+print(f"2 threads: {run_threads(2, N):.3f}s")
+print(f"4 threads: {run_threads(4, N):.3f}s")
+```
+
+Real output, same machine (Apple M3 Pro, 11 logical CPUs), same script, two different interpreters:
+
+```text
+$ python3.14 gil_bench.py         # standard build, GIL enabled
+GIL enabled: True
+1 thread:  0.144s
+2 threads: 0.265s
+4 threads: 0.524s
+
+$ python3.14t gil_bench.py        # free-threaded build, no GIL
+GIL enabled: False
+1 thread:  0.120s
+2 threads: 0.121s
+4 threads: 0.125s
+```
+
+On the GIL build, 2 threads take roughly 2x as long as 1, and 4 threads roughly 4x — completely in line with "the GIL serializes CPU-bound work, so more threads buy you nothing for pure computation." On the free-threaded build, 2 and 4 threads finish in essentially the same time as 1 thread — real parallel execution across cores, with no serialization bottleneck. (This particular micro-benchmark's single-thread time did not show the ~5-10% overhead the What's New document describes for free-threaded mode in general — the specializing adaptive interpreter improvements in 3.14's free-threaded build, and this workload's simplicity, likely narrow the gap; treat the official 5-10% figure as the more broadly applicable one, and always measure your own workload before trusting either number.)
+
+## Subinterpreters — PEP 734, `concurrent.interpreters`
+
+A third concurrency model, new as a public stdlib API in Python 3.14: multiple interpreters in the same process, each with its own GIL (on a GIL build) and its own set of imported modules and global state, isolated from each other by default:
+
+```python
+import concurrent.interpreters as interpreters
+
+interp = interpreters.create()
+interp.exec("x = 1 + 1")
+result = interp.call(eval, "x")
+print("result from subinterpreter:", result)
+
+try:
+    print(x)
+except NameError as e:
+    print("main interpreter cannot see it:", e)
+
+interp.close()
+```
+
+Real output, `python3.14`:
+
+```text
+result from subinterpreter: 2
+main interpreter cannot see it: name 'x' is not defined
+```
+
+Each interpreter has genuinely separate global state — `x` created inside the subinterpreter simply does not exist in the main one. This gives you process-like isolation without the cost of an actual separate process (no serialization needed to hand a `memoryview` between interpreters, for instance), at the cost of not being able to freely share arbitrary Python objects — most values must be explicitly passed via `interp.call`/`Queue`, not shared by reference the way threads share everything.
+
+## Choosing a concurrency model
+
+<Mermaid code={`flowchart TD
+  Q["Is the work I/O-bound\n(network, disk, waiting)?"] -- yes --> IO["asyncio, or threading.Thread\n(GIL releases during I/O waits)"]
+  Q -- no, CPU-bound --> Q2["Standard GIL build,\nor free-threaded (3.14t)?"]
+  Q2 -- "GIL build" --> PROC["multiprocessing, or\nconcurrent.interpreters\n(separate GIL per interpreter)"]
+  Q2 -- "free-threaded (3.14t)" --> THR["threading.Thread\nreal parallel speedup, verified above"]`} title="Which concurrency primitive actually helps, given the GIL" />
+
+| Workload | On a standard (GIL) build | On a free-threaded (3.14t) build |
+|---|---|---|
+| I/O-bound (network, disk) | `asyncio` or `threading.Thread` — the GIL releases during I/O waits either way | Same — I/O-bound work was never GIL-limited |
+| CPU-bound | `multiprocessing` or `concurrent.interpreters` — separate GIL (or separate process) per unit of parallel work | `threading.Thread` — real parallel speedup, measured above |
+| Needs true object isolation | `multiprocessing` (separate process) or `concurrent.interpreters` (separate interpreter, same process) | Same, though threads now compete for real, so isolation may matter less for correctness and more for avoiding lock contention |
+
+## Full runnable demo
+
+export const gilCode = `
+import dis
+import sys
+
+print("=== switch interval ===")
+print("default switch interval:", sys.getswitchinterval())
+
+print("=== x += 1 is not atomic ===")
+
+
+def incr():
+    x = 0
+    x += 1
+    return x
+
+
+dis.dis(incr)
+
+print("=== sys._is_gil_enabled ===")
+print("GIL enabled on this interpreter:", sys._is_gil_enabled())
+
+print("=== subinterpreters (PEP 734) ===")
+import concurrent.interpreters as interpreters
+
+interp = interpreters.create()
+interp.exec("x = 1 + 1")
+result = interp.call(eval, "x")
+print("result from subinterpreter:", result)
+try:
+    print(x)
+except NameError as e:
+    print("main interpreter cannot see it:", e)
+interp.close()
+`.trim();
+
+<Playground code={gilCode} />
+
+<Callout title="Threads and subprocesses do not run the same way in this browser Playground">
+Pyodide (the Python running in this Playground) is single-threaded WebAssembly: `dis`, `sys.getswitchinterval`, `sys._is_gil_enabled`, and `concurrent.interpreters.create`/`exec`/`call` all work here and are real, but there is no actual OS-level thread scheduler underneath, so the `threading.Thread` benchmark shown above (and any real multi-core speedup or GIL contention) must be run locally with `python3.14` and `python3.14t` — copy the benchmark script from this lesson's source and run both interpreters yourself to reproduce the real numbers.
+</Callout>
+
+## Mental Model
+
+On a standard build, exactly one thread executes Python bytecode at any instant, full stop — the GIL is not a suggestion or a fast path, it is the only path. But *when* the running thread actually yields is not "at every instruction" — it is at specific checkpoints, chiefly function calls and loop back-edges, verified above by the difference between a bare `counter += 1` (survives aggressive forced switching completely unscathed) and the same read-modify-write with a function call inserted in the middle (loses the majority of its updates under identical conditions). "More than one bytecode instruction" is necessary but not sufficient for a real race; a *checkpoint* between the read and the write is what actually matters, and a function call is the most common one to watch for in a code review. Free-threading does not "speed up the GIL" — it deletes the single lock and replaces it with many small ones (per object) plus a refcounting scheme built for the common single-owner case, trading a small, constant single-thread tax for real multi-core scaling on CPU-bound work, verified above with a benchmark that shows exactly that trade play out.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| The GIL (standard build) | Every C extension and the interpreter's core data structures are simple to write correctly; no per-object locking overhead | CPU-bound threads never run Python bytecode in true parallel, no matter how many cores are available |
+| Free-threaded build (3.14t) | Real multi-core parallelism for CPU-bound `threading.Thread` code, verified above (near-linear scaling to 4 threads) | ~5-10% single-thread overhead per the official 3.14 What's New; a young ecosystem where some C extensions are not yet compatible |
+| `multiprocessing` / `concurrent.interpreters` | True isolation and parallelism on a GIL build, no free-threaded install needed | Process/interpreter startup and data-passing overhead; not everything can cross the boundary by reference |
+| `asyncio` | Concurrency for I/O-bound work with no threads or GIL contention at all | Does nothing for CPU-bound work; one blocking call anywhere stalls the entire event loop |
+
+## Common Misconceptions
+
+- **"The GIL means Python threads are pointless."** Verified above: for CPU-bound work on a standard build, yes — 2 and 4 threads bought no speedup. For I/O-bound work, threads have always worked fine, because the GIL is released during I/O waits; that is exactly `gil-threads.mdx`'s territory in the async module.
+- **"`x += 1` is atomic because it's one line of Python."** It compiles to four separate bytecode instructions, so nothing in the language guarantees atomicity — but verified above, a bare `counter += 1` in a tight loop survived an aggressive forced-switching stress test with zero lost updates, because CPython's GIL only actually yields at checkpoints (calls, loop back-edges), not between arbitrary adjacent instructions. The real, reliably-reproduced danger is a read-modify-write with a function call in between (a check-then-compute-then-cache pattern, for example) — not the bare increment itself.
+- **"Free-threaded Python makes single-threaded code faster too."** The opposite, by design and by measurement: the official 3.14 release notes state roughly 5-10% single-threaded overhead, the cost of per-object locking and biased refcounting replacing one cheap global lock.
+- **"Subinterpreters are the same thing as threads, just with a fancier name."** Threads share all global state by default and need explicit locks to avoid races; subinterpreters isolate global state by default and need explicit mechanisms (`Queue`, `interp.call`) to share anything at all — verified above by a subinterpreter's `x` being invisible to the main interpreter.
+- **"3.14's JIT and free-threading are the same feature."** They are unrelated, separately opt-in features covered in different lessons of this module — see `bytecode-and-interpreter.mdx` for the JIT's actual (off-by-default) status.
+
+## Reading AI-generated code
+
+- Does code have a "check, then act" pattern — `if key not in cache: cache[key] = compute(key)`, `if not os.path.exists(f): create(f)` — shared across threads with no `Lock`? Anything with a function call between the check and the write is a real, verified checkpoint where another thread can run, not a theoretical concern.
+- Does a comment assume "Python threads are useless for CPU-bound work" as a blanket, version-independent fact, without checking `sys._is_gil_enabled()` on the interpreter actually in use? That statement is verifiably false on a free-threaded build.
+- Does code pass a large, unpicklable, or stateful object directly into `concurrent.interpreters` expecting it to "just work" the way a shared object works across threads? Subinterpreters do not share arbitrary objects by reference.
+- Does a performance comparison quote numbers from "Python threading" or "Python without the GIL" without stating which interpreter build (standard vs. `3.14t`) produced them? The two can differ by an order of magnitude on the exact same code, as shown above.
+
+<SpotTheBug code={`import threading
+
+_cache = {}
+CACHE_IS_SAFE_ITS_JUST_A_DICT_CHECK = True
+
+
+def get_or_compute(key):
+    if key not in _cache:
+        _cache[key] = expensive_compute(key)  # a function call sits between check and write
+    return _cache[key]
+
+
+def expensive_compute(key):
+    return key * key
+
+
+def worker(keys):
+    for k in keys:
+        get_or_compute(k)
+
+
+threads = [threading.Thread(target=worker, args=([7] * 20_000,)) for _ in range(8)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+
+print("final cached value for 7:", _cache[7])
+`} lang="python">
+This looks safe because `if key not in _cache` and the assignment are two lines that "obviously" run together, and a plain dict read/write each individually look atomic. But this lesson verifies the actual danger precisely: `expensive_compute(key)` is a **function call**, and a function call is a real interpreter checkpoint where CPython's GIL can switch to another thread — unlike a bare `counter += 1` (verified in this lesson to survive even an aggressive forced-switch stress test with zero lost updates), a check-then-call-then-write pattern reliably races in practice. Multiple threads can all see `key not in _cache`, all call `expensive_compute` concurrently, and each overwrite `_cache[key]` with its own separately-computed result — for this pure function the *value* ends up correct by luck, but `expensive_compute` runs far more times than the cache was meant to allow, and for a non-pure computation (one with side effects, or one that returns a genuinely different object each call, like opening a file handle) this loses correctness, not just efficiency. The fix is a `threading.Lock` (or `functools.lru_cache`'s own internal lock, which handles exactly this case correctly) around the whole check-compute-store sequence.
+</SpotTheBug>
+
+export const quizGil = [
+  {
+    q: "What does `sys.getswitchinterval()` returning 0.005 actually control?",
+    options: [
+      "How often Python checks for syntax errors",
+      "The default interval (in seconds) at which a thread holding the GIL is asked to release it so another thread can run",
+      "How often garbage collection runs",
+      "The timeout for network requests",
+    ],
+    answer: 1,
+    explain: "The switch interval is how often (every 5ms by default) the interpreter checks whether another thread is waiting for the GIL and releases it if so. It has nothing to do with syntax checking, GC scheduling, or network timeouts.",
+  },
+  {
+    q: "This lesson runs `counter += 1` in a tight loop across 8 threads with the switch interval forced to 1 microsecond, and separately runs `temp = counter; noop(); counter = temp + 1` (a function call between read and write) under the same stress. What did the real, verified results show?",
+    options: [
+      "Both lost updates equally, proving bytecode instruction count alone determines safety",
+      "Neither lost any updates -- the GIL always protects read-modify-write sequences fully",
+      "The bare `counter += 1` lost zero updates even under aggressive forced switching, while the version with a function call between read and write lost the majority of its updates -- because CPython only checks whether to release the GIL at checkpoints like function calls and loop back-edges, not between arbitrary adjacent instructions",
+      "The function-call version was actually safer because function calls acquire an implicit lock",
+    ],
+    answer: 2,
+    explain: "This is the real, measured result in this lesson: a bare counter += 1 survived 4,000,000 increments across 8 threads with zero losses even at a 1-microsecond switch interval, while inserting a plain function call between the read and the write lost over 100,000 of 160,000 increments under the same conditions. The mechanism is that CPython's GIL-release checkpoints are function calls and loop back-edges, not every bytecode instruction boundary -- so a straight-line read-modify-write with no call in it is far safer in practice than 'it's more than one bytecode instruction' alone would suggest, while a checkpoint (like calling expensive_compute() in a check-then-act cache pattern) reliably reintroduces the race.",
+  },
+  {
+    q: "According to Python 3.14's official What's New document, what happens to single-threaded performance on the free-threaded (no-GIL) build?",
+    options: [
+      "It's identical to the standard build -- free-threading has zero cost when only one thread runs",
+      "It's roughly 5-10% slower, due to per-object locking and biased reference counting replacing one cheap global lock",
+      "It's always faster, because there's no lock to acquire at all",
+      "Free-threaded builds don't support single-threaded execution",
+    ],
+    answer: 1,
+    explain: "The official 3.14 What's New document states the single-threaded performance penalty on free-threaded mode is roughly 5-10%, depending on platform and compiler. This is the real cost of replacing one coarse global lock with many fine-grained per-object locks plus biased refcounting.",
+  },
+  {
+    q: "In a real benchmark on this course's machine, a CPU-bound threading.Thread workload took ~0.144s (1 thread), ~0.265s (2 threads), and ~0.524s (4 threads) on a standard python3.14 build. What does this pattern demonstrate?",
+    options: [
+      "The threads are running in true parallel and something else is slowing them down",
+      "The GIL is serializing the CPU-bound work -- time scales roughly linearly with thread count instead of staying flat, meaning more threads bought zero speedup for pure computation",
+      "This machine only has 1 CPU core",
+      "This is a measurement error; threading always helps",
+    ],
+    answer: 1,
+    explain: "Roughly N times the time for N threads doing equal CPU-bound work is exactly what you'd expect if only one thread can execute Python bytecode at a time -- the GIL is doing its job of serializing access, and threads bought no parallelism for pure computation. The same benchmark on a free-threaded (3.14t) build in this lesson showed the opposite: all three thread counts finished in essentially the same time.",
+  },
+  {
+    q: "```python\ninterp = interpreters.create()\ninterp.exec(\"x = 1 + 1\")\nprint(x)  # in the MAIN interpreter\n```\nWhat happens when this last line runs, and why?",
+    options: [
+      "It prints 2, since interp.exec ran in the same process",
+      "It raises NameError -- each interpreter created by concurrent.interpreters has its own isolated global namespace by default, and x was only defined inside the subinterpreter",
+      "It raises a PermissionError -- subinterpreters cannot be created without special privileges",
+      "It silently returns None",
+    ],
+    answer: 1,
+    explain: "Subinterpreters (PEP 734, concurrent.interpreters) are isolated from each other's global state by default -- verified in this lesson exactly this way: x created via interp.exec is invisible to the main interpreter's own namespace, raising NameError. This is fundamentally different from threading.Thread, where all threads share the same globals by default.",
+  },
+];
+
+<Quiz client:visible id="runtime-internals/gil-and-free-threading" questions={quizGil} />
+
+<ProgressTracker client:visible id="runtime-internals/gil-and-free-threading" />

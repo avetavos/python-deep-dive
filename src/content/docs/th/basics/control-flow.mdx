@@ -1,6 +1,6 @@
 ---
 title: Control Flow
-description: 'if/elif/else, ลูป for, while, range, break/continue/else, และ walrus operator ใน Python'
+description: 'if/elif/else, match, iterator protocol เบื้องหลัง for, การแก้ list ระหว่าง iterate, range แบบ lazy, late-binding closure, และ chained comparison ใน Python'
 sidebar:
   order: 3
 ---
@@ -9,11 +9,13 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
-## เงื่อนไข: `if` / `elif` / `else`
+## Conditional: `if` / `elif` / `else`
 
-เงื่อนไขใน Python ใช้การเยื้องแทนวงเล็บปีกกา
-นิพจน์ใดก็ตามที่ประเมินได้เป็น truthy หรือ falsy สามารถใช้เป็นเงื่อนไขได้
+Python ใช้การเยื้อง (indentation) แทนวงเล็บปีกกาสำหรับ conditional
+expression ใดก็ตามที่ประเมินเป็น truthy หรือ falsy ใช้เป็นเงื่อนไขได้
 
 ```python
 score = 85
@@ -30,11 +32,35 @@ else:
 print(grade)   # B
 ```
 
-Python ไม่มี `switch` statement — ใช้ `if`/`elif` chain หรือตั้งแต่ Python 3.10 ใช้ structural pattern matching (`match`/`case`)
+## Structural pattern matching: `match`
 
-## ลูป `for` บน iterable
+ตั้งแต่ Python 3.10, `match`/`case` จับคู่ **รูปร่าง** ของค่า ไม่ใช่แค่ความเท่ากัน — value, การตรวจ type, sequence pattern, หรือ mapping pattern ที่ลองไล่จากบนลงล่าง โดยมี `_` เป็นตัวจับทุกอย่างที่เหลือ:
 
-ลูป `for` ของ Python วนซ้ำบน **iterable** ใดก็ได้ — list, string, range, file, dictionary, หรือออบเจกต์ที่ implement `__iter__`
+```python
+def describe(value):
+    match value:
+        case 0:
+            return "zero"
+        case int() if value < 0:
+            return "negative int"
+        case [x, y]:
+            return f"pair: {x}, {y}"
+        case {"kind": kind}:
+            return f"dict with kind={kind}"
+        case _:
+            return "something else"
+
+print(describe(0))              # zero
+print(describe(-5))             # negative int
+print(describe([1, 2]))         # pair: 1, 2
+print(describe({"kind": "widget"}))  # dict with kind=widget
+```
+
+`case [x, y]` ยัง **bind** `x` กับ `y` ให้ด้วยถ้า pattern ตรงกัน — นี่คือ destructuring ไม่ใช่แค่การเปรียบเทียบ ซึ่งเป็นเหตุผลที่ `match` แทนที่ chain ของ `isinstance`/index check ได้กระชับกว่า `if`/`elif` chain ธรรมดามาก
+
+## `for` loop เหนือ iterable
+
+`for` loop ของ Python iterate เหนือ **iterable** ใดก็ได้ — list, string, range, file, dict, หรือ object ที่ implement `__iter__` เอง
 
 ```python
 fruits = ["apple", "banana", "cherry"]
@@ -46,12 +72,41 @@ for ch in "hello":
     print(ch)
 ```
 
-ใช้ `enumerate()` เมื่อต้องการทั้ง index และค่า:
+ใช้ `enumerate()` เมื่อต้องการทั้ง index และ value:
 
 ```python
 for i, fruit in enumerate(fruits, start=1):
     print(f"{i}. {fruit}")
 ```
+
+## `for` ทำงานยังไงจริง ๆ: `iter()` และ `next()`
+
+`for item in iterable:` เป็นแค่ syntactic sugar เบื้องหลัง Python เรียก `iter(iterable)` ครั้งเดียวเพื่อได้ **iterator** แล้วเรียก `next()` กับมันซ้ำ ๆ จนกว่ามันจะ raise `StopIteration` ซึ่ง loop จับไว้เงียบ ๆ เพื่อจบการวนซ้ำ:
+
+```python
+nums = [10, 20, 30]
+it = iter(nums)
+print(next(it))   # 10
+print(next(it))   # 20
+print(next(it))   # 30
+next(it)           # StopIteration -- iterator exhausted
+```
+
+การรู้เรื่องนี้อธิบายพฤติกรรมที่ดูเหมือนเวทมนตร์ได้: iterator จำตำแหน่งของตัวเองระหว่างการเรียก `next()` (มัน **มี state**) และเมื่อหมดแล้วก็หมดตลอดไป — เรียก `iter()` ซ้ำกับ iterator object ตัวเดิมก็แค่คืนตัวมันเอง ยังว่างเปล่าเหมือนเดิม `for` loop ใหม่เหนือ *iterable* เดิม (อย่าง list) ทำงานได้อีกครั้งก็เพราะ `iter(a_list)` สร้าง iterator ใหม่ทุกครั้งเท่านั้น ซึ่งไม่จริงสำหรับ generator ที่เป็น iterator ของตัวมันเอง
+
+## การแก้ list ขณะ iterate มันอยู่
+
+`for` loop ติดตามตำแหน่งเป็นตัวเลขใน sequence ไม่ใช่ "item ที่ยังไม่ได้เยี่ยมชม" การลบ item ออกจาก list ที่กำลัง iterate อยู่ทำให้ item ที่เหลือทุกตัวเลื่อนมาข้างหน้าหนึ่งช่อง ซึ่งตัวนับตำแหน่งของ loop ไม่รู้เรื่องนี้ด้วย มันจึงข้าม item ที่เลื่อนเข้ามาในตำแหน่งที่มันผ่านไปแล้วแบบเงียบ ๆ:
+
+```python
+values = [1, 2, 2, 3, 4, 5]
+for n in values:
+    if n % 2 == 0:
+        values.remove(n)
+print(values)   # [1, 2, 3, 5] -- the second 2 survived; 4 was removed instead
+```
+
+loop เยี่ยม index 0 (`1`), index 1 (`2` ถูกลบ — list หดตัวและทุกอย่างเลื่อนซ้าย) แล้วก็ index 2 — แต่ element ที่อยู่ตำแหน่ง index 2 ตอนนี้คือ `2` ตัวที่สอง ซึ่งเคยอยู่ index 3 loop "ผ่าน" ตำแหน่งนั้นไปแล้วและไม่กลับมาเยี่ยมอีก มันจึงรอด ในขณะที่ `4` ถูกลบไปโดยบังเอิญของตำแหน่ง ทางแก้คือ iterate เหนือ copy — `for n in values.copy():` หรือ `for n in list(values):` — หรือสร้าง list ใหม่ด้วย comprehension แทนการแก้ในที่: `values = [n for n in values if n % 2 != 0]`
 
 ## `range()`
 
@@ -65,9 +120,22 @@ for i in range(2, 10, 2): # 2, 4, 6, 8
     print(i)
 ```
 
-## ลูป `while`
+`range` เป็น **lazy** — range object เก็บแค่ start, stop, step แล้วคำนวณแต่ละค่าตามที่ถูกขอ แทนที่จะสร้างจำนวนเต็มทุกตัวไว้ล่วงหน้า:
 
-`while` ทำซ้ำตราบเท่าที่เงื่อนไขเป็น truthy
+```python
+import sys
+
+r = range(1_000_000)
+print(type(r).__name__)              # range
+print(sys.getsizeof(r))              # 48 -- three integers, regardless of length
+print(sys.getsizeof(list(r)))        # 8000056 -- one million actual int objects
+```
+
+`range` ของตัวเลขพันล้านตัวก็มีต้นทุน 48 byte เท่ากับ `range` ของตัวเลขสามตัว นี่คือเหตุผลที่ `for i in range(len(items)):` ประหยัดหน่วยความจำแม้ `items` จะใหญ่มาก และเป็นเหตุผลที่ควรใช้ `range` (หรือ generator) แทนการสร้าง list เพียงเพื่อ loop ผ่านมันครั้งเดียว
+
+## `while` loop
+
+`while` ทำซ้ำตราบใดที่เงื่อนไขเป็น truthy
 
 ```python
 count = 0
@@ -76,11 +144,11 @@ while count < 3:
     count += 1
 ```
 
-## `break`, `continue`, และ `else` บนลูป
+## `break`, `continue`, และ `else` ของ loop
 
-- `break` ออกจากลูปในสุดทันที
-- `continue` ข้ามส่วนที่เหลือของการวนซ้ำปัจจุบันและไปยังครั้งถัดไป
-- clause `else` บนลูปทำงาน **เฉพาะเมื่อลูปจบโดยไม่พบ `break`**
+- `break` ออกจาก loop ที่อยู่ในสุดทันที
+- `continue` ข้ามส่วนที่เหลือของรอบปัจจุบันแล้วไปรอบถัดไป
+- clause `else` ของ loop รันก็ต่อเมื่อ **loop จบโดยไม่โดน `break`** — กฎนี้ใช้เหมือนกันทั้ง `for...else` และ `while...else`
 
 ```python
 for n in [1, 3, 5, 7]:
@@ -91,15 +159,70 @@ else:
     print("no even number found")   # this runs
 ```
 
-## Walrus Operator `:=`
+`break` ออกแค่ loop ที่อยู่ **ในสุด** เท่านั้น — Python ไม่มี labeled break แบบภาษาอื่น การจะออกจาก loop ที่ซ้อนกันสองชั้นต้องใช้ตัวแปร sentinel ที่เช็คหลัง inner loop หรือย้ายทั้งหมดเข้า function แล้วใช้ `return`:
 
-เปิดตัวใน Python 3.8, `:=` กำหนดค่าและประเมินเป็นค่านั้นในนิพจน์เดียว
-มีประโยชน์มากในเงื่อนไข `while` และ `if` เพื่อหลีกเลี่ยงการเขียนนิพจน์ซ้ำ
+```python
+found = None
+for i in range(3):
+    for j in range(3):
+        if i * j == 4:
+            found = (i, j)
+            break        # only exits the inner `for j` loop
+    if found:
+        break            # this second break exits the outer loop
+print(found)             # (2, 2)
+```
+
+## Chained comparison
+
+Python ให้ chain การเปรียบเทียบได้: `a < b < c` หมายถึง `a < b and b < c` โดยประเมิน `b` แค่ครั้งเดียว วิธีนี้อ่านเป็นธรรมชาติสำหรับการเช็คช่วงตัวเลข — แต่กฎ chain เดียวกันนี้ใช้กับ operator เปรียบเทียบ **ใด ๆ** ที่ผสมกัน รวมถึง `in` ด้วย ซึ่งเป็นจุดที่มันหยุดดูเหมือนคณิตศาสตร์ธรรมดา:
+
+```python
+x, y = 10, 5
+lst = [True, False]
+
+print(x < y in lst)     # (x < y) and (y in lst)  ->  False and False  ->  False
+print((x < y) in lst)   # bool(x < y) tested for membership -> False in lst -> True
+```
+
+`a < b in c` **ไม่ใช่** `(a < b) in c` — มันคือ `a < b and b in c` เพราะ Python ถือว่า `in` เป็นแค่ comparison operator อีกตัวที่ chain ได้เหมือน `<` ถ้าคุณตั้งใจถามว่า "ผลลัพธ์ boolean ของ `a < b` เป็นสมาชิกของ `c` ไหม" ต้องใส่วงเล็บ `(a < b) in c` ให้ชัดเจน
+
+## `//` และ `%` กับจำนวนลบ
+
+Floor division (`//`) ปัดเศษไปทาง **ลบอนันต์เสมอ** ไม่ใช่เข้าหาศูนย์ — และ `%` ถูกนิยามให้ `a == (a // b) * b + (a % b)` เป็นจริงเสมอ:
+
+```python
+print(-7 // 2, -7 % 2)   # -4 1
+print(7 // -2, 7 % -2)   # -4 -1
+```
+
+`-7 // 2` คือ `-4` ไม่ใช่ `-3` — ภาษาส่วนใหญ่ที่ใช้ truncating division แบบ C จะได้ `-3` ในกรณีนี้ ซึ่งเป็นต้นเหตุ off-by-one bug ที่พบบ่อยเมื่อย้ายโค้ดข้ามภาษา เครื่องหมายของผลลัพธ์ `%` ตรงกับเครื่องหมายของ **ตัวหาร** เสมอ ไม่ใช่ตัวตั้ง
+
+## Walrus operator `:=`
+
+เริ่มใน Python 3.8, `:=` กำหนดค่าและประเมินเป็นค่านั้นใน expression เดียวกัน
+มีประโยชน์มากที่สุดใน `while` และ `if` condition เพื่อไม่ต้องเขียน expression ซ้ำ
 
 ```python
 data = [4, 7, 2, 9, 1]
 if (largest := max(data)) > 5:
     print(f"Largest value {largest} exceeds 5")
+```
+
+## Late-binding closure ใน loop
+
+`lambda` (หรือ nested `def`) ที่สร้างใน loop ไม่ได้จับ**ค่า**ของตัวแปร loop ตอนที่ถูกสร้าง — มันจับ **ชื่อ** ที่จะถูกค้นหาใหม่ทุกครั้งที่ function ถูกเรียกจริง พอถึงเวลาที่ closure ไหนถูกเรียก loop ก็จบไปแล้วและชื่อนั้นมีค่าสุดท้าย:
+
+```python
+funcs = [lambda: i for i in range(3)]
+print([f() for f in funcs])          # [2, 2, 2] -- every closure reads the SAME i
+```
+
+lambda ทั้งสามตัวใช้ enclosing scope เดียวกันและตัวแปร `i` ตัวเดียว ไม่มีตัวไหนเก็บ `0`, `1`, หรือ `2` เลย — ทุกตัว lookup `i` ตอนถูกเรียก ซึ่งตอนนั้น loop จบแล้วและ `i` เป็น `2` ทางแก้ที่ idiomatic คือ bind ค่าในแต่ละรอบเป็น **default argument** ซึ่ง*ถูกประเมินครั้งเดียวทันที* ตอนกำหนด function:
+
+```python
+funcs_fixed = [lambda i=i: i for i in range(3)]
+print([f() for f in funcs_fixed])    # [0, 1, 2] -- each default was bound at creation time
 ```
 
 ## Demo ที่รันได้จริง
@@ -145,49 +268,210 @@ if (largest := max(data)) > 5:
 
 <Playground code={controlFlowCode} />
 
-<Callout title="for...else ทำงานเมื่อไม่มี break">
-clause `else` บนลูป `for` หรือ `while` เป็นหนึ่งในฟีเจอร์ที่น่าประหลาดใจที่สุดของ Python
-ไม่ได้หมายความว่า "ถ้าลูปวนศูนย์ครั้ง"
-แต่หมายความว่า "ลูปจบปกติ — ไม่มี `break` ถูกเรียก"
-ใช้ `else` แทน flag variable: แทนที่ `found = False` แล้วตรวจหลังลูป
-ให้เขียน branch สำเร็จไว้ในลูปและ branch ล้มเหลวไว้ใน `else`
+Playground ที่สองเป็นทัวร์ของกับดักด้านบน: iterator protocol, การแก้ list ขณะ iterate, range แบบ lazy, กับดัก chained comparison, floor division กับจำนวนลบ, break ใน nested loop, และ late-binding closure
+
+export const controlFlowDepthCode = `
+import sys
+
+# 1. match (structural pattern matching)
+def describe(value):
+    match value:
+        case 0:
+            return "zero"
+        case int() if value < 0:
+            return "negative int"
+        case [x, y]:
+            return f"pair: {x}, {y}"
+        case {"kind": kind}:
+            return f"dict with kind={kind}"
+        case _:
+            return "something else"
+
+print(describe(0))
+print(describe(-5))
+print(describe([1, 2]))
+print(describe({"kind": "widget"}))
+print(describe("hello"))
+
+# 2. for runs on iter()/next().
+nums = [10, 20, 30]
+it = iter(nums)
+print(next(it))
+print(next(it))
+print(next(it))
+try:
+    next(it)
+except StopIteration:
+    print("StopIteration -- iterator exhausted")
+
+# 3. Mutating a list while iterating over it.
+values = [1, 2, 2, 3, 4, 5]
+for n in values:
+    if n % 2 == 0:
+        values.remove(n)
+print("after removing evens while iterating:", values)
+
+# 4. range() is lazy.
+r = range(1_000_000)
+print("type:", type(r).__name__)
+print("range size:", sys.getsizeof(r))
+print("list size:", sys.getsizeof(list(r)))
+
+# 5. Chained comparison and the "a < b in c" trap.
+x, y = 10, 5
+lst = [True, False]
+print("chained x < y in lst:", x < y in lst)          # (x < y) and (y in lst)
+print("(x < y) in lst:", (x < y) in lst)               # boolean tested for membership
+
+# 6. // and % with negative numbers.
+print(-7 // 2, -7 % 2)
+print(7 // -2, 7 % -2)
+
+# 7. while / else.
+count = 0
+while count < 3:
+    print("while count:", count)
+    count += 1
+else:
+    print("while/else: loop finished without break")
+
+# 8. break only exits the innermost loop.
+found = None
+for i in range(3):
+    for j in range(3):
+        if i * j == 4:
+            found = (i, j)
+            break
+    if found:
+        break
+print("found:", found)
+
+# 9. Late-binding closures in a loop.
+funcs = [lambda: i for i in range(3)]
+print("late binding:", [f() for f in funcs])
+
+funcs_fixed = [lambda i=i: i for i in range(3)]
+print("fixed with default arg:", [f() for f in funcs_fixed])
+`.trim();
+
+<Playground code={controlFlowDepthCode} />
+
+## Mental Model
+
+`for item in iterable:` คือ state machine เล็ก ๆ ไม่ใช่การกวาดผ่าน "item ทั้งหมด" แบบเวทมนตร์ Python ขอ iterator จาก iterable ครั้งเดียว (`iter()`) แล้วขอค่าถัดไปจาก iterator นั้นซ้ำ ๆ (`next()`) จนกว่ามันจะส่งสัญญาณ `StopIteration` มีแค่ iterator เท่านั้นที่ติดตามตำแหน่ง — ตัว iterable เองไม่เคยถูกถามว่า "อะไรอยู่หลัง item ที่ให้ไปครั้งล่าสุด"
+
+<Mermaid code={forLoopDiagram} title="for คือ: ขอ iterator ครั้งเดียว แล้วเรียก next() จนกว่าจะ StopIteration" />
+
+export const forLoopDiagram = `flowchart LR
+  A["iter(iterable)"] --> B["iterator object"]
+  B --> C{"next(iterator)"}
+  C -->|"value"| D["run loop body"]
+  D --> C
+  C -->|"StopIteration"| E["loop ends"]`;
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| `for` สร้างจาก `iter()`/`next()` | ใช้ได้เหมือนกันกับ list, file, generator, object ที่กำหนดเอง | การแก้ container ขณะ iterate ทำให้ข้ามหรือทำซ้ำ element แบบเงียบ ๆ |
+| `range` แบบ lazy | หน่วยความจำ O(1) ไม่ว่า range จะใหญ่แค่ไหน | ไม่ใช่ `list` — ไม่มี `.append()` และการ slice/index ต้องคำนวณใหม่แทนที่จะดูจาก storage |
+| Chained comparison | เขียนเช็คช่วงตัวเลขกระชับ (`0 <= x < 10`) | operator เปรียบเทียบใด ๆ chain ได้ รวมถึง `in` ซึ่งอ่านต่างจากที่คาดไว้ |
+| `else` ของ loop | แทนตัวแปร flag "found" ด้วยมือ | เข้าใจผิดง่ายว่า "รันเมื่อ loop วนศูนย์รอบ" — ไม่ใช่ความหมายนั้น |
+| `match` structural pattern | destructure และจับคู่รูปร่างในที่เดียว แทน `isinstance`/index check ที่ซ้อนกัน | syntax ใหม่ (3.10+) ตัวแปรใน `case` bind เสมอ ไม่เคยเทียบกับค่าตัวแปรที่มีอยู่แล้วโดยบังเอิญ |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"ลบ item ออกจาก list ขณะ loop ด้วย `for` ได้อย่างปลอดภัย"** ไม่จริง — การลบเลื่อน element ที่เหลือเข้าไปในตำแหน่งที่เยี่ยมชมไปแล้ว ข้ามบางตัวไปแบบเงียบ ๆ ให้ iterate เหนือ copy หรือสร้าง list ใหม่แทน
+- **"`range(1_000_000)` จองจำนวนเต็มหนึ่งล้านตัวทันที"** ไม่จริง — range object เก็บแค่ start/stop/step แล้วคำนวณค่าแบบ lazy มีแค่ `list(range(...))` เท่านั้นที่จองทั้งหมด
+- **"`a < b in c` หมายถึง `(a < b) in c`"** มันหมายถึง `a < b and b in c` — `in` เข้าร่วม chain การเปรียบเทียบของ Python เหมือน `<`
+- **"`lambda` ใน loop จับค่าปัจจุบันของตัวแปร loop"** มันจับ *ชื่อ* ที่ถูก resolve ตอน lambda ถูก*เรียก* ไม่ใช่ตอนถูกสร้าง ซึ่งตอนนั้น loop มักจบไปแล้ว
+- **"`for...else` รัน block `else` เมื่อ loop วนศูนย์รอบ"** มันรัน block `else` เมื่อ loop จบ**โดยไม่**โดน `break` — รวมถึงตอนวนศูนย์รอบด้วย แต่ก็รวมทุกครั้งที่ไม่มีอะไร break ออกไปด้วย
+
+## อ่านโค้ดที่ AI เขียน
+
+- loop เรียก `.remove()`, `.pop()`, `del`, หรือ `.append()` บน list ตัวเดียวกับที่กำลัง iterate อยู่หรือเปล่า? นี่มักจะเป็น bug เสมอ — ตรวจดูว่าควร iterate เหนือ copy หรือสร้าง list ใหม่แทน
+- `lambda` หรือ nested function ที่สร้างใน loop อ้างตัวแปร loop ตรง ๆ แทนที่จะจับมันเป็น default argument หรือเปล่า? นั่นคือ late binding ที่รอทำให้ผู้เรียกทุกคนประหลาดใจ
+- chained comparison มี `in`, `is`, หรือ operator ผสมกันในแบบที่อาจไม่ได้หมายความตามที่มันดูเหมือนหรือเปล่า?
+- integer division หรือ modulo บนค่าที่อาจเป็นลบสมมติว่าปัดเข้าหาศูนย์ แทนที่จะเป็นพฤติกรรม floor เข้าหาลบอนันต์ของ Python หรือเปล่า?
+- `break` ใน nested loop ไปถึง outer loop จริงหรือเปล่า หรือโค้ดสมมติว่า `break` ออกจากทุกอย่างพร้อมกัน?
+
+<SpotTheBug code={`def remove_duplicates(items):
+    for item in items:
+        if items.count(item) > 1:
+            items.remove(item)
+    return items`} lang="python">
+loop นี้แก้ `items` — list ตัวเดียวกับที่กำลัง iterate อยู่ — ทุกครั้งที่ลบ duplicate ออก การลบ element เลื่อน element ที่เหลือทุกตัวมาข้างหน้าหนึ่งตำแหน่ง แต่ตัวนับตำแหน่งของ loop ไม่รู้เรื่องนั้นเลย มันจึงข้าม element ถัดไปได้ หรือเยี่ยม element ที่จัดการไปแล้วซ้ำ ผลลัพธ์ขึ้นอยู่กับ input ในแบบที่คาดเดายาก และ duplicate บางตัวอาจรอด แก้ด้วยการ iterate เหนือ copy ในขณะที่ยังแก้ (หรือสร้าง) list จริง: `for item in items.copy(): ...` หรือดีกว่านั้นคือสร้าง list ที่ไม่มี duplicate ใหม่โดยไม่แก้ input เลย เช่น `list(dict.fromkeys(items))` เพื่อลบ duplicate โดยรักษาลำดับไว้
+</SpotTheBug>
+
+<Callout title="for...else รันเมื่อไม่มี break">
+clause `else` ของ `for` หรือ `while` loop เป็นหนึ่งใน feature ที่น่าประหลาดใจที่สุดของ Python
+มันไม่ได้หมายความว่า "ถ้า loop วนศูนย์รอบ"
+มันหมายความว่า "loop จบตามปกติ — ไม่มี `break` ถูกรัน"
+ใช้มันแทนตัวแปร flag: แทนที่จะเขียน `found = False` แล้วเช็คหลัง loop
+เขียน branch ที่สำเร็จไว้ใน loop และ branch ที่ล้มเหลวไว้ใน `else`
 </Callout>
 
 export const quizControlFlow = [
   {
-    q: "clause `else` ของลูป `for` ทำงานเมื่อใด?",
+    q: "```python\nvalues = [1, 2, 2, 3, 4, 5]\nfor n in values:\n    if n % 2 == 0:\n        values.remove(n)\nprint(values)\n```\nโค้ดนี้พิมพ์อะไร?",
     options: [
-      "เมื่อ iterable ว่างเปล่า",
-      "เมื่อลูปจบโดยไม่พบ break",
-      "เสมอ หลัง body ของลูป",
-      "เมื่อ body ของลูป raise exception"
+      "[1, 3, 5]",
+      "[1, 2, 3, 5]",
+      "[1, 2, 2, 3, 5]",
+      "RuntimeError: list changed size during iteration"
     ],
-    answer: 1
+    answer: 1,
+    explain: "การลบ 2 เลื่อน element ที่เหลือทุกตัวมาข้างหน้าหนึ่งช่อง ตัวนับตำแหน่งของ loop จึงข้าม 2 ตัวที่สองไป แต่กลับลบ 4 แทน list (ต่างจาก dict/set) ไม่ raise error กับเรื่องนี้ -- มันแค่ข้าม element แบบเงียบ ๆ"
   },
   {
-    q: "`range(2, 10, 3)` ให้ผลลัพธ์อะไร?",
+    q: "```python\nfuncs = [lambda: i for i in range(3)]\nprint([f() for f in funcs])\n```\nโค้ดนี้พิมพ์อะไร?",
     options: [
-      "[2, 5, 8]",
-      "[2, 4, 6, 8, 10]",
-      "[2, 3, 4, 5, 6, 7, 8, 9]",
-      "[3, 6, 9]"
+      "[0, 1, 2]",
+      "[2, 2, 2]",
+      "[0, 0, 0]",
+      "NameError เพราะ i ไม่มีอยู่แล้ว"
     ],
-    answer: 0
+    answer: 1,
+    explain: "lambda ทุกตัวจับชื่อ i ไม่ใช่ค่าของมันตอนถูกสร้าง พอถึงเวลาที่ lambda ไหนถูกเรียก loop จบไปแล้วและ i มีค่าสุดท้ายคือ 2"
   },
   {
-    q: "walrus operator `:=` ทำอะไร?",
+    q: "`x < y in lst` ประเมินเป็นอะไรจริง ๆ สำหรับค่า x, y, และ list lst?",
     options: [
-      "เปรียบเทียบสองค่าเพื่อความเท่าเทียม",
-      "กำหนดค่าและประเมินเป็นค่านั้นในนิพจน์เดียว",
-      "สร้างตัวแปรใหม่ใน scope อื่น",
-      "แปลงค่าเป็น boolean"
+      "(x < y) in lst",
+      "x < y and y in lst",
+      "x < (y in lst)",
+      "SyntaxError -- chain comparison กับ in ไม่ได้"
     ],
-    answer: 1
+    answer: 1,
+    explain: "in เป็นแค่ comparison operator อีกตัวในไวยากรณ์ของ Python จึง chain แบบเดียวกับ < คือ a < b in c หมายถึง a < b and b in c โดยประเมิน b แค่ครั้งเดียว"
   },
   {
-    q: "statement ใดจบการวนซ้ำปัจจุบันและไปยังครั้งถัดไปทันที?",
-    options: ["break", "return", "continue", "pass"],
-    answer: 2
+    q: "`-7 // 2` ใน Python มีค่าเท่าไหร่?",
+    options: ["-3", "-4", "-3.5", "4"],
+    answer: 1,
+    explain: "// ของ Python ปัดเข้าหาลบอนันต์เสมอ ไม่ใช่เข้าหาศูนย์ ดังนั้น -7 // 2 คือ -4 (และ -7 % 2 คือ 1 เพราะ -4 * 2 + 1 == -7)"
+  },
+  {
+    q: "ทำไม `sys.getsizeof(range(1_000_000))` ถึงคืนตัวเลขเล็ก ๆ คงที่?",
+    options: [
+      "range คำนวณทุกค่าล่วงหน้าแต่เก็บแบบบีบอัด",
+      "range เก็บแค่ start, stop, step แล้วคำนวณแต่ละค่าตามที่ถูกขอ",
+      "sys.getsizeof คืน 48 เสมอสำหรับ built-in type ใด ๆ",
+      "range จำกัดตัวเองไว้แค่ไม่กี่ค่าแรกแบบเงียบ ๆ"
+    ],
+    answer: 1,
+    explain: "range object เป็น lazy: มันเก็บจำนวนเต็มสามตัว (start, stop, step) แล้วคำนวณแต่ละค่าตามที่ถูกขอ ไม่ว่าตามหลักตรรกะมันจะแทนกี่ค่าก็ตาม"
+  },
+  {
+    q: "clause `else` ของ `for` หรือ `while` loop รันเมื่อไหร่?",
+    options: [
+      "เมื่อ body ของ loop ไม่รันเลยเท่านั้น",
+      "เมื่อไหร่ก็ตามที่ loop จบโดยไม่โดน break",
+      "รันเสมอ ทันทีหลัง body ของ loop จบ",
+      "เมื่อ loop raise exception เท่านั้น"
+    ],
+    answer: 1,
+    explain: "loop else รันเมื่อไหร่ก็ตามที่ loop จบโดยไม่โดน break -- ซึ่งรวมถึงตอนวนศูนย์รอบด้วย แต่ก็รวมทุกครั้งที่จบตามปกติโดยไม่มีอะไร break ออกไปก่อน"
   }
 ];
 

@@ -1,0 +1,301 @@
+---
+title: 'Worked review 3: inventory service'
+description: 'An AI-style dataclass + cache inventory service with four planted bugs — a shared class attribute, a stale lru_cache, __eq__ without __hash__, and an Any-typed parameter.'
+sidebar:
+  order: 7
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+A small inventory service built from a dataclass and a cache decorator — both textbook-correct-looking uses on their own, and both wrong the way an AI assistant tends to combine them.
+
+<Playground code={inventoryBuggyCode} />
+
+export const inventoryBuggyCode = `from dataclasses import dataclass
+from functools import lru_cache
+from typing import Any
+
+
+@dataclass
+class Product:
+    sku: str
+    price: float
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Product):
+            return NotImplemented
+        return self.sku == other.sku
+
+
+class InventoryService:
+    _catalog: dict[str, Product] = {}  # class attribute -- shared by every instance
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def stock(self, product: Product) -> None:
+        self._catalog[product.sku] = product
+
+    @lru_cache
+    def get_price(self, sku: str) -> float:
+        return self._catalog[sku].price
+
+    def update_price(self, sku: str, new_price: float) -> None:
+        self._catalog[sku].price = new_price
+
+    def apply_bulk_update(self, updates: Any) -> None:
+        for sku, new_price in updates.items():
+            self.update_price(sku, new_price)
+
+
+warehouse_a = InventoryService("warehouse-a")
+warehouse_b = InventoryService("warehouse-b")
+
+warehouse_a.stock(Product(sku="WIDGET", price=9.99))
+print("warehouse_b sees WIDGET too:", "WIDGET" in warehouse_b._catalog)
+
+print("price before update:", warehouse_a.get_price("WIDGET"))
+warehouse_a.update_price("WIDGET", 12.99)
+print("price after update (still cached):", warehouse_a.get_price("WIDGET"))
+
+updates_from_csv = [("WIDGET", 15.99)]  # a list of tuples, not the dict the code assumes
+try:
+    warehouse_a.apply_bulk_update(updates_from_csv)
+except AttributeError as e:
+    print(f"apply_bulk_update crashed: {e}")
+
+seen: set[Product] = set()
+try:
+    seen.add(Product(sku="WIDGET", price=12.99))
+except TypeError as e:
+    print(f"seen.add crashed: {e}")
+`.trim();
+
+**Real output** (both crashes below are caught and printed on purpose, so the whole demo runs to completion — each one *is* one of the four findings):
+
+```text
+warehouse_b sees WIDGET too: True
+price before update: 9.99
+price after update (still cached): 9.99
+apply_bulk_update crashed: 'list' object has no attribute 'items'
+seen.add crashed: cannot use 'Product' as a set element (unhashable type: 'Product')
+```
+
+## Findings
+
+<details>
+<summary>Bug 1: <code>_catalog</code> is a class attribute, shared by every <code>InventoryService</code> instance (catalog #15)</summary>
+
+**Symptom:** `warehouse_b.sees WIDGET too: True` — `warehouse_a.stock(...)` was called, never `warehouse_b.stock(...)`, but `"WIDGET" in warehouse_b._catalog` is `True` anyway. Two independently constructed warehouses share one inventory.
+
+**Evidence:** `_catalog: dict[str, Product] = {}` is declared at class level, outside `__init__` — exactly one dict, owned by the class, not by any instance.
+
+**Fix:** initialize per-instance mutable state in `__init__`:
+
+```python
+def __init__(self, name: str) -> None:
+    self.name = name
+    self._catalog: dict[str, Product] = {}
+```
+
+</details>
+
+<details>
+<summary>Bug 2: <code>@lru_cache</code> on <code>get_price</code> returns a stale value after <code>update_price</code> (spec: lru_cache on a method with mutable underlying state)</summary>
+
+**Symptom:** `get_price("WIDGET")` returns `9.99` both before *and* after `update_price("WIDGET", 12.99)` runs — the price update never becomes visible through the cached getter.
+
+**Evidence:** `lru_cache` has no idea `self._catalog[sku].price` can change between calls — it remembers the *first* return value for a given `(self, sku)` key forever, and nothing in `update_price` tells it to forget.
+
+**Fix:** the simplest fix is to not cache a value that can change out from under it — `get_price` here is already an O(1) dict lookup, so caching buys nothing and only risks staleness:
+
+```python
+def get_price(self, sku: str) -> float:
+    return self._catalog[sku].price
+```
+
+</details>
+
+<details>
+<summary>Bug 3: <code>Any</code>-typed <code>updates</code> hides a real shape mismatch (catalog #16)</summary>
+
+**Symptom:** `apply_bulk_update(updates_from_csv)` crashes with `AttributeError: 'list' object has no attribute 'items'` — the caller passed a list of tuples, not the dict the function body assumes, and nothing caught this before runtime.
+
+**Evidence:** both `mypy --strict` and `pyright`, run against this exact file, report zero issues — `Any` disables the check that would have caught this exact mismatch (see **What the tools caught** below).
+
+**Fix:** give `updates` a real type:
+
+```python
+def apply_bulk_update(self, updates: dict[str, float]) -> None:
+    for sku, new_price in updates.items():
+        self.update_price(sku, new_price)
+```
+
+With this change, passing `updates_from_csv` (a `list`, not a `dict`) becomes a `mypy`/`pyright` error caught before the code ever runs.
+
+</details>
+
+<details>
+<summary>Bug 4: <code>__eq__</code> without <code>__hash__</code> makes <code>Product</code> unhashable (catalog #14)</summary>
+
+**Symptom:** `seen.add(Product(sku="WIDGET", price=12.99))` raises `TypeError: cannot use 'Product' as a set element (unhashable type: 'Product')` — caught and printed here only so the demo can finish; in real code this would be an uncaught crash.
+
+**Evidence:** defining `__eq__` on a class makes Python set `__hash__` to `None` automatically unless `__hash__` is also defined — this is standard, well-documented Python behavior, not specific to dataclasses.
+
+**Fix:** define `__hash__` alongside `__eq__`, consistent with what `__eq__` actually compares:
+
+```python
+def __hash__(self) -> int:
+    return hash(self.sku)
+```
+
+</details>
+
+## Fixed version
+
+All four bugs fixed: `_catalog` moved into `__init__`, `lru_cache` removed from `get_price`, `updates` given a real `dict[str, float]` type, and `Product` given a matching `__hash__`. The fix for bug 2 also uses `dataclasses.replace` to build a new `Product` on every price update rather than mutating one in place, so `Product` can safely be made `frozen=True` and therefore genuinely immutable and hashable:
+
+<Playground code={inventoryFixedCode} />
+
+export const inventoryFixedCode = `from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Product:
+    sku: str
+    price: float
+
+
+class InventoryService:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self._catalog: dict[str, Product] = {}  # per-instance, not shared
+
+    def stock(self, product: Product) -> None:
+        self._catalog[product.sku] = product
+
+    def get_price(self, sku: str) -> float:
+        return self._catalog[sku].price  # no cache -- always reflects the current price
+
+    def update_price(self, sku: str, new_price: float) -> None:
+        existing = self._catalog[sku]
+        self._catalog[sku] = Product(sku=existing.sku, price=new_price)
+
+    def apply_bulk_update(self, updates: dict[str, float]) -> None:
+        for sku, new_price in updates.items():
+            self.update_price(sku, new_price)
+
+
+warehouse_a = InventoryService("warehouse-a")
+warehouse_b = InventoryService("warehouse-b")
+
+warehouse_a.stock(Product(sku="WIDGET", price=9.99))
+print("warehouse_b sees WIDGET too:", "WIDGET" in warehouse_b._catalog)
+
+print("price before update:", warehouse_a.get_price("WIDGET"))
+warehouse_a.update_price("WIDGET", 12.99)
+print("price after update:", warehouse_a.get_price("WIDGET"))
+
+updates_from_csv = {"WIDGET": 15.99}
+warehouse_a.apply_bulk_update(updates_from_csv)
+print("price after bulk update:", warehouse_a.get_price("WIDGET"))
+
+seen: set[Product] = set()
+seen.add(Product(sku="WIDGET", price=15.99))
+print("Product is hashable now, set has", len(seen), "item")
+`.trim();
+
+**Real output:**
+
+```text
+warehouse_b sees WIDGET too: False
+price before update: 9.99
+price after update: 12.99
+price after bulk update: 15.99
+Product is hashable now, set has 1 item
+```
+
+## What the tools caught
+
+**`ruff` on the buggy file** — three of the four bugs, directly:
+
+```text
+PLW1641 Object does not implement `__hash__` method
+RUF012 Mutable default value for class attribute
+ANN401 Dynamically typed expressions (typing.Any) are disallowed in `updates`
+```
+
+**`mypy --strict` and `pyright` on the buggy file** — both completely clean:
+
+```text
+mypy --strict:  Success: no issues found in 1 source file
+pyright:        0 errors, 0 warnings, 0 informations
+```
+
+Bug 2 — the stale `lru_cache` value — is caught by nothing in this catalog. It is not a type error, not a security issue, and not a style nit; it is a logical consequence of caching a value derived from mutable state, and no tool here reasons about cache invalidation.
+
+**`ruff`, `mypy --strict`, and `pyright` on the fixed file — all clean:**
+
+```text
+ruff:           All checks passed!
+mypy --strict:  Success: no issues found in 1 source file
+pyright:        0 errors, 0 warnings, 0 informations
+```
+
+<Callout title="Any and a stale cache are both invisible to strict type checking">
+This file is a reminder that `mypy --strict` and `pyright` reporting zero issues is not the same as the code being correct — bug 3 was invisible to both because `Any` opts out, and bug 2 was invisible to both because a type checker has no model of *when* a cached value becomes stale. Reading `apply_bulk_update`'s actual argument type at the call site, and reading whether `get_price`'s underlying data can change, are exactly the judgment calls the **[Review Checklist](/python/en/reading-python/review-checklist/)** exists to prompt.
+</Callout>
+
+export const quizWorkedReview3 = [
+  {
+    q: "`warehouse_a.stock(...)` was called, but `warehouse_b._catalog` shows the same product. What causes this?",
+    options: [
+      "InventoryService has a bug in its __init__ method",
+      "_catalog is declared at class level (outside __init__), making it one dict shared by every instance of InventoryService, not a per-instance dict",
+      "Python automatically synchronizes dict attributes between instances of the same class",
+      "This is expected -- all InventoryService instances are supposed to share inventory"
+    ],
+    answer: 1,
+    explain: "A class-level attribute assignment (`_catalog: dict[str, Product] = {}` inside the class body but outside __init__) creates exactly one object, owned by the class. Every instance that doesn't shadow it with its own instance attribute of the same name shares that single object."
+  },
+  {
+    q: "`get_price(\"WIDGET\")` returns 9.99 even after `update_price(\"WIDGET\", 12.99)` was called. Why does `@lru_cache` cause this?",
+    options: [
+      "lru_cache has a bug that fails to update cached values",
+      "lru_cache remembers the return value for a given set of arguments and has no way to know the underlying data (self._catalog[sku].price) changed -- it will keep returning the first result until the cache is explicitly cleared",
+      "lru_cache only works on functions, not methods, so this code doesn't actually cache anything",
+      "update_price silently fails to actually update the price"
+    ],
+    answer: 1,
+    explain: "lru_cache is a pure memoization decorator: it maps (args) -> return value and has zero awareness of mutable state the function reads. Once get_price(self, 'WIDGET') is cached, no external mutation to self._catalog invalidates that cache entry automatically."
+  },
+  {
+    q: "`apply_bulk_update(updates: Any)` crashes at runtime when passed a list instead of a dict, but mypy --strict and pyright both report zero errors on the file. Why don't they catch it?",
+    options: [
+      "Both tools have an unrelated bug",
+      "Any tells both type checkers to skip validating anything about that parameter's usage -- it is a deliberate, total opt-out from type checking for that value, not a gap in either tool's implementation",
+      "The tools were run with the wrong configuration",
+      "Type checkers cannot analyze functions that use .items()"
+    ],
+    answer: 1,
+    explain: "Any is designed to disable type checking wherever it appears. A parameter typed Any can be called with literally anything without either checker raising a diagnostic -- the crash only becomes visible at runtime, or after giving the parameter a real type."
+  },
+  {
+    q: "Why does defining `__eq__` on Product without also defining `__hash__` make instances unusable in a set, even though nothing about set membership was mentioned in __eq__'s own code?",
+    options: [
+      "Sets require every element to define a custom __str__ method",
+      "Defining __eq__ makes Python automatically set __hash__ to None on that class (unless __hash__ is also explicitly defined), because two objects that compare equal must hash equal -- a guarantee Python cannot verify without your help",
+      "This only happens for dataclasses, not regular classes",
+      "__eq__ and __hash__ are unrelated; this must be a different bug"
+    ],
+    answer: 1,
+    explain: "Python's data model requires that a == b implies hash(a) == hash(b). Since a custom __eq__ could compare based on different criteria than the default object identity, Python cannot safely keep the default __hash__ -- it sets __hash__ to None instead, making the object unhashable until you define __hash__ yourself."
+  }
+];
+
+<Quiz client:visible id="reading-python/worked-review-3" questions={quizWorkedReview3} />
+
+<ProgressTracker client:visible id="reading-python/worked-review-3" />

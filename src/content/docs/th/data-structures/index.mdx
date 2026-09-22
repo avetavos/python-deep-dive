@@ -1,6 +1,6 @@
 ---
 title: โครงสร้างข้อมูล
-description: 'ภาพรวม collection ในตัวของ Python — list, tuple, dict และ set พร้อมตัวอย่างรันได้'
+description: 'ภาพรวม collection ในตัวของ Python — list, tuple, dict, และ set พร้อมตาราง mutable/hashable/ordered และตัวอย่างรันได้'
 sidebar:
   order: 1
 ---
@@ -9,19 +9,23 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Collection ในตัวของ Python
 
 Python มี container ประเภทใช้งานทั่วไปสี่ชนิดในตัวภาษา ไม่ต้อง import ใด ๆ
 
-| ประเภท | Syntax | เปลี่ยนแปลงได้ | มีลำดับ | ซ้ำได้ |
-|--------|--------|----------------|---------|--------|
-| `list` | `[1, 2, 3]` | ได้ | ได้ | ได้ |
-| `tuple` | `(1, 2, 3)` | ไม่ได้ | ได้ | ได้ |
-| `dict` | `{"a": 1}` | ได้ | ได้ (3.7+) | key: ไม่ได้ |
-| `set` | `{1, 2, 3}` | ได้ | ไม่ได้ | ไม่ได้ |
+| ประเภท | Syntax | เปลี่ยนแปลงได้ | มีลำดับ | ซ้ำได้ | Hashable |
+|--------|--------|----------------|---------|--------|----------|
+| `list` | `[1, 2, 3]` | ได้ | ได้ | ได้ | ไม่ได้ |
+| `tuple` | `(1, 2, 3)` | ไม่ได้ | ได้ | ได้ | ได้เฉพาะเมื่อทุก element hashable |
+| `dict` | `{"a": 1}` | ได้ | ได้ (3.7+) | key: ไม่ได้ | ไม่ได้ |
+| `set` | `{1, 2, 3}` | ได้ | ไม่ได้ | ไม่ได้ | ไม่ได้ |
+| `frozenset` | `frozenset({1, 2})` | ไม่ได้ | ไม่ได้ | ไม่ได้ | ได้ |
 
-แต่ละประเภทมีจุดเด่นต่างกัน: list สำหรับลำดับที่แก้ไขได้, tuple สำหรับข้อมูลคงที่, dict สำหรับการค้นหาด้วย key, และ set สำหรับทดสอบสมาชิกภาพ
+แต่ละประเภทมีจุดเด่นต่างกัน: list สำหรับลำดับที่แก้ไขได้, tuple สำหรับข้อมูลคงที่, dict สำหรับการค้นหาด้วย key, และ set สำหรับทดสอบสมาชิกภาพและ set algebra `frozenset` คือน้องของ `set` ที่เปลี่ยนแปลงไม่ได้ — แลกการเปลี่ยนแปลงกับความสามารถเป็น dict key หรืออยู่ใน set อื่นได้
+
+**Mutable กับ hashable คือขั้วตรงข้ามกัน** ทุกประเภทที่เปลี่ยนแปลงได้ในที่นี้ (`list`, `dict`, `set`) ไม่ hashable — เพราะค่าของมันอาจเปลี่ยนหลังจากถูกใช้เป็น key ไปแล้ว ซึ่งจะทำให้สิ่งที่ hash มันไว้เสียหาย `tuple` hashable แบบมีเงื่อนไข: hashable ก็ต่อเมื่อทุก element ข้างในเป็น hashable ด้วย เพราะ tuple ที่มี element เปลี่ยนแปลงได้ (เช่น list) จะสืบทอดความไม่แน่นอนนั้นมา
 
 ## เลือก collection ให้เหมาะสม
 
@@ -33,8 +37,6 @@ Python มี container ประเภทใช้งานทั่วไป�
 ## ตัวอย่างรันได้
 
 export const dataStructuresIndexCode = `
-from collections import namedtuple
-
 # --- list ---
 nums = [1, 2, 3, 4, 5]
 print('list:', nums)
@@ -54,39 +56,119 @@ print('alice score:', scores['alice'])
 unique = {3, 1, 4, 1, 5, 9, 2, 6, 5}
 print('set:', sorted(unique))
 
-# --- namedtuple: lightweight named record ---
-Point = namedtuple('Point', ['x', 'y'])
-p = Point(3, 4)
-print('namedtuple:', p.x, p.y)
+# --- hashability decides what can be a dict key or set member ---
+by_coords = {coords: 'a point'}   # tuple works: it's hashable
+print('tuple as dict key:', by_coords)
+
+try:
+    by_list = {nums: 'broken'}    # list does not: it's mutable, unhashable
+except TypeError as e:
+    print('TypeError:', e)
 `.trim();
 
 <Playground code={dataStructuresIndexCode} />
 
+## Mental Model
+
+```text
+list      [ 1 | 2 | 3 ]   mutable, ordered      -- reorder/replace freely
+tuple     ( 1 | 2 | 3 )   immutable, ordered     -- fixed once built
+dict      { k: v, ... }   mutable, ordered keys  -- lookup by hash(key)
+set       { 1, 2, 3 }     mutable, unordered     -- membership by hash(value)
+frozenset immutable set                          -- hashable, unlike set
+
+hashable  = can compute a stable hash() -> usable as a dict key / set member
+mutable   = value can change after creation without changing identity
+these two are opposites: every built-in mutable type here is unhashable
+```
+
+## Trade-offs
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| `list` | มีลำดับ เปลี่ยนแปลงได้ index ได้ตามตำแหน่ง | membership test (`in`) เป็น `O(n)`; insert/remove ที่ไหนก็ได้ยกเว้นท้ายเป็น `O(n)` |
+| `tuple` | เปลี่ยนแปลงไม่ได้ เบา และ hashable ถ้า element ของมัน hashable | โต หด หรือเรียงลำดับใหม่หลังสร้างไม่ได้ |
+| `dict` | lookup ด้วย key เฉลี่ย `O(1)` รักษาลำดับการแทรก | ทุก key ต้อง hashable |
+| `set` / `frozenset` | membership test เฉลี่ย `O(1)` ลบค่าซ้ำให้ฟรี | ไม่มีลำดับ — index ไม่ได้ ไม่รับประกันลำดับวนซ้ำ; `set` เองใช้เป็น dict key ไม่ได้ (มีแค่ `frozenset` ที่ทำได้) |
+
+## Common Misconceptions
+
+- **"`{}` สร้าง set ว่างเปล่า"** — ความจริง: `{}` สร้าง **dict** ว่างเปล่า วิธีเดียวที่จะสร้าง set ว่างเปล่าคือ `set()`
+- **"collection ทั้งสี่รองรับ operation เดียวกันหมด"** — ความจริง: มีแค่ `list` และ `dict` เท่านั้นที่รองรับการ assign เข้าตำแหน่งที่มีอยู่แล้ว (`lst[0] = x`, `d[k] = v`); `tuple`, `set`, และ `frozenset` ไม่รองรับการ assign เข้า item เลย
+- **"เลือก collection type เป็นแค่เรื่อง style"** — ความจริง: มันเปลี่ยน complexity class ของ operation ของคุณ (`O(1)` เทียบ `O(n)` lookup) และการรับประกันเรื่อง mutability ที่ผู้เรียกใช้พึ่งพาได้ — นี่คือการตัดสินใจเรื่อง correctness และ performance ไม่ใช่เรื่อง style
+- **"tuple hashable เสมอเพราะ tuple เปลี่ยนแปลงไม่ได้"** — ความจริง: hashable ก็ต่อเมื่อทุก element ข้างในก็ hashable ด้วย tuple ที่มี list อยู่ข้างในไม่ hashable
+
+## อ่านโค้ดที่ AI เขียน
+
+- โค้ดเขียน `seen = {}` แล้วเรียก `.add(...)` บนมันหรือเปล่า? `{}` คือ dict ไม่ใช่ set — `.add` ไม่มีอยู่บน `dict` และจะ raise `AttributeError` ตั้งแต่รันครั้งแรก
+- loop ทำการเช็ค `x in some_collection` ซ้ำ ๆ กับสิ่งที่เริ่มต้นเป็น `list` และโตขึ้นเรื่อย ๆ หรือเปล่า? นั่นคือการเช็คแบบ `O(n)` ทุกรอบ `set` ทำให้การเช็คเดียวกันเป็น `O(1)` โดยเฉลี่ย
+- tuple ถูกใช้ราวกับว่ารองรับ `.append()` หรือการ assign เข้า item "แค่ครั้งนี้ครั้งเดียว" หรือเปล่า? ทั้งสองแบบ raise ทันที — `AttributeError` หรือ `TypeError`
+- โค้ดสันนิษฐานว่าลำดับการวนซ้ำของ `set` มีความหมายหรือทำซ้ำได้เสมอหรือเปล่า? ไม่จริง — มีแค่ `list`, `tuple`, และ `dict` (3.7+) เท่านั้นที่รับประกันเรื่องลำดับ
+
+<SpotTheBug code={`def unique_ids(records):
+    seen = {}
+    result = []
+    for record in records:
+        if record['id'] not in seen:
+            seen.add(record['id'])
+            result.append(record)
+    return result
+
+
+print(unique_ids([{'id': 1}, {'id': 2}, {'id': 1}]))`}>
+`seen = {}` สร้าง **dict** ว่างเปล่า ไม่ใช่ set — `{}` เป็น dict literal เสมอใน Python; การเขียน set ว่างเปล่าคือ `set()` `record['id'] not in seen` ยังทำงานได้ (การเช็ค membership กับ dict จะเช็ค key ของมัน) แต่ `seen.add(record['id'])` ล้มเหลวทันที เพราะ `dict` ไม่มี method `.add` — มีแค่ `set` เท่านั้นที่มี ตรวจสอบแล้วบน Python 3.14: `AttributeError: 'dict' object has no attribute 'add'` วิธีแก้คือ `seen = set()`
+</SpotTheBug>
+
 <Callout title="โมดูล collections ขยาย built-in เพิ่มเติม">
 โมดูล `collections` จาก standard library เพิ่ม `namedtuple`, `deque`, `defaultdict`, `Counter` และ `OrderedDict` บน built-in สี่ประเภท
-คุณจะได้เรียนรู้รายละเอียดเหล่านี้เมื่อดำเนินบทเรียนต่อไป
+คุณจะได้เรียนรู้รายละเอียดเหล่านี้เมื่อดำเนินบทเรียนต่อไป — โดยเฉพาะ `namedtuple` จะอยู่คู่กับบทเรื่อง tuple เมื่อคุณรู้แล้วว่า tuple คืออะไรจริง ๆ
 </Callout>
 
 export const quizDataStructuresIndex = [
     {
         q: "Collection ประเภทใดที่ไม่อนุญาตให้มีค่าซ้ำ?",
         options: ["list", "tuple", "dict (values)", "set"],
-        answer: 3
+        answer: 3,
+        explain: "set ทิ้งค่าซ้ำอัตโนมัติทั้งตอนสร้างและตอน add() — มันเก็บได้แค่ค่า hashable ที่ต่างกันแต่ละค่าเพียงครั้งเดียว list, tuple, และ value ของ dict ล้วนซ้ำกันได้อย่างอิสระ"
     },
     {
-        q: "ตั้งแต่ Python 3.7 collection ใดที่รักษาลำดับการแทรก?",
-        options: ["set", "frozenset", "dict", "ทั้ง dict และ set"],
-        answer: 2
+        q: "โค้ดนี้ raise อะไร?\n\nseen = {}\nseen.add(1)",
+        options: [
+            "ไม่มีอะไร — เพิ่ม 1 เข้า set",
+            "TypeError: 'dict' object is not callable",
+            "AttributeError: 'dict' object has no attribute 'add'",
+            "KeyError: 1"
+        ],
+        answer: 2,
+        explain: "{} คือ dict literal ว่างเปล่า ไม่ใช่ set ว่างเปล่า — Python ไม่มีวิธีเขียน set ว่างเปล่าด้วย {} เลย มีแค่ set() dict ไม่มี method .add (มันใช้ seen[key] = value หรือ .update() แทน) ดังนั้นเรียก .add บนมันจึง raise AttributeError ทันที"
     },
     {
-        q: "Collection ใดที่เปลี่ยนแปลงไม่ได้ (immutable)?",
-        options: ["list", "tuple", "dict", "set"],
-        answer: 1
-    },
-    {
-        q: "ประเภทใดเหมาะสมที่สุดสำหรับการทดสอบสมาชิกภาพของข้อมูลจำนวนมาก?",
+        q: "ประเภท built-in ใดที่มีลำดับ AND เปลี่ยนแปลงไม่ได้ทั้งคู่?",
         options: ["list", "tuple", "set", "dict"],
-        answer: 2
+        answer: 1,
+        explain: "tuple รักษาลำดับที่ element ถูกให้มาและแก้ไขหลังสร้างไม่ได้ list มีลำดับแต่เปลี่ยนแปลงได้; set ไม่มีทั้งลำดับและความไม่เปลี่ยนแปลง; dict มีลำดับ (3.7+) แต่เปลี่ยนแปลงได้"
+    },
+    {
+        q: "โค้ดนี้ raise อะไร?\n\ndata = (1, 2, [3, 4])\nprint(hash(data))",
+        options: [
+            "ไม่มีอะไร — พิมพ์ hash value ที่ถูกต้อง",
+            "TypeError: unhashable type: 'list'",
+            "TypeError: unhashable type: 'tuple'",
+            "IndexError: tuple index out of range"
+        ],
+        answer: 1,
+        explain: "ความ hashable ของ tuple ขึ้นอยู่กับ element ของมันทั้งหมด: tuple ที่มีแต่ element hashable จะ hashable แต่ tuple นี้มี list อยู่ข้างใน ซึ่งเปลี่ยนแปลงได้จึงไม่ hashable — tuple จึงสืบทอดความไม่ hashable นั้นมาด้วย และ hash() raise TypeError ที่ระบุ type ตัวจริงที่เป็นปัญหาคือ 'list'"
+    },
+    {
+        q: "function หนึ่งทำ `x in collection` ข้างใน loop ที่รันหลายพันครั้ง โดย `collection` โตไปถึงหลายพัน item ได้ ตัวเลือกไหนหลีกเลี่ยงการเช็คแบบ O(n) ทุกครั้งที่เรียก?",
+        options: [
+            "เก็บ collection เป็น list ต่อไป — 'in' ต้นทุนเท่ากันทุกประเภท",
+            "แปลง collection เป็น tuple — tuple ค้นหาเร็วกว่า",
+            "แปลง collection เป็น set — membership testing เฉลี่ย O(1)",
+            "แปลง collection เป็น dict ที่ value เป็น None เพราะ dict เร็วที่สุดเสมอ"
+        ],
+        answer: 2,
+        explain: "'in' บน list หรือ tuple คือ O(n) — เช็ค element ทีละตัว set แฮชค่าแล้วเช็ค bucket โดยตรง เฉลี่ย O(1) ไม่ว่าขนาดจะใหญ่แค่ไหน dict-ที่-value-เป็น-None ก็ให้ 'in' แบบ O(1) บน key ของมันได้เหมือนกัน แต่มี overhead ต่อ item ที่ไม่มีประโยชน์เมื่อเทียบกับ set ธรรมดาที่ไม่มีค่าให้เก็บ"
     }
 ];
 

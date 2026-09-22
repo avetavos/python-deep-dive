@@ -7,8 +7,10 @@ sidebar:
 
 import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
+import Mermaid from '../../../../components/Mermaid.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Batteries included
 
@@ -22,12 +24,13 @@ Before reaching for `pip`, check whether a stdlib module already solves your pro
 
 A production Python project typically relies on a small set of tools:
 
-- **`venv`** — creates isolated virtual environments so dependencies do not bleed across projects.
-- **`pip`** — installs third-party packages from PyPI. Should only be used *after* confirming the stdlib cannot help.
-- **`pyproject.toml`** — the modern file for declaring package metadata, build backends, and tool configuration (replacing the old `setup.py` + `setup.cfg` approach): the `[build-system]` table comes from PEP 518, the `[project]` metadata table from PEP 621, and PEP 517 defines the build-backend interface those tools implement.
-- **`pytest`** — the de-facto test runner for Python projects, building on top of the stdlib `unittest` infrastructure with a friendlier API.
+- **`uv`** — one tool that manages interpreters, virtual environments, dependencies, and lockfiles (`venv-pip` lesson).
+- **`pyproject.toml`** — the modern file for declaring package metadata, build backends, and tool configuration: the `[build-system]` table comes from PEP 518, the `[project]` metadata table from PEP 621, and PEP 517 defines the build-backend interface those tools implement (`packaging` lesson).
+- **`pytest`** — the de-facto test runner for Python projects, building on top of the stdlib `unittest` infrastructure with a friendlier API (`pytest` lesson).
+- **`ruff`** — a linter *and* formatter that replaces `flake8` + `black` + `isort` with one very fast tool, covered later in this lesson.
+- **`mypy`**/**`pyright`** — static type checkers that verify type hints without running your code, also covered later in this lesson.
 
-You will explore `unittest` and `pytest` in later lessons in this chapter.
+You will explore each of these in the lessons in this chapter.
 For now, the key habit is: **reach for the stdlib first**.
 
 ## A quick taste: three stdlib modules in action
@@ -76,6 +79,254 @@ Key modules worth knowing cold:
 - **`unittest`** — built-in test framework (and the foundation pytest builds on)
 </Callout>
 
+## Linting and formatting with `ruff`
+
+`ruff` is a linter and formatter in one binary, fast enough to run on every save. It reimplements the rules of `flake8`, `isort`, `pyupgrade`, `bugbear`, and more, under short rule codes. A handful of these rules catch the exact bugs AI assistants introduce most often.
+
+```python
+# ai_code.py -- every line below trips a real ruff rule
+import datetime
+import os
+import sys
+from typing import List, Optional
+
+
+def add_item(item, items=[]):
+    items.append(item)
+    return items
+
+
+def make_report(created_at=datetime.datetime.now()) -> None:
+    print(created_at)
+
+
+def divide(a, b):
+    try:
+        return a / b
+    except:
+        pass
+
+
+def get_names() -> Optional[List[str]]:
+    result = os.getcwd()
+    return None
+```
+
+Real output, `ruff` 0.16.8, default rule set — no config needed for any of this:
+
+```text
+$ uvx ruff check ai_code.py
+F401 [*] `sys` imported but unused
+ --> ai_code.py:3:8
+
+UP035 `typing.List` is deprecated, use `list` instead
+ --> ai_code.py:4:1
+
+B006 Do not use mutable data structures for argument defaults
+ --> ai_code.py:7:26
+help: Replace with `None`; initialize within function
+
+DTZ005 `datetime.datetime.now()` called without a `tz` argument
+  --> ai_code.py:12:28
+
+B008 Do not perform function call `datetime.datetime.now` in argument defaults;
+     instead, perform the call within the function, or read the default from
+     a module-level singleton variable
+  --> ai_code.py:12:28
+
+E722 Do not use bare `except`
+  --> ai_code.py:19:5
+
+S110 `try`-`except`-`pass` detected, consider logging the exception
+  --> ai_code.py:19:5
+
+UP045 [*] Use `X | None` for type annotations
+  --> ai_code.py:23:20
+
+UP006 [*] Use `list` instead of `List` for type annotation
+  --> ai_code.py:23:29
+
+F841 Local variable `result` is assigned to but never used
+  --> ai_code.py:24:5
+
+Found 10 errors.
+[*] 3 fixable with the `--fix` option (2 hidden fixes can be enabled with the `--unsafe-fixes` option).
+```
+
+`F401`/`F841` catch dead code (unused imports/variables) — the residue of an AI assistant editing a function and leaving the old import or a discarded intermediate variable behind. `B006`/`B008` catch the single most common AI-generated function-signature bug: a mutable or freshly-evaluated default argument that is computed *once*, at import/definition time, and shared across every call. `E722` catches a bare `except:` that swallows every exception including ones you almost never want to (`KeyboardInterrupt`, `SystemExit`). The `UP` family flags code written against an older Python (`typing.List`, `typing.Optional`) that has a shorter, current equivalent (`list`, `X | None`) — exactly the style an AI model trained on older code tends to default to.
+
+`ruff format` (a separate subcommand, not `ruff check`) handles whitespace/style the way `black` does — running only one of the two is a common misconfiguration, covered under `pre-commit` below.
+
+## Type checking in CI: `mypy --strict` vs `pyright`
+
+Both `mypy` and `pyright` read the same type hints and can disagree. Run both in CI — a hint bug that only one catches is still a real bug.
+
+```python
+def first_or_none(items: list[int]) -> int | None:
+    if items:
+        return items[0]
+
+
+def total(values: list[int]) -> int:
+    result = 0
+    for v in values:
+        result += v
+    return result
+
+
+print(total(first_or_none([1, 2, 3])))
+```
+
+```text
+$ uvx mypy --strict typing_demo.py
+typing_demo.py:1: error: Missing return statement  [return]
+typing_demo.py:13: error: Argument 1 to "total" has incompatible type "int | None"; expected "list[int]"  [arg-type]
+Found 2 errors in 1 file (checked 1 source file)
+
+$ uvx pyright typing_demo.py
+typing_demo.py:13:13 - error: Argument of type "int | None" cannot be assigned to parameter "values" of type "list[int]" in function "total"
+    Type "int | None" is not assignable to type "list[int]"
+      "int" is not assignable to "list[int]" (reportArgumentType)
+1 error, 0 warnings, 0 informations
+```
+
+Both catch the real bug — passing `int | None` where `list[int]` is required (the actual crash: calling `total` with `None` raises `TypeError` at runtime). They **disagree** on the first function: `mypy --strict` additionally flags "Missing return statement" on `first_or_none` even though its declared return type already includes `None` (falling off the end of the function *does* return `None`, which is a valid value of `int | None`); `pyright` does not flag this at all. Neither verdict is "wrong" — they apply different strictness heuristics to implicit-`None` returns — but a team that runs only `pyright` in CI will never see that first warning, and a team that runs only `mypy --strict` gets a warning some reasonably consider a false positive. The lesson: run both if you can afford the CI time, and know which one actually gates your merges.
+
+## Automating checks: `pre-commit`
+
+`pre-commit` runs a set of checks on every `git commit`, so a bug caught by `ruff` never reaches even a local commit, let alone CI.
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+```
+
+`ruff-check` and `ruff-format` are two separate hooks — a config that only lists one silently skips the other's checks. Order matters when `--fix` is used: `ruff-check` runs before `ruff-format`, so a rewrite `ruff --fix` makes to satisfy a lint rule gets formatted afterward, not left half-formatted.
+
+## Catching bugs at runtime: `python -X dev` and `-W error`
+
+Some bugs are silent by default because Python's default warning filters hide them. `-X dev` (the "development mode") turns many of those on.
+
+```python
+# devdemo2.py
+def read_first_line(path: str) -> str:
+    f = open(path)  # BUG: never closed, no 'with'
+    return f.readline()
+
+
+read_first_line(__file__)
+print("done")
+```
+
+```text
+$ python3.14 devdemo2.py
+done
+
+$ python3.14 -X dev devdemo2.py
+devdemo2.py:6: ResourceWarning: unclosed file <_io.TextIOWrapper name='devdemo2.py' mode='r' encoding='UTF-8'>
+  read_first_line(__file__)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+done
+```
+
+The plain run leaks the file handle silently; `-X dev` enables `ResourceWarning` reporting (among other checks: extra assertions in the interpreter, `PYTHONMALLOC=debug`, `io.IOBase.__del__` warnings) and prints exactly where it happened. `-W error::<category>` goes one step further and turns a specific warning category into a hard failure — useful in CI to make sure a deprecation nobody's watching for doesn't silently ride along until the day it's removed:
+
+```python
+# devdemo3.py
+import datetime
+
+
+def log_timestamp() -> None:
+    now = datetime.datetime.utcnow()  # deprecated since 3.12, naive UTC
+    print(f"logged at {now}")
+
+
+log_timestamp()
+print("done")
+```
+
+```text
+$ python3.14 -W error::DeprecationWarning devdemo3.py
+Traceback (most recent call last):
+  File "devdemo3.py", line 9, in <module>
+    log_timestamp()
+  File "devdemo3.py", line 5, in log_timestamp
+    now = datetime.datetime.utcnow()  # deprecated since 3.12, naive UTC
+DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for
+removal in a future version. Use timezone-aware objects to represent datetimes
+in UTC: datetime.datetime.now(datetime.UTC).
+```
+
+Real exit code: `1`. Without `-W error`, this same program prints the deprecation warning and keeps running to completion — easy to miss in a busy CI log.
+
+## The verification ladder
+
+Each tool in this module catches a different class of bug, in increasing order of cost to run and decreasing order of how often you should run it:
+
+<Mermaid code={`flowchart TD
+  A["ruff check + ruff format\n(milliseconds, every save)"] --> B["mypy --strict / pyright\n(seconds, every save or pre-commit)"]
+  B --> C["pytest\n(seconds to minutes, every commit/CI run)"]
+  C --> D["hypothesis-backed tests\n(slower, property-based, finds edge cases the other three miss)"]`} title="The verification ladder: cheapest and most frequent first" />
+
+`ruff` catches syntax-level and style-level bugs (dead code, dangerous defaults, deprecated APIs) without ever running your code. Type checkers catch a wider class of logic bugs — wrong types flowing between functions — still without running anything. `pytest` actually executes your code against concrete examples you chose. `hypothesis` (covered in the `pytest` lesson) executes your code against examples *it* chose, specifically hunting for the input you didn't think to try. None of the four replaces the others: a program can pass `ruff` and both type checkers with 100% test coverage and still be wrong, if every test's assertions are as weak as the `pytest` lesson's coverage demo.
+
+## This module's lessons
+
+- **`pytest`** — fixtures, `parametrize`, mocking, coverage, and `hypothesis` in depth.
+- **`stdlib-tour`** — `datetime`, `json`, `functools`, `itertools`, `pathlib`, `subprocess`, and more.
+- **`venv-pip`** — `uv` first, `venv`/`pip` underneath.
+- **`packaging`** — `pyproject.toml`, `uv build`/`uv publish`, dependency groups.
+- **`regex`** — `re`: raw strings, `match`/`search`/`fullmatch`/`findall`/`finditer`, groups, flags, substitution, and catastrophic backtracking.
+- **`logging`** — the `logging` module: loggers, handlers, levels, `dictConfig`, structured logging, and the `warnings` module.
+- **`index`** (this lesson) — `ruff`, type-checker CI strategy, `pre-commit`, runtime warnings, and how the four verification layers fit together.
+
+## Mental Model
+
+Every tool in this chapter answers the same question at a different point in the development loop: **"is this code correct, and how do I find out as cheaply as possible?"** The stdlib itself is the first and cheapest form of correctness — code you didn't write can't have bugs you introduced. `ruff` is next: it reads your source text and flags patterns known to cause bugs, without ever executing a single line. Type checkers read your source *and* your annotations, and simulate what values could flow where, still without executing anything. `pytest` and `hypothesis` are the only tools on this ladder that actually run your code — which is also why they're the slowest and the last line of defense, not the first.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Reaching for the stdlib first | No dependency, version, or security surface added | Occasionally more verbose than a third-party convenience library |
+| `ruff` as linter + formatter | One very fast tool instead of `flake8` + `black` + `isort` | A large default+opt-in rule surface to learn; `--fix` can be unsafe for some rules |
+| Running both `mypy --strict` and `pyright` in CI | Catches the union of both tools' bugs; surfaces disagreements | Double the CI time; occasional need to adjudicate a disagreement |
+| `pre-commit` | Bugs never reach a commit, let alone CI | Another config file; a misconfigured hook (only `ruff-format`, no `ruff-check`) gives false confidence |
+| `-X dev` / `-W error` in CI or local runs | Surfaces silent resource leaks and deprecations before they matter | Slightly slower runs; some warnings need per-project filtering to avoid noise from dependencies |
+
+## Common Misconceptions
+
+- **"`ruff format` and `ruff check` are the same command."** They are two separate subcommands (and two separate `pre-commit` hook ids, `ruff-format` and `ruff-check`) — formatting fixes whitespace/style, checking flags actual bugs and anti-patterns; a hook or CI step that only runs one silently skips the other's entire category of problems.
+- **"If `pyright` is clean, `mypy --strict` will be too (or vice versa)."** The `first_or_none`/`total` demo above is real, verified proof otherwise: `mypy --strict` reports 2 errors, `pyright` reports 1, on the identical file.
+- **"A silent, clean run means there's no bug."** The unclosed-file demo runs to completion with no visible error under a plain `python3.14 devdemo2.py` — the resource leak only becomes visible under `-X dev`.
+- **"Deprecation warnings are just noise you can ignore until the removal happens."** `-W error::DeprecationWarning` in this lesson turns exactly that kind of warning into an immediate, loud failure — which is the point: catch it while there's still time to fix it calmly, not the day the API is actually removed.
+- **"pip is the first thing to reach for when you need functionality."** Checking the stdlib first (`collections`, `itertools`, `functools`, `pathlib`, etc. — see the Callout above) avoids adding a dependency, a version to track, and a supply-chain risk for something the standard library may already do.
+
+## Reading AI-generated code
+
+Before trusting a generated setup script, CI config, or `pre-commit` file, check for:
+
+- A `pre-commit` config with only a `ruff-format` (or legacy `ruff`) hook and no `ruff-check` (or vice versa) — one whole category of checks (formatting or linting) is silently skipped.
+- CI that runs only `mypy` or only `pyright`, described as "type checking is done" — the two tools can and do disagree, as shown above.
+- Code with `except:` (bare) rather than `except Exception:` or a named exception type — `ruff`'s `E722` catches this, but only if `ruff check` actually runs in CI, not just locally.
+- A function with a mutable (`[]`, `{}`) or freshly-evaluated (`datetime.now()`) default argument — `ruff`'s `B006`/`B008` catch these, but a `--fix` run without review can silently change behavior for edge cases the fix doesn't fully replicate.
+- A program that never crashes locally but leaks file handles, threads, or connections — invisible without `-X dev` or an explicit resource-tracking test.
+
+<SpotTheBug code={`# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff-format`} lang="yaml">
+This hook only runs `ruff-format` (whitespace/style) -- it never runs `ruff-check` (the linter), so every bug this lesson's `ai_code.py` demo shows (`B006`, `B008`, `E722`, `F401`, `F841`, the `UP` family) can be committed and pushed with a fully green pre-commit run. The fix is to add a second hook entry for `ruff-check` (with `args: [--fix]` if auto-fixing is wanted) *before* the `ruff-format` entry, matching the working config shown earlier in this lesson.
+</SpotTheBug>
+
 export const quizStdlibIntro = [
     {
         q: "What does 'batteries included' mean for Python?",
@@ -85,7 +336,8 @@ export const quizStdlibIntro = [
             "You must install all libraries via pip",
             "The stdlib requires separate installation"
         ],
-        answer: 1
+        answer: 1,
+        explain: "The stdlib ships with every Python install and covers most everyday tasks (collections, file I/O, networking, testing, and more) with no extra installation required.",
     },
     {
         q: "Which module provides Counter and defaultdict?",
@@ -95,7 +347,8 @@ export const quizStdlibIntro = [
             "collections",
             "builtins"
         ],
-        answer: 2
+        answer: 2,
+        explain: "collections is the stdlib module for specialized container types: Counter, defaultdict, deque, namedtuple, and OrderedDict.",
     },
     {
         q: "What is the modern tool for declaring package metadata and build settings?",
@@ -105,8 +358,53 @@ export const quizStdlibIntro = [
             "pyproject.toml",
             "Makefile"
         ],
-        answer: 2
-    }
+        answer: 2,
+        explain: "pyproject.toml centralizes package metadata ([project], PEP 621), the build backend ([build-system], PEP 518), and tool configuration ([tool.*]) in one file -- the packaging lesson covers this in depth.",
+    },
+    {
+        q: "```python\ndef add_item(item, items=[]):\n    items.append(item)\n    return items\n```\nWhich ruff rule flags this, and why is it a real bug?",
+        options: [
+            "F401 -- items is an unused import",
+            "B006 -- the mutable default list is created once at function definition and shared across every call that doesn't pass its own items",
+            "E722 -- bare except detected",
+            "UP006 -- use list instead of List",
+        ],
+        answer: 1,
+        explain: "B006 (mutable default argument) flags exactly this pattern. The default []  is evaluated once, when the function is defined, not on each call -- every call that relies on the default shares and mutates the same list object, accumulating items across unrelated calls.",
+    },
+    {
+        q: "```text\n$ uvx mypy --strict typing_demo.py\ntyping_demo.py:1: error: Missing return statement  [return]\ntyping_demo.py:13: error: ... incompatible type \"int | None\"; expected \"list[int]\"\n\n$ uvx pyright typing_demo.py\ntyping_demo.py:13:13 - error: ... cannot be assigned to parameter \"values\" of type \"list[int]\"\n```\nWhat does this real output demonstrate?",
+        options: [
+            "pyright is strictly better than mypy --strict because it reports fewer false positives",
+            "mypy --strict and pyright can disagree on the same file -- here mypy also flags an implicit-None return that pyright does not -- so CI relying on only one tool can miss a class of warnings",
+            "The two tools always produce identical output",
+            "pyright cannot check function arguments, only mypy can",
+        ],
+        answer: 1,
+        explain: "Both tools agree on the real bug (passing int | None where list[int] is required). They disagree on whether an implicit `None` return in a function annotated -> int | None deserves a warning -- mypy --strict flags it, pyright does not. Running only one tool in CI means missing whichever warning only the other one produces.",
+    },
+    {
+        q: "```python\ndef read_first_line(path: str) -> str:\n    f = open(path)  # never closed\n    return f.readline()\n```\nWhy does `python3.14 devdemo2.py` show nothing, while `python3.14 -X dev devdemo2.py` prints a ResourceWarning?",
+        options: [
+            "-X dev recompiles the file with different behavior",
+            "Python's default warning filters suppress ResourceWarning; -X dev (development mode) enables it along with other runtime checks, without changing the program's actual behavior",
+            "The file only leaks a handle when -X dev is passed",
+            "-X dev requires a different Python version",
+        ],
+        answer: 1,
+        explain: "The resource leak (an unclosed file) happens identically in both runs -- it is real either way. -X dev simply turns on ResourceWarning reporting (plus extra interpreter assertions and PYTHONMALLOC=debug) that the default warning filters hide, making a silent bug visible without changing program behavior.",
+    },
+    {
+        q: "What does `python3.14 -W error::DeprecationWarning script.py` do differently from a plain run when the script calls a deprecated function?",
+        options: [
+            "Nothing, -W only affects logging output",
+            "It turns that specific warning category into a raised exception, crashing the program at the exact call site instead of printing a warning and continuing",
+            "It silences all warnings instead of showing them",
+            "It only works inside pytest, not a plain script",
+        ],
+        answer: 1,
+        explain: "A plain run prints the DeprecationWarning and keeps executing to completion (easy to miss in a busy log). -W error::DeprecationWarning converts that warning into a real exception with a traceback pointing at the exact call, and a nonzero exit code -- verified: exit code 1 in this lesson's real run.",
+    },
 ];
 
 <Quiz client:visible id="stdlib-testing-tooling/index" questions={quizStdlibIntro} />

@@ -1,6 +1,6 @@
 ---
 title: 'Packaging & pyproject.toml'
-description: 'Structure a Python package, declare metadata in pyproject.toml, build with build, and publish to PyPI with twine.'
+description: 'Structure a Python package, declare metadata and tool config in pyproject.toml, and build/publish with uv.'
 sidebar:
   order: 5
 ---
@@ -9,30 +9,43 @@ import Callout from '../../../../components/Callout.astro';
 import Mermaid from '../../../../components/Mermaid.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
-A **Python package** is a directory of modules that can be installed, versioned, and shared. Packaging turns your local code into something anyone can install with `pip install mypackage`. Understanding packaging is essential the moment your project grows beyond a single script or you want to share work with teammates or the public.
+A **Python package** is a directory of modules that can be installed, versioned, and shared. Packaging turns your local code into something anyone can install with `pip install mypackage` or `uv add mypackage`. Understanding packaging is essential the moment your project grows beyond a single script or you want to share work with teammates or the public.
 
-> This lesson has no Run button — packaging and publishing must run locally: `uv init --lib mypackage && cd mypackage && uv build`.
+> This lesson has no Run button — packaging, building, and publishing must run locally: `uv init --lib mypackage && cd mypackage && uv build`.
 
 ## Package layout
 
-A clean src-layout keeps your source isolated from tests and tooling, preventing accidental imports of uninstalled code.
+A clean src-layout keeps your source isolated from tests and tooling, preventing accidental imports of uninstalled code. `uv init --lib mypackage` scaffolds exactly this:
 
-export const packageLayoutDiagram = `flowchart TD
+```text
+$ uv init --lib mypackage && find mypackage -not -path '*/.git*' | sort
+mypackage
+mypackage/.python-version
+mypackage/README.md
+mypackage/pyproject.toml
+mypackage/src
+mypackage/src/mypackage
+mypackage/src/mypackage/__init__.py
+mypackage/src/mypackage/py.typed
+```
+
+<Mermaid code={`flowchart TD
   root["mypackage/"] --> src["src/"]
   src --> pkg["mypackage/"]
   pkg --> init["__init__.py"]
   pkg --> core["core.py"]
-  pkg --> utils["utils.py"]
+  pkg --> cli["cli.py"]
+  pkg --> typed["py.typed (empty marker file)"]
   root --> tests["tests/"]
-  tests --> conftest["conftest.py"]
   tests --> testcore["test_core.py"]
   root --> pyproj["pyproject.toml"]
-  root --> readme["README.md"]`;
+  root --> readme["README.md"]`} title="Clean src-layout package structure" />
 
-<Mermaid code={packageLayoutDiagram} title="Clean src-layout package structure" />
+`py.typed` is a real, empty file (PEP 561) — its only job is to exist, telling type checkers that consumers of this package can trust its type hints instead of treating it as untyped.
 
-## pyproject.toml
+## `pyproject.toml`
 
 `pyproject.toml` is the single source of truth for your package. The `[build-system]` table specifies the build backend, and `[project]` declares all metadata pip and PyPI need.
 
@@ -46,7 +59,7 @@ name = "mypackage"
 version = "0.1.0"
 description = "A short description of mypackage"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 license = "MIT"
 authors = [
     { name = "Your Name", email = "you@example.com" }
@@ -55,20 +68,88 @@ dependencies = [
     "httpx>=0.27",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8",
-    "mypy>=1.10",
-]
+[project.scripts]
+mypackage-greet = "mypackage.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/yourname/mypackage"
 ```
 
-`requires-python` is the floor you promise to support — pip refuses to install the package on anything
-older, so set it to the oldest interpreter you actually test against. Note that `distutils` was removed
-in Python 3.12: a build backend such as `hatchling` (above), `setuptools`, or `uv_build` is now required,
-and `setup.py` is no longer the entry point.
+`license = "MIT"` is an SPDX license expression string (PEP 639) — the modern form. The older `license = { text = "MIT" }` table form is deprecated; use a plain string, and add `license-files = ["LICENSE*"]` if you ship a license file. `requires-python` is the floor you promise to support — pip and uv refuse to install the package on anything older, so set it to the oldest interpreter you actually test against. `distutils` was removed in Python 3.12: a build backend such as `hatchling` (above), `setuptools`, or `uv_build` (uv's own backend — `uv init --lib` uses it by default) is now required, and `setup.py` is no longer the entry point.
+
+## `[dependency-groups]` (PEP 735) vs `[project.optional-dependencies]`
+
+Both group extra dependencies, but they answer different questions. `[project.optional-dependencies]` declares *installable extras of the published package* — a user can `pip install mypackage[dev]` to opt in. `[dependency-groups]` (PEP 735, dependency-groups is itself a standard now, not a Poetry/PDM-specific idea) declares *development-only groups that are never published* — they exist purely for `uv sync`/`uv run` in this repo.
+
+```toml
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "mypy>=1.10",
+]
+lint = [
+    "ruff>=0.16",
+]
+```
+
+```bash
+uv sync --group dev --group lint    # installs main deps + both groups, into .venv
+uv run pytest -q                    # uses that environment
+```
+
+Real run — `uv sync` resolves everything, and the project's own script entry point (declared in `[project.scripts]` above) works immediately via `uv run`, no separate install step:
+
+```text
+$ uv sync --group dev --group lint
+Resolved 20 packages in 336ms
+   Building mypackage @ file:///.../mypackage
+      Built mypackage @ file:///.../mypackage
+Prepared 1 package in 1.03s
+Installed 19 packages in 53ms
+ + anyio==4.15.1
+ + httpx==0.28.1
+ + mypackage==0.1.0 (from file:///.../mypackage)
+ + mypy==2.3.1
+ + pytest==9.1.1
+ + ruff==0.16.8
+ ...
+$ uv run mypackage-greet Ada
+Hello, Ada!
+$ uv run pytest -q
+.                                                                        [100%]
+1 passed in 0.00s
+```
+
+Prefer `[project.optional-dependencies]` for things a *consumer* of your published package might want (`mypackage[cli]`, `mypackage[postgres]`); prefer `[dependency-groups]` for things only *contributors to this repo* need (`dev`, `lint`, `docs`) — they never ship in the wheel.
+
+## Tool configuration lives in `pyproject.toml` too
+
+```toml
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "UP"]
+
+[tool.mypy]
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+```
+
+These are not fictional examples — they are this lesson's own scratch project's `pyproject.toml`, and every checker below ran against exactly this config:
+
+```text
+$ uvx ruff check src/
+All checks passed!
+
+$ uv run mypy src/mypackage
+Success: no issues found in 3 source files
+```
+
+`[tool.ruff]`/`[tool.mypy]`/`[tool.pytest.ini_options]` mean every contributor and every CI job runs the *same* configuration automatically — no separate `.flake8`, `mypy.ini`, or `pytest.ini` files to keep in sync, and no risk of a checker silently using its defaults because a config file wasn't found.
 
 ## Source files
 
@@ -91,58 +172,207 @@ def greet(name: str) -> str:
     return f"Hello, {name}!"
 ```
 
-## Editable install, building, and publishing
+## `[project.scripts]` — a real CLI entry point
 
-During development you want code changes to take effect without reinstalling. The `-e` flag achieves this. When you are ready to distribute, `build` creates the artifacts and `twine` uploads them.
+`[project.scripts]` maps a command name to a `module:function` — `uv`/`pip` generate a tiny executable wrapper at install time that imports the module and calls the function. No manual `sys.path` hacking, no `if __name__ == "__main__"` shim needed to make it runnable as a command.
 
-```bash
-# editable install — changes to src/ take effect immediately
-pip install -e ".[dev]"
+```python
+# src/mypackage/cli.py -- exercised as `uv run mypackage-greet` above
+import sys
 
-# build source distribution + wheel
-python -m build
+from mypackage.core import greet
 
-# publish to PyPI (requires a PyPI account + token)
-twine upload dist/*
 
-# for practice, use TestPyPI first:
-twine upload --repository testpypi dist/*
+def main() -> None:
+    name = sys.argv[1] if len(sys.argv) > 1 else "world"
+    print(greet(name))
 ```
 
-<Callout title="pyproject.toml is the modern standard">
-    `setup.py` and `setup.cfg` are legacy. All modern Python projects declare metadata in `pyproject.toml`. The `[build-system]` table tells pip which backend to use (hatchling, setuptools, flit, etc.). `pip install -e .` installs the package in editable mode — ideal during development.
+## Editable install, building, and publishing
+
+During development you want code changes to take effect without reinstalling — `uv sync`/`pip install -e .` already does this, since `uv sync` installs the project itself in editable mode by default. When you are ready to distribute, `uv build` creates both the source distribution and the wheel:
+
+```text
+$ uv build
+Building source distribution...
+Building wheel from source distribution...
+Successfully built dist/mypackage-0.1.0.tar.gz
+Successfully built dist/mypackage-0.1.0-py3-none-any.whl
+
+$ ls -la dist/
+-rw-r--r--  mypackage-0.1.0-py3-none-any.whl
+-rw-r--r--  mypackage-0.1.0.tar.gz
+```
+
+`uv publish` uploads those artifacts to an index (PyPI by default) — **not run here**, since it would actually publish a package:
+
+```text
+$ uv publish --help
+Upload distributions to an index
+
+Usage: uv publish [OPTIONS] [FILES]...
+
+Arguments:
+  [FILES]...  Paths to the files to upload. Accepts glob expressions [default: dist/*]
+
+Options:
+  -t, --token <TOKEN>          The token for the upload [env: UV_PUBLISH_TOKEN]
+      --trusted-publishing <TRUSTED_PUBLISHING>
+          Configure trusted publishing [possible values: automatic, always, never]
+      --check-url <CHECK_URL>  Check an index URL for existing files to skip duplicate uploads
+```
+
+`uv publish --token $UV_PUBLISH_TOKEN` (a PyPI API token, or `--trusted-publishing automatic` from CI on GitHub Actions with no token at all) uploads everything in `dist/*` in one step — no separate `twine upload` needed. For practice, publish to TestPyPI first with `--publish-url https://test.pypi.org/legacy/`.
+
+## `uv.lock` vs `requirements.txt` — again, at the package level
+
+The venv-pip lesson covered `uv.lock` for applications; for a *library* like `mypackage`, `uv.lock` still exists (`uv sync` writes it) but it locks the *development* environment — the versions you test against — not what a consumer installing `mypackage` from PyPI gets, which is governed only by the version ranges in `dependencies = [...]`. When a downstream tool needs a plain `requirements.txt`-shaped file instead of `uv.lock`, `uv export` converts it:
+
+```text
+$ uv export --no-hashes --no-dev
+Resolved 20 packages in 3ms
+# This file was autogenerated by uv via the following command:
+#    uv export --no-hashes --no-dev
+-e .
+anyio==4.15.1
+    # via httpx
+certifi==2026.7.22
+    # via
+    #   httpcore
+    #   httpx
+
+$ uv export --no-dev
+# (default: WITH hashes)
+anyio==4.15.1 \
+    --hash=sha256:6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101 \
+    ...
+```
+
+`uv export` defaults to including hashes — the opposite default of a hand-run `pip freeze`, and the reason a `uv`-managed project's exported `requirements.txt` is trustworthy in a way a manually maintained one usually isn't.
+
+<Callout title="pyproject.toml is the modern standard for everything, not just metadata">
+`setup.py` and `setup.cfg` are legacy. All modern Python projects declare package metadata (`[project]`), the build backend (`[build-system]`), *and* tool configuration (`[tool.ruff]`, `[tool.mypy]`, `[tool.pytest.ini_options]`) in one `pyproject.toml`. `license = "MIT"` (an SPDX string, not `{ text = "MIT" }`) is the current form. `uv build` produces the sdist + wheel; `uv publish` uploads them.
 </Callout>
+
+## Mental Model
+
+`pyproject.toml` has three independent jobs living under one roof: `[build-system]` tells any tool ("how do I turn this source tree into an installable artifact") which backend to invoke; `[project]` is metadata a package index and installer read (name, version, dependencies, entry points); `[tool.*]` tables are namespaced configuration for whichever development tools you run against the same tree. A build backend never reads `[tool.*]`, and `ruff`/`mypy` never read `[project.dependencies]` — the file is shared, but each tool only looks at its own table.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| src-layout | Prevents accidentally importing uninstalled code during tests | One extra directory level than a flat layout |
+| `[dependency-groups]` for dev tools | Never ships in the published wheel; installable independently (`--group lint`) | Another table to learn, distinct from `optional-dependencies` |
+| `[tool.*]` config centralized in `pyproject.toml` | One file, one source of truth, easy to diff in review | Some older tools (`flake8`) still refuse to read `pyproject.toml` at all |
+| `uv build` + `uv publish` | One tool, one lockfile-aware environment, for the whole lifecycle | Newer workflow — most existing tutorials still show `python -m build` + `twine` |
+| `license = "MIT"` (SPDX string) | Machine-readable, unambiguous, PEP 639-compliant | The older `{ text = "MIT" }` table form is now deprecated and some tools warn on it |
+
+## Common Misconceptions
+
+- **"`setup.py` is still how you configure a modern package."** `distutils` was removed in Python 3.12; a `pyproject.toml` `[build-system]` + a backend (`hatchling`, `setuptools`, `uv_build`) is required now, and `setup.py`, if present at all, is just a compatibility shim.
+- **"`[project.optional-dependencies]` and `[dependency-groups]` are the same thing with different syntax."** Optional dependencies are installable *extras of the published package* (`pip install mypackage[postgres]`); dependency groups are *repo-local dev tooling* that never ships in the wheel, standardized separately by PEP 735.
+- **"`license = { text = "MIT" }` is the correct modern syntax."** That table form is deprecated under PEP 639; the current form is the plain SPDX string `license = "MIT"`.
+- **"`uv.lock` for a library pins what your users get."** It pins your own development/test environment. A published library's actual installed dependency versions are whatever satisfies the *version ranges* in `dependencies = [...]` at the consumer's install time.
+- **"A wheel and a source distribution (sdist) are interchangeable outputs of `uv build`."** A wheel is a prebuilt, ready-to-install artifact; an sdist is the source tree packaged for building later — installers prefer a compatible wheel and fall back to building from the sdist only when none exists.
+
+## Reading AI-generated code
+
+Before trusting a generated `pyproject.toml`, check for:
+
+- `license = { text = "MIT" }` — the deprecated table form; should be the SPDX string `license = "MIT"` (PEP 639).
+- Leftover `[tool.setuptools]` sections (`packages`, `package-dir`) in a project whose `[build-system]` names a *different* backend (`hatchling`, `uv_build`) — copy-pasted boilerplate that the active backend silently ignores, giving false confidence that package discovery is configured.
+- Runtime dependencies (`requests`, `httpx`) listed only under `[dependency-groups] dev` instead of `[project] dependencies` — the package will import-error for every real installer, but tests pass locally because the dev group happens to include it too.
+- A `pre-commit` hook that runs `ruff format` but not `ruff check` (or vice versa) — formatting and linting are separate ruff subcommands; a hook that only formats lets `F401`/`B006`-class bugs merge untouched.
+- `dependencies = ["some-lib"]` with no version constraint at all in a library meant for others to depend on — an unconstrained floor lets a future breaking release of `some-lib` silently break every consumer.
+
+<SpotTheBug code={`# pyproject.toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mypackage"
+version = "0.1.0"
+license = { text = "MIT" }
+dependencies = [
+    "httpx",
+]
+
+[tool.setuptools]
+packages = ["mypackage"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]`} lang="toml">
+Two bugs. First, `license = { text = "MIT" }` is the deprecated PEP 639 table form -- it should be the plain SPDX string `license = "MIT"`, or a linter/`uv build` will warn on it. Second, `[tool.setuptools]` configures a build backend that this file never uses -- `[build-system]` names `hatchling`, so `setuptools`'s `packages` key is silently ignored, most likely copy-pasted from a template that used a different backend; it gives false confidence that package discovery is explicitly configured when hatchling is actually using its own (different) auto-discovery rules. A minor third issue: `httpx` has no version constraint (`httpx>=0.27` would be safer for a published library), letting a future breaking `httpx` release affect every consumer with no warning.
+</SpotTheBug>
 
 export const quizPackaging = [
     {
-        q: "Which file is the modern standard for declaring Python package metadata?",
+        q: "What is the current, non-deprecated way to declare an MIT license in pyproject.toml (PEP 639)?",
         options: [
-            "setup.py",
-            "MANIFEST.in",
-            "pyproject.toml",
-            "requirements.txt",
-        ],
-        answer: 2,
-    },
-    {
-        q: "What does `pip install -e .` do?",
-        options: [
-            "Installs the package from PyPI",
-            "Installs the package in editable mode so source changes take effect immediately",
-            "Builds and publishes the package",
-            "Removes the package",
+            "license = { text = \"MIT\" }",
+            "license = \"MIT\"",
+            "license = [\"MIT\"]",
+            "[license]\nname = \"MIT\"",
         ],
         answer: 1,
+        explain: "PEP 639 standardizes license as a plain SPDX expression string. The older table form license = { text = \"MIT\" } is deprecated -- this lesson's own pyproject.toml uses the string form, and uvx ruff / uv build accept it with no warning.",
     },
     {
-        q: "Which tool is used to upload a package to PyPI?",
+        q: "What is the key difference between `[project.optional-dependencies]` and `[dependency-groups]` (PEP 735)?",
         options: [
-            "build",
-            "pip",
-            "twine",
-            "setuptools",
+            "They are two names for the exact same feature",
+            "optional-dependencies are installable extras of the published package (pip install pkg[extra]); dependency-groups are dev-only groups that never ship in the wheel",
+            "dependency-groups only work with uv, optional-dependencies only work with pip",
+            "optional-dependencies can only contain one package each",
         ],
-        answer: 2,
+        answer: 1,
+        explain: "A consumer can opt into an optional-dependencies extra when installing your published package. A dependency-group (dev, lint, etc.) is resolved and installed only for people working ON the repository itself, via `uv sync --group name` -- it is never included in the built wheel or sdist.",
+    },
+    {
+        q: "```text\n$ uv build\nBuilding source distribution...\nBuilding wheel from source distribution...\nSuccessfully built dist/mypackage-0.1.0.tar.gz\nSuccessfully built dist/mypackage-0.1.0-py3-none-any.whl\n```\nWhat is the difference between the two files produced?",
+        options: [
+            "They are identical, just different file extensions",
+            "The .tar.gz (sdist) packages the source tree for building later; the .whl (wheel) is a prebuilt, ready-to-install artifact that installers prefer",
+            "The .whl only works on Windows",
+            "The .tar.gz is only used for testing, never distributed",
+        ],
+        answer: 1,
+        explain: "pip/uv prefer installing a compatible wheel directly (no build step at install time) and only fall back to building from the sdist when no matching wheel is available -- both are real, published artifact types, not a test vs a release version.",
+    },
+    {
+        q: "```toml\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n[tool.setuptools]\npackages = [\"mypackage\"]\n```\nWhat is wrong here?",
+        options: [
+            "Nothing -- setuptools config always applies regardless of build-backend",
+            "[tool.setuptools] configures a backend (setuptools) that this project doesn't use -- the active backend is hatchling, so this table is silently ignored",
+            "hatchling cannot be used with [tool.setuptools] present, this pyproject.toml will fail to parse",
+            "packages should be a string, not a list",
+        ],
+        answer: 1,
+        explain: "The build backend is determined solely by [build-system] build-backend. [tool.*] tables are namespaced per-tool config that only the matching tool reads -- setuptools never runs here, so [tool.setuptools] is dead configuration, most likely leftover from a template that originally used setuptools.",
+    },
+    {
+        q: "Why does `uv export --no-hashes` produce a file with no hashes, while `uv export` alone includes them?",
+        options: [
+            "uv export always includes hashes and --no-hashes has no effect",
+            "uv defaults to including hashes for reproducibility/security (matching uv.lock's own behavior); --no-hashes explicitly opts out for tools that can't parse hashed requirements",
+            "Hashes are only generated for packages with no wheels available",
+            "--no-hashes only works when publishing to TestPyPI",
+        ],
+        answer: 1,
+        explain: "uv treats hash-pinning as the safe default when exporting to a requirements.txt-shaped file, unlike a hand-run pip freeze which never includes hashes. --no-hashes exists for older tooling that chokes on the --hash= syntax.",
+    },
+    {
+        q: "A published library's dependencies = [\"httpx>=0.27\"] and its own uv.lock pins httpx==0.28.1 for development. What version does a user installing the library from PyPI actually get?",
+        options: [
+            "Always exactly 0.28.1, because uv.lock is published with the package",
+            "Whatever version satisfies >=0.27 at the consumer's own install time -- uv.lock only governs this repo's own dev/test environment, it is not shipped or consulted by a downstream installer",
+            "The library will refuse to install without an exact pin",
+            "0.27.0 exactly, ignoring the consumer's resolver",
+        ],
+        answer: 1,
+        explain: "uv.lock (and the whole concept of a lockfile) is for applications and this repo's own reproducible dev environment. A published library's actual runtime dependency versions are resolved fresh by the consumer's own installer against the version ranges declared in dependencies -- the lockfile is never part of the built wheel/sdist.",
     },
 ];
 

@@ -1,6 +1,6 @@
 ---
 title: Closures
-description: 'nested function, free variable, nonlocal และกับดัก late-binding ใน closure ของ Python'
+description: 'LEGB scoping, nonlocal เทียบกับ global, closure ที่ครอบตัวแปร mutable, __closure__ cell และกับดัก late-binding ใน Python'
 sidebar:
   order: 3
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Nested function
 
@@ -27,10 +29,38 @@ def outer():
 outer()  # Hello from outer
 ```
 
+## LEGB: Python หาชื่อตามลำดับอย่างไร
+
+การหาชื่อทุกครั้งใน Python เป็นไปตามลำดับคงที่หนึ่งเดียว ย่อว่า **LEGB**:
+
+1. **Local** — ชื่อที่ถูก assign ภายใน function ปัจจุบัน
+2. **Enclosing** — ชื่อใน local scope ของ function ที่ครอบอยู่ (ตรงนี้แหละที่ closure อาศัยอยู่)
+3. **Global** — ชื่อที่ถูก assign ที่ระดับ module
+4. **Built-in** — ชื่อที่ Python มีให้เองอยู่แล้ว (`len`, `print`, `range`, ...)
+
+Python จะหยุดที่ scope แรกที่เจอชื่อนั้น:
+
+```python
+x = "global x"
+
+def legb_demo():
+    y = "enclosing y"
+
+    def inner():
+        z = "local z"
+        print("local:", z)
+        print("enclosing:", y)   # not local to inner — found in legb_demo's scope
+        print("global:", x)      # not local or enclosing — found at module level
+        print("built-in:", len)  # not any of the above — found in builtins
+    inner()
+
+legb_demo()
+```
+
 ## Free variable และ closure
 
-เมื่อ function ตัวใน **อ้างถึงตัวแปรจาก enclosing scope** แล้วถูก **return** ออกไปสู่โลกภายนอก
-Python จะสร้าง **closure** ขึ้นมา function ตัวในนั้น "ปิดครอบ" (close over) ตัวแปรไว้ และทำให้ตัวแปรนั้นยังมีชีวิตอยู่แม้ `outer` จะทำงานเสร็จไปแล้ว
+เมื่อ function ตัวใน **อ้างถึงตัวแปรจาก enclosing scope ของมัน** แล้วถูก **return** ออกไปสู่โลกภายนอก
+Python จะสร้าง **closure** ขึ้นมา — function ตัวในนั้น "ปิดครอบ" (close over) ตัวแปรไว้ และทำให้ตัวแปรนั้นยังมีชีวิตอยู่แม้ `outer` จะทำงานเสร็จไปแล้วก็ตาม
 
 ```python
 def make_greeter(greeting: str):
@@ -45,19 +75,30 @@ print(hello("Alice"))   # Hello, Alice!
 print(hi("Bob"))        # Hi, Bob!
 ```
 
-`greeting` เป็น **free variable** ใน `greet` ไม่ได้ถูกนิยามภายใน `greet` และก็ไม่ใช่ global แต่อาศัยอยู่ใน local scope ของ `make_greeter`
+`greeting` เป็น **free variable** ใน `greet` — มันไม่ได้ถูกนิยามภายใน `greet` และก็ไม่ใช่ global แต่อาศัยอยู่ใน local scope ของ `make_greeter` สูงขึ้นไปหนึ่งชั้น ซึ่งก็คือ "E" ใน LEGB
 closure จะรักษาค่าของ `greeting` ให้มีชีวิตอยู่ตราบเท่าที่ `hello` หรือ `hi` ยังคงอยู่
 
-เราสามารถตรวจสอบตัวแปรที่ closure จับไว้ได้ผ่าน `__closure__`:
+## `__closure__` และเนื้อหาใน cell
+
+closure ไม่ใช่เวทมนตร์ — CPython implement มันด้วย **cell object** หนึ่งตัวต่อหนึ่ง free variable เก็บไว้ใน tuple `__closure__` ของ function นั้น `__code__.co_freevars` บอกชื่อว่าตัวแปรไหนบ้างที่ cell พวกนี้เก็บอยู่:
 
 ```python
+def make_greeter(greeting):
+    def greet(name):
+        return f"{greeting}, {name}!"
+    return greet
+
+hello = make_greeter("Hello")
 print(hello.__closure__[0].cell_contents)   # Hello
+print(hello.__code__.co_freevars)           # ('greeting',)
 ```
+
+การเรียก `make_greeter` แต่ละครั้งจะสร้าง cell ใหม่เอี่ยม — `hello` และ `hi` จากตัวอย่างก่อนหน้ามี cell ที่เป็นอิสระจากกันโดยสิ้นเชิง นี่คือเหตุผลที่มันจำ greeting คนละคำกันได้
 
 ## keyword `nonlocal`
 
 ภายใน nested function เราสามารถ **อ่าน** free variable ได้โดยไม่ต้องใช้ keyword พิเศษใด ๆ
-แต่ถ้าจะ **กำหนดค่าใหม่ (reassign)** ให้ตัวแปรนั้น เราต้องใช้ `nonlocal` มิฉะนั้น Python จะมองว่าชื่อนั้นเป็นตัวแปร local ตัวใหม่
+แต่ถ้าจะ **กำหนดค่าใหม่ (reassign)** ให้ตัวแปรนั้น เราต้องใช้ `nonlocal` — ไม่งั้น Python จะมองว่าชื่อนั้นเป็นตัวแปร local ตัวใหม่
 
 ```python
 def make_counter(start: int = 0):
@@ -82,7 +123,54 @@ rst()
 print(inc())    # 1
 ```
 
-ถ้าไม่มี `nonlocal count` บรรทัด `count += step` จะทำให้เกิด `UnboundLocalError` เพราะ Python เห็นการ assign แล้วมองว่า `count` เป็นตัวแปร local ที่ยังไม่ได้ถูกกำหนดค่า
+ถ้าไม่มี `nonlocal count` บรรทัด `count += step` จะทำให้เกิด `UnboundLocalError` เพราะ Python เห็นการ assign แล้วมองว่า `count` เป็นตัวแปร local ที่ยังไม่เคยถูกกำหนดค่ามาก่อน
+
+## `global`: กฎเดียวกัน แต่ไกลออกไปอีกหนึ่ง scope
+
+`global` คือคู่หูของ `nonlocal` สำหรับชื่อระดับ module: มันบอก Python ว่าการ assign ภายใน function ควร rebind ชื่อ **global** แทนที่จะสร้างตัวแปร local ใหม่ กฎ `UnboundLocalError` แบบเดียวกันก็ใช้ได้เมื่อไม่มี `global` — Python ตัดสินว่าชื่อหนึ่งเป็น local ของ function โดยสแกน *body ทั้งหมดของ function* หาการ assign ก่อนที่จะรันโค้ดสักบรรทัดเดียว ดังนั้นแม้แต่การอ่านชื่อนั้นก่อนถึงบรรทัดที่ assign ก็ยังพังอยู่ดี:
+
+```python
+counter = 0
+
+def increment_global():
+    global counter
+    counter += 1
+
+increment_global()
+increment_global()
+print(counter)   # 2
+
+def broken_increment():
+    counter += 1   # counter is assigned somewhere in this function...
+                    # ...so Python treats it as local for the *entire* function body
+
+broken_increment()
+# UnboundLocalError: cannot access local variable 'counter' where it is not associated with a value
+```
+
+`global` และ `nonlocal` แก้ปัญหาเดียวกัน (การ assign จะสร้าง local ที่บัง shadow ตัวแปรเดิมถ้าไม่มี keyword พวกนี้) แต่ต่างกันที่ระยะ scope — `global` จะไปถึง module scope โดยตรงเสมอ ข้ามทุก enclosing function scope ที่อยู่ระหว่างกลาง; `nonlocal` จะไปถึง enclosing *function* scope ที่ใกล้ที่สุด
+
+## ปิดครอบตัวแปร mutable แทนการใช้ `nonlocal`
+
+การ reassign free variable ต้องใช้ `nonlocal` แต่การ **mutate** object ที่ closure ถืออ้างอิงอยู่แล้วไม่ต้องใช้ — นี่มักเป็นทางแก้ที่ง่ายกว่าเมื่อ inner function หลายตัวต้องแชร์ state ร่วมกัน:
+
+```python
+def make_counter_mutable():
+    state = {"count": 0}   # mutable container — no nonlocal needed
+
+    def increment(step: int = 1) -> int:
+        state["count"] += step   # mutating the dict, not rebinding the name
+        return state["count"]
+
+    return increment, state
+
+inc, state = make_counter_mutable()
+print(inc())      # 1
+print(inc(5))     # 6
+print(state)       # {'count': 6} — visible from outside too
+```
+
+`state["count"] += step` มองหา `state` ก่อน (การอ่าน free variable แบบ read-only ไม่ต้องใช้ `nonlocal`) แล้วค่อย mutate dict ที่มันชี้ไปหา วิธีนี้แลกการ reassign แบบชัดเจนของ `nonlocal` กับ container ที่แชร์กันได้ — มีประโยชน์เมื่อ inner function หลายตัวต้องสังเกตหรือ reset state เดียวกัน แต่ก็เปิดให้ code ใด ๆ ที่ถือ reference ไปยัง `state` เข้าไปแก้ไขได้โดยตรง ซึ่งเป็นสิ่งที่ cell แบบ private เต็มที่ของ `nonlocal` ไม่ยอมให้เกิดขึ้น
 
 ## Factory function — closure ที่ใช้งานจริง
 
@@ -113,9 +201,154 @@ for label, result in tests:
 
 <Playground code={closuresCode} />
 
+## เดโมเจาะลึก: LEGB, `global`, mutable state, `__closure__` และการแก้ปัญหา late-binding
+
+export const closuresDepthCode = `
+import functools
+
+# --- LEGB named ---
+x = "global x"
+
+def legb_demo():
+    y = "enclosing y"
+
+    def inner():
+        z = "local z"
+        print("local:", z)
+        print("enclosing:", y)
+        print("global:", x)
+        print("built-in:", len)
+    inner()
+
+print("--- LEGB ---")
+legb_demo()
+
+# --- global keyword ---
+counter = 0
+
+def increment_global():
+    global counter
+    counter += 1
+
+print("\\n--- global ---")
+increment_global()
+increment_global()
+print("counter:", counter)
+
+def broken_increment():
+    counter += 1  # UnboundLocalError: assignment makes counter local here
+
+try:
+    broken_increment()
+except UnboundLocalError as e:
+    print(type(e).__name__ + ":", e)
+
+# --- closing over a mutable instead of nonlocal ---
+print("\\n--- mutable cell instead of nonlocal ---")
+
+def make_counter_mutable():
+    state = {"count": 0}   # mutable container — no nonlocal needed
+
+    def increment(step=1):
+        state["count"] += step   # mutating the dict, not rebinding the name
+        return state["count"]
+
+    return increment, state
+
+inc, state = make_counter_mutable()
+print(inc())
+print(inc(5))
+print("state dict itself:", state)
+
+# --- __closure__ / cell contents ---
+print("\\n--- __closure__ and cell contents ---")
+
+def make_greeter(greeting):
+    def greet(name):
+        return f"{greeting}, {name}!"
+    return greet
+
+hello = make_greeter("Hello")
+print(hello.__closure__[0].cell_contents)
+print(hello.__code__.co_freevars)
+
+# --- late binding + partial fix ---
+print("\\n--- late binding + functools.partial fix ---")
+funcs_broken = [lambda: i for i in range(3)]
+print("broken:", [f() for f in funcs_broken])
+
+funcs_default_arg = [lambda i=i: i for i in range(3)]
+print("default-arg fix:", [f() for f in funcs_default_arg])
+
+def identity(i):
+    return i
+
+funcs_partial = [functools.partial(identity, i) for i in range(3)]
+print("partial fix:", [f() for f in funcs_partial])
+`.trim();
+
+<Playground code={closuresDepthCode} />
+
+## Mental Model
+
+การเรียก `make_greeter` แต่ละครั้งจัดสรร cell ของ `greeting` ขึ้นมาใหม่ — closure คือ function ที่ return กลับมาบวกกับ reference ไปยัง cell ตัวนั้นโดยเฉพาะ ไม่ใช่สำเนาของค่า:
+
+export const closuresMentalModel = `flowchart LR
+  subgraph call1["make_greeter(\\"Hello\\")"]
+    cellA["cell: greeting = 'Hello'"]
+  end
+  subgraph call2["make_greeter(\\"Hi\\")"]
+    cellB["cell: greeting = 'Hi'"]
+  end
+  hello["hello.__closure__[0]"] --> cellA
+  hi["hi.__closure__[0]"] --> cellB`;
+
+<Mermaid code={closuresMentalModel} title="การเรียก make_greeter แต่ละครั้งสร้าง cell อิสระ — hello กับ hi ไม่เคยแชร์ state กัน" />
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| `nonlocal` | การ reassign ตัวแปรใน enclosing scope ที่ชัดเจน อ่านแล้วรู้เลยว่าตั้งใจทำอะไร | ต้องประกาศก่อนการ assign ครั้งแรกใน function ลืมแล้วจะได้ `UnboundLocalError` ไม่ใช่คำตอบผิดแบบเงียบ ๆ |
+| ปิดครอบตัวแปร mutable (dict/list) | ไม่ต้องใช้ `nonlocal` ก็แชร์ state ข้าม inner function หลายตัวได้ | state เป็น object ธรรมดาที่ code ใด ๆ ที่ถือ reference ไปหามันก็แก้จากภายนอกได้เหมือนกัน — ไม่มีความเป็นส่วนตัวแบบที่ cell ของ `nonlocal` ให้ |
+| `global` | ให้ function อัปเดต state ระดับ module จริง ๆ ได้ | ผูก function เข้ากับ global ตัวใดตัวหนึ่งของ module นั้นโดยเฉพาะ ทำให้ทดสอบแยกส่วนและทำความเข้าใจจาก module อื่นยากขึ้น |
+| default-argument late-binding fix (`lambda i=i: ...`) | เพิ่มแค่ `=i` เข้าไป ไม่ต้อง import อะไรเพิ่ม | ลืมง่าย และอ่านแล้วแปลก ๆ สำหรับคนที่ไม่คุ้นกับ idiom นี้ |
+| `functools.partial` late-binding fix | ชัดเจนและอธิบายตัวเองได้ — freeze argument ด้วยชื่อ | ต้อง `import functools` เพิ่ม และต้องใช้ named function แทน `lambda` แบบ inline |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"closure จับค่าที่ตัวแปรมีอยู่ตอนที่ function ถูกนิยาม"** — ความจริง: มันจับ **ตัวแปรตัวมันเอง** (cell) — ถ้าค่าของตัวแปรนั้นเปลี่ยนไปทีหลัง closure ทุกตัวที่ครอบมันอยู่จะเห็นค่าใหม่ทั้งหมด นี่คือสาเหตุที่กับดัก late-binding ในลูปเกิดขึ้นได้
+- **"การอ่านตัวแปรใน enclosing scope ต้องใช้ `nonlocal` เหมือนตอนเขียน"** — ความจริง: `nonlocal` จำเป็นเฉพาะตอน **reassign** free variable เท่านั้น การอ่านมัน หรือ mutate object ที่มันชี้ไปหา (`state["count"] += 1` บน dict) ไม่ต้องประกาศอะไรเลย
+- **"`UnboundLocalError` แปลว่าตัวแปรนั้นไม่เคยถูกกำหนดค่าที่ไหนเลย"** — ความจริง: มันแปลว่า Python ตัดสินแล้วว่าชื่อนี้เป็น local ของ function *นี้* (เพราะมันถูก assign อยู่ที่ไหนสักแห่งใน body ของ function) และการรันครั้งนั้นไปเจอการอ่านก่อนที่การ assign แบบ local จะรัน — นี่คืออาการพังที่แท้จริงของการลืม `global`/`nonlocal`
+- **"closure สองตัวที่สร้างจาก factory function เดียวกันแชร์ state กัน"** — ความจริง: การเรียก factory แต่ละครั้ง (`make_greeter("Hello")` กับ `make_greeter("Hi")`) สร้าง cell ที่เป็นอิสระของตัวเอง — closure จากการเรียกคนละครั้งจะไม่มีวันเห็นตัวแปรของกันและกัน เว้นแต่จะแชร์ mutable object กันโดยตั้งใจ
+- **"บั๊ก late-binding ในลูปเกิดกับ `lambda` เท่านั้น"** — ความจริง: nested function ใด ๆ ที่ถูกนิยามในลูปแล้วจับตัวแปรของลูปไว้ก็มีบั๊กเดียวกันนี้ทั้งนั้น `lambda` เป็นแค่วิธีที่สั้นที่สุดในการสาธิตมัน
+
+## อ่านโค้ดที่ AI เขียน
+
+- nested function assign ตัวแปรจาก enclosing scope โดยไม่มี `nonlocal` (หรือ assign global ของ module โดยไม่มี `global`) ไหม? ถ้าใช่ มันอาจเป็นบั๊ก (`UnboundLocalError` รอเกิดอยู่) หรือคนเขียนตั้งใจให้เป็นตัวแปร local ใหม่จริง ๆ — ต้องเช็กว่าเป็นแบบไหน
+- มี function หรือ lambda ถูกสร้างในลูป จับตัวแปรของลูปไว้ แล้วถูกเรียกใช้ *หลังจาก* ลูปจบแล้วหรือเปล่า? เช็กหากับดัก late-binding — ทุกตัวจะเห็นค่า*สุดท้าย*ของตัวแปรลูป
+- มี state แบบ mutable (dict หรือ list) ที่ถูกปิดครอบโดย inner function หลายตัวแทนการใช้ `nonlocal` ไหม? ยืนยันว่าการแชร์นั้นตั้งใจจริง และไม่มี code ภายนอกที่จะมาทำให้มันเสียหายโดยไม่คาดคิด
+- function อ่านชื่อที่ถูก assign ทีหลังใน body เดียวกัน โดยคาดหวังว่าจะเห็นค่า global หรือ enclosing ก่อนไหม? Python ตัดสินว่าชื่อไหนเป็น "local" ของ function ทั้งก้อนล่วงหน้า — สิ่งนี้ทำให้เกิด `UnboundLocalError` ไม่ใช่การ fallback ไปหา outer scope
+- มีการใช้ `global` ในจุดที่จริง ๆ แล้วส่งค่าผ่าน parameter และ return value ของ function แทนได้ไหม? การใช้ `global` มากเกินไปทำให้ function ทดสอบยากและทำความเข้าใจยากโดยไม่ต้องอ่านทั้ง module
+
+<SpotTheBug code={`def make_click_handlers(labels):
+    handlers = []
+    for i, label in enumerate(labels):
+        def handler():
+            print(f"Button {i}: {label} clicked")
+        handlers.append(handler)
+    return handlers
+
+
+buttons = make_click_handlers(["Save", "Cancel", "Delete"])
+for click in buttons:
+    click()`}>
+`handler` closure ทุกตัวจับ **ตัวแปร** \`i\` และ \`label\` ไว้ ไม่ใช่ค่าที่ตัวแปรถืออยู่ตอนลูปรอบนั้น พอถึงเวลาที่ \`click()\` ถูกเรียกจริง ๆ — หลังจากลูป \`for\` ใน \`make_click_handlers\` จบไปแล้ว — \`i\` และ \`label\` ต่างก็ถือค่า*สุดท้าย*ของการวนลูปทั้งคู่ ตรวจสอบแล้วบน Python 3.14: ทั้งสามครั้งพิมพ์ \`Button 2: Delete clicked\` เหมือนกันหมด ไม่มี \`Button 0\` หรือ \`Button 1\` เลย ทางแก้คือ freeze ค่าปัจจุบันไว้ตอน definition time ไม่ว่าจะด้วย default argument (\`def handler(i=i, label=label): ...\`) หรือ \`functools.partial(handler_body, i, label)\` — ทั้งสองวิธีประเมินค่า \`i\`/\`label\` ทันที ครั้งเดียวต่อรอบลูป แทนที่จะไปมองหามันทีหลังผ่าน closure cell ที่แชร์กัน
+</SpotTheBug>
+
 <Callout title="closure จับตัวแปร ไม่ใช่จับค่า">
-กับดัก late-binding: closure จับ **ตัวแปร** ตัวเอง ไม่ใช่ค่าที่ถืออยู่ตอนที่ closure ถูกสร้าง
-ในลูปนั้นเรื่องนี้กัดเจ็บมาก:
+กับดัก late-binding: closure จับ **ตัวแปร** ตัวมันเอง ไม่ใช่ค่าที่มันถืออยู่ตอน closure ถูกสร้าง
+ในลูปเรื่องนี้กัดเจ็บมาก:
 
 ```python
 # WRONG — all functions capture the same variable i
@@ -127,7 +360,7 @@ funcs = [lambda i=i: i for i in range(3)]
 print([f() for f in funcs])   # [0, 1, 2]
 ```
 
-เทคนิคใช้ default argument `i=i` จะประเมินค่า `i` ตอน **นิยาม (definition time)** ทำให้เกิด binding ใหม่สำหรับแต่ละ function
+เทคนิค default-argument `i=i` ประเมินค่า `i` ตอน **definition time** สร้าง binding ใหม่ให้แต่ละ function `functools.partial(lambda i: i, i)` ในลูปก็ freeze แบบเดียวกันได้ ชัดเจนกว่าด้วยซ้ำ
 </Callout>
 
 export const quizClosures = [
@@ -139,12 +372,31 @@ export const quizClosures = [
       "class ที่ override __call__",
       "function ที่ถูก decorate ด้วย @staticmethod"
     ],
-    answer: 1
+    answer: 1,
+    explain: "closure คือ inner function ที่อ้างถึง (\"closes over\") ตัวแปรหนึ่งตัวหรือมากกว่าจาก scope ของ function ที่ครอบมันอยู่ ทำให้ตัวแปรเหล่านั้นยังมีชีวิตอยู่แม้ enclosing function จะ return ไปแล้ว"
+  },
+  {
+    q: "โค้ดนี้พิมพ์อะไร?\n\nx = \"global\"\n\ndef outer():\n    x = \"enclosing\"\n    def inner():\n        print(x)\n    inner()\n\nouter()",
+    options: ["global", "enclosing", "UnboundLocalError", "NameError"],
+    answer: 1,
+    explain: "การหาชื่อแบบ LEGB: inner ไม่มี x เป็น local จึง Python เช็ก Enclosing scope ต่อ แล้วเจอ x = \"enclosing\" ใน outer — มันไม่มีวันไปถึง x ระดับ global เลย"
   },
   {
     q: "keyword ใดที่ต้องใช้เพื่อกำหนดค่าใหม่ (reassign) ให้ free variable จาก enclosing scope ภายใน nested function?",
     options: ["closure", "outer", "nonlocal", "free"],
-    answer: 2
+    answer: 2,
+    explain: "nonlocal บอก Python ให้นำชื่อจาก enclosing function scope ที่ใกล้ที่สุดกลับมาใช้และ reassign แทนที่จะสร้างตัวแปร local ตัวใหม่"
+  },
+  {
+    q: "โค้ดนี้พิมพ์อะไร?\n\ncounter = 0\n\ndef bump():\n    counter += 1\n    return counter\n\ntry:\n    bump()\nexcept UnboundLocalError:\n    print(\"caught it\")",
+    options: [
+      "1",
+      "caught it",
+      "0",
+      "NameError"
+    ],
+    answer: 1,
+    explain: "counter += 1 เป็นการ assign ให้ counter ภายใน bump ดังนั้น Python จึงมองว่า counter เป็น local ของ function ทั้งก้อน การอ่านมันที่ฝั่งขวาก่อนที่การ assign แบบ local จะรันจะทำให้เกิด UnboundLocalError — การเติม global counter จะแก้ปัญหานี้ได้โดยบอก Python ให้ใช้ชื่อระดับ module แทน"
   },
   {
     q: "ทำไม `[lambda: i for i in range(3)]` ถึงให้ผลลัพธ์ `[2, 2, 2]` เมื่อถูกเรียก?",
@@ -154,7 +406,19 @@ export const quizClosures = [
       "Python ประเมิน body ของ lambda ตอน definition time",
       "range(3) ให้ผลลัพธ์เป็น [2, 2, 2] เท่านั้น"
     ],
-    answer: 1
+    answer: 1,
+    explain: "lambda ทุกตัวในลิสต์ปิดครอบตัวแปร i ตัวเดียวกัน (cell เดียวกัน) ไม่ใช่สแนปช็อตของค่ามัน พอถึงเวลาที่ lambda ตัวไหนก็ตามถูกเรียก ลูปจบไปแล้วและ i ถือค่าสุดท้ายคือ 2 — ทุกการเรียกจึงเห็น 2 เหมือนกันหมด"
+  },
+  {
+    q: "โค้ดนี้พิมพ์อะไร?\n\ndef make_counter():\n    state = {\"n\": 0}\n    def bump():\n        state[\"n\"] += 1\n        return state[\"n\"]\n    return bump, state\n\nbump, state = make_counter()\nbump()\nbump()\nprint(state[\"n\"])",
+    options: [
+      "0",
+      "1",
+      "2",
+      "UnboundLocalError — state is never declared nonlocal"
+    ],
+    answer: 2,
+    explain: "state[\"n\"] += 1 mutate dict ที่ state ชี้ไปหา — มันไม่ได้ reassign ชื่อ state เอง จึงไม่ต้องประกาศ nonlocal เลย การเรียก bump() ทั้งสองครั้ง mutate dict เดียวกันที่แชร์กันอยู่ ทำให้ state[\"n\"] เหลือ 2"
   }
 ];
 

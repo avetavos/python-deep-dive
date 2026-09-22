@@ -1,6 +1,6 @@
 ---
 title: 'Args, Kwargs & Parameters'
-description: 'Positional args, keyword args, default values, *args, **kwargs, and keyword-only parameters in Python.'
+description: 'Positional-only /, keyword-only *, *args/**kwargs, unpacking at call sites, and the mutable/datetime default traps in Python.'
 sidebar:
   order: 2
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Parameters and arguments
 
@@ -65,6 +67,22 @@ log_event("login", user_id=42, ip="127.0.0.1")
 # event=login, user_id=42, ip=127.0.0.1
 ```
 
+`**kwargs` is a **fresh dict on every call** — it is never shared between calls, even mutating it inside the function has no effect on the next call:
+
+```python
+def collect(**kwargs):
+    kwargs["seen"] = True
+    return kwargs
+
+first = collect(a=1)
+second = collect(b=2)
+print(first)               # {'a': 1, 'seen': True}
+print(second)              # {'b': 2, 'seen': True}
+print(first is second)     # False — two different dict objects
+```
+
+This is a different rule from the mutable default argument trap covered later in this lesson: a *default value* like `items=[]` is created once at definition time and shared, but `**kwargs` itself is built freshly by Python on every single call, regardless of defaults.
+
 ## Keyword-only parameters
 
 Any parameter listed **after a bare `*`** (or after `*args`) can only be supplied by keyword — never positionally.
@@ -78,14 +96,65 @@ send_email("alice@example.com", "Hello", cc="bob@example.com")
 # Calling send_email("a@b.com", "Hi", "c@d.com") would raise TypeError
 ```
 
+## Positional-only parameters: `/`
+
+Any parameter listed **before a bare `/`** can only be supplied positionally — never by keyword name. This is the mirror image of keyword-only `*`, and it exists for the same reason: it lets a library author rename an internal parameter later without breaking callers who never depended on that name.
+
+```python
+def divide(numerator, denominator, /, *, round_to=2):
+    return round(numerator / denominator, round_to)
+
+print(divide(10, 4))              # 2.5 — positional, as required
+print(divide(10, 4, round_to=0))  # 2.0 — round_to is keyword-only, after *
+
+divide(numerator=10, denominator=4)
+# TypeError: divide() got some positional-only arguments passed as keyword arguments: 'numerator, denominator'
+```
+
+Everything before `/` is positional-only, everything after a bare `*` is keyword-only, and anything in between (with no `/` or `*` around it) can be passed either way — exactly the default behavior every parameter had before this lesson introduced `/` and `*`.
+
+## Unpacking at call sites: `*` and `**`
+
+The same `*`/`**` syntax that *collects* arguments inside a function definition also *spreads* a sequence or mapping into separate arguments at a call site:
+
+```python
+def connect(host: str, port: int, timeout: int = 30) -> str:
+    return f"{host}:{port} (timeout={timeout}s)"
+
+args = ("localhost", 5432)
+kwargs = {"timeout": 60}
+print(connect(*args, **kwargs))
+# localhost:5432 (timeout=60s) — same as connect("localhost", 5432, timeout=60)
+```
+
+`*args` in a **definition** means "gather extra positional arguments into a tuple named `args`." `*args` at a **call site** means "unpack this iterable into separate positional arguments." The symbol is the same; whether you are defining or calling tells you which direction it goes.
+
+## The forwarding pattern: `def wrapper(*a, **kw)`
+
+Combining "gather" (in the signature) with "spread" (in the body) lets a wrapper function accept absolutely any call shape and forward it unchanged to another function — this is exactly how every decorator's `wrapper` in the [Decorators lesson](/en/functions-deep/decorators/) stays compatible with whatever function it wraps:
+
+```python
+def base(a, b, *, c=10):
+    return a + b + c
+
+def wrapper(*a, **kw):
+    print("forwarding", a, kw)
+    return base(*a, **kw)
+
+print(wrapper(1, 2, c=3))
+# forwarding (1, 2) {'c': 3}
+# 6
+```
+
 ## Full parameter order
 
 The order of parameter kinds in a definition must always be:
 
-1. Positional-or-keyword (`x`, `y`)
-2. `*args` (or bare `*`)
-3. Keyword-only (`key=value` after `*`)
-4. `**kwargs`
+1. Positional-only (`x`, `y`, then `/`)
+2. Positional-or-keyword (`x`, `y`)
+3. `*args` (or bare `*`)
+4. Keyword-only (`key=value` after `*`)
+5. `**kwargs`
 
 export const argsKwargsCode = `
 def describe(
@@ -109,10 +178,151 @@ print(describe("Python", "fast", separator=" + ", version="3.11", typed=True))
 
 <Playground code={argsKwargsCode} />
 
+## Depth demo: `/`, unpacking, fresh `**kwargs`, and the `datetime.now()` default trap
+
+The playground below runs every depth topic above, including two real failures — calling a positional-only parameter by keyword, and a mutable-style trap with `datetime.now()` as a default value:
+
+export const argsKwargsDepthCode = `
+from datetime import datetime
+import time
+
+
+# --- positional-only parameters with / ---
+def divide(numerator, denominator, /, *, round_to=2):
+    return round(numerator / denominator, round_to)
+
+print("--- positional-only / ---")
+print(divide(10, 4))
+print(divide(10, 4, round_to=0))
+try:
+    divide(numerator=10, denominator=4)
+except TypeError as e:
+    print(type(e).__name__ + ":", e)
+
+# --- unpacking at call sites: * and ** ---
+print("\\n--- unpacking at call sites ---")
+
+def connect(host: str, port: int, timeout: int = 30) -> str:
+    return f"{host}:{port} (timeout={timeout}s)"
+
+args = ("localhost", 5432)
+kwargs = {"timeout": 60}
+print(connect(*args, **kwargs))
+
+# --- **kwargs is a fresh dict every call ---
+print("\\n--- **kwargs is a fresh dict each call ---")
+
+def collect(**kwargs):
+    kwargs["seen"] = True
+    return kwargs
+
+first = collect(a=1)
+second = collect(b=2)
+print("first:", first)
+print("second:", second)
+print("same dict object?", first is second)
+
+# --- datetime.now() as a default is evaluated once ---
+print("\\n--- datetime.now() default trap ---")
+
+def log_event_broken(message, when=datetime.now()):
+    return f"{when.isoformat()}: {message}"
+
+first_call = log_event_broken("first")
+time.sleep(0.05)
+second_call = log_event_broken("second")
+print("same timestamp both calls:", first_call.split(":")[0:2] == second_call.split(":")[0:2])
+
+def log_event_fixed(message, when=None):
+    when = when if when is not None else datetime.now()
+    return f"{when.isoformat()}: {message}"
+
+fixed_first = log_event_fixed("first")
+time.sleep(0.05)
+fixed_second = log_event_fixed("second")
+print("fixed version differs:", fixed_first != fixed_second)
+
+# --- forwarding pattern def wrapper(*a, **kw) ---
+print("\\n--- forwarding pattern ---")
+
+def base(a, b, *, c=10):
+    return a + b + c
+
+def wrapper(*a, **kw):
+    print("forwarding", a, kw)
+    return base(*a, **kw)
+
+print(wrapper(1, 2, c=3))
+
+# --- positional-only rejects the keyword form ---
+print("\\n--- positional-only rejects keyword form ---")
+def area(width, height, /):
+    return width * height
+try:
+    area(width=3, height=4)
+except TypeError as e:
+    print(type(e).__name__ + ":", e)
+`.trim();
+
+<Playground code={argsKwargsDepthCode} />
+
+## Mental Model
+
+Reading a signature left to right shows exactly which arguments can be positional, which can be either, and which must be named — the `/` and `*` are the two dividers:
+
+export const argsKwargsMentalModel = `flowchart LR
+  A["positional-only\\n(before /)"] --> B["positional-or-keyword\\n(the default, no marker)"]
+  B --> C["*args\\n(extra positionals -> tuple)"]
+  C --> D["keyword-only\\n(after * or *args)"]
+  D --> E["**kwargs\\n(extra keywords -> dict)"]`;
+
+<Mermaid code={argsKwargsMentalModel} title="Parameter order: positional-only -> positional-or-keyword -> *args -> keyword-only -> **kwargs" />
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Positional-only (`/`) | Frees the author to rename the parameter later without breaking callers | Callers cannot self-document a call with `divide(numerator=10, denominator=4)` |
+| Keyword-only (`*`) | Callers must name the argument — self-documenting, order-mistake-proof | An extra `*` in the signature to remember; positional-only callers get `TypeError` |
+| `*args`/`**kwargs` forwarding | A wrapper works with any signature the wrapped function has | `inspect.signature` on the wrapper alone shows `(*args, **kwargs)`, hiding the real parameters (see [Decorators](/en/functions-deep/decorators/) for the `functools.wraps` fix) |
+| Unpacking (`*`/`**`) at a call site | Build the argument list/dict dynamically, e.g. from config or another function's return value | A mismatch between the unpacked structure and the signature only fails at call time, not at definition time |
+| Mutable default (`items=[]`) / `datetime.now()` default | Looks like "a fresh empty/current value every call" | Evaluated once at definition time — every call that does not override it shares (or freezes) the same object |
+
+## Common Misconceptions
+
+- **"Positional-only parameters are just a style preference — you can always pass them by name"** — fact: `/` makes it a real `TypeError` at the call site to pass those parameters by keyword, not a lint warning.
+- **"`**kwargs` behaves like a mutable default — mutating it leaks into the next call"** — fact: `**kwargs` is a brand-new dict built by Python on every call; only an actual *default value* (`items=[]`) is created once and shared. Do not confuse the two.
+- **"`def f(when=datetime.now())` gives every call a fresh timestamp"** — fact: `datetime.now()` runs exactly once, when the `def` statement executes, so `when` is the same frozen instant on every call that does not override it — the same class of bug as a mutable default, just with a non-obviously-mutable value.
+- **"`*args` and `**kwargs` in a signature and `*args`/`**kwargs` at a call site do the same thing"** — fact: in a signature they *gather* extra arguments into a tuple/dict; at a call site the identical syntax *spreads* a tuple/dict into separate arguments — opposite directions, same symbols.
+- **"A `TypeError` about positional-only arguments means the function doesn't accept that argument at all"** — fact: it still accepts the value — only not by that keyword name; passing it positionally in the right slot works fine.
+
+## Reading AI-generated code
+
+- Does a default argument look like `def f(x, when=datetime.now())` or any other function call as a default (not just `[]`/`{}`)? It only runs once, at definition time, exactly like a mutable default.
+- Does a wrapper function `def wrapper(*a, **kw)` actually forward *every* argument to the wrapped call (`func(*a, **kw)`), or does it drop or reorder some?
+- Is a parameter documented as "must be passed by name" but the signature has no `*` before it? Nothing enforces that contract — a caller can still pass it positionally.
+- Does code unpack a dict into keyword arguments (`f(**config)`) where `config`'s keys are not guaranteed to match `f`'s parameter names? A typo'd or extra key raises `TypeError: f() got an unexpected keyword argument`.
+- Is `*args`/`**kwargs` used in a signature where the function only ever expects a fixed, known set of parameters? Explicit named parameters (with `/`/`*` where appropriate) document the contract better and let a type checker catch mismatches.
+
+<SpotTheBug code={`from datetime import datetime
+
+
+def create_ticket(title: str, opened_at: datetime = datetime.now()) -> dict:
+    return {"title": title, "opened_at": opened_at}
+
+
+ticket_a = create_ticket("Server down")
+# ... hours later, in the same long-running process ...
+ticket_b = create_ticket("Disk full")
+
+print(ticket_a["opened_at"] == ticket_b["opened_at"])`}>
+`datetime.now()` in the default value is evaluated **once**, when the `def create_ticket(...)` statement runs — not on every call. Every ticket created without an explicit `opened_at` gets the exact same frozen timestamp, no matter how much real time passes between calls in a long-running process (a web server, a worker process). The printed line is `True`, which is almost certainly not the intent for a field named `opened_at`. This is the same underlying bug class as the mutable-default-argument trap, just with a non-obviously-mutable default. The fix is the same `None`-sentinel pattern: `def create_ticket(title, opened_at=None): opened_at = opened_at if opened_at is not None else datetime.now()`.
+</SpotTheBug>
+
 <Callout title="The mutable default argument trap">
-Never use a mutable object (list, dict, set) as a default argument value.
+Never use a mutable object (list, dict, set) — or any function call whose result varies over time, like `datetime.now()` — as a default argument value.
 Default values are evaluated **once** at function definition time — not on each call.
-All callers share the same object:
+All callers share the same object (or the same frozen value):
 
 ```python
 # WRONG — all calls share the same list
@@ -128,44 +338,70 @@ def add_item(item, container=None):
     return container
 ```
 
-The `None` sentinel pattern is the standard Python idiom for mutable defaults.
+The `None` sentinel pattern is the standard Python idiom for both mutable defaults and "evaluate this fresh on every call" defaults like timestamps.
 </Callout>
 
 export const quizArgsKwargs = [
   {
     q: "What type does *args collect arguments into?",
     options: ["list", "tuple", "dict", "set"],
-    answer: 1
+    answer: 1,
+    explain: "*args gathers any extra positional arguments into a tuple, in the order they were passed."
   },
   {
     q: "A parameter defined after a bare `*` in a function signature is:",
     options: [
       "A variadic positional parameter",
       "A keyword-only parameter",
-      "A variadic keyword parameter",
+      "A positional-only parameter",
       "A required parameter"
     ],
-    answer: 1
+    answer: 1,
+    explain: "Everything after a bare * (or after *args) must be supplied by keyword name — Python raises TypeError if a caller tries to pass it positionally."
   },
   {
-    q: "Why is `def f(items=[])` dangerous?",
+    q: "What does this print?\n\ndef divide(numerator, denominator, /):\n    return numerator / denominator\n\ntry:\n    print(divide(numerator=10, denominator=2))\nexcept TypeError as e:\n    print(type(e).__name__)",
     options: [
-      "Lists are not valid default values in Python",
-      "The default list is shared across all calls because it is created once",
-      "The function cannot accept any other argument",
-      "Python copies the list on every call, wasting memory"
+      "5.0",
+      "TypeError",
+      "None",
+      "SyntaxError — / is invalid here"
     ],
-    answer: 1
+    answer: 1,
+    explain: "numerator and denominator are positional-only because they appear before the bare /. Calling divide(numerator=10, denominator=2) passes them by keyword, which raises TypeError: divide() got some positional-only arguments passed as keyword arguments."
   },
   {
-    q: "What is the correct order of parameter kinds in a Python function signature?",
+    q: "What does this print?\n\ndef collect(**kwargs):\n    kwargs['seen'] = True\n    return kwargs\n\na = collect(x=1)\nb = collect(y=2)\nprint(a, b, a is b)",
     options: [
-      "**kwargs, *args, keyword-only, positional",
-      "positional, keyword-only, *args, **kwargs",
-      "positional, *args, keyword-only, **kwargs",
-      "*args, positional, **kwargs, keyword-only"
+      "{'x': 1, 'seen': True} {'x': 1, 'y': 2, 'seen': True} True",
+      "{'x': 1, 'seen': True} {'y': 2, 'seen': True} False",
+      "{'seen': True} {'seen': True} True",
+      "TypeError — kwargs cannot be mutated"
     ],
-    answer: 2
+    answer: 1,
+    explain: "**kwargs is built as a brand-new dict on every call — it is never shared between calls, unlike a mutable default argument. a and b are two independent dicts, so a is b is False."
+  },
+  {
+    q: "Why is `def f(x, when=datetime.now())` a bug in a long-running process?",
+    options: [
+      "datetime.now() cannot be used as a default value — it raises TypeError",
+      "datetime.now() runs once at definition time, so every call that omits when gets the same frozen timestamp",
+      "It works correctly, but only in Python versions before 3.14",
+      "when becomes a keyword-only parameter automatically"
+    ],
+    answer: 1,
+    explain: "Like any default value, datetime.now() is evaluated exactly once, when the def statement executes — not on each call. Every call that does not pass when explicitly reuses that same frozen moment in time, which is rarely the intended behavior for a timestamp default."
+  },
+  {
+    q: "Why does `def wrapper(*a, **kw): return base(*a, **kw)` correctly forward any call shape `base` accepts?",
+    options: [
+      "*a, **kw in the signature gather any positional/keyword arguments, and *a, **kw at the call site spread them back out into separate arguments for base",
+      "Python automatically matches wrapper's parameter names to base's parameter names",
+      "It only works if base also uses *args, **kwargs in its own signature",
+      "wrapper must be decorated with @functools.wraps for the forwarding to work at runtime"
+    ],
+    answer: 0,
+    explain: "The same */** syntax means 'gather' in a definition and 'spread' in a call. wrapper(*a, **kw) collects everything it was called with into a tuple a and dict kw; base(*a, **kw) then spreads that same tuple and dict back into individual positional and keyword arguments for base — the two functions do not need matching signatures, only compatible ones."
   }
 ];
 

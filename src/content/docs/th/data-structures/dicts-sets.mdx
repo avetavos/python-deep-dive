@@ -1,6 +1,6 @@
 ---
-title: Dicts และ Sets
-description: 'dict ที่รักษาลำดับการแทรก, get/setdefault/items, dict comprehension และ set algebra ใน Python 3.14'
+title: Dicts and Sets
+description: 'การ merge dict ด้วย |, view ที่เป็น live, hashability, Counter, RuntimeError จากการแก้ไขขณะวนซ้ำ, และ set algebra ใน Python 3.14'
 sidebar:
   order: 3
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Dicts — การค้นหาด้วย key อย่างรวดเร็ว
 
@@ -23,10 +25,10 @@ del scores['bob']            # remove a key
 print(scores)                # {'alice': 95, 'carol': 92}
 ```
 
-### การเข้าถึงที่ปลอดภัย: `get` และ `setdefault`
+### การเข้าถึงที่ปลอดภัย: `get`, `setdefault`, และ `defaultdict`
 
 การเข้าถึง key ที่ไม่มีด้วย `[]` จะเกิด `KeyError`
-ใช้ `.get()` สำหรับการอ่านที่ปลอดภัยพร้อม default ที่กำหนดได้ หรือ `.setdefault()` เพื่อแทรก default เมื่อ key ไม่มีอยู่
+ใช้ `.get()` สำหรับการอ่านที่ปลอดภัยพร้อม default ที่กำหนดได้ หรือ `.setdefault()` เพื่อแทรก default เมื่อ key ไม่มีอยู่ — มันจะ **ไม่** เขียนทับค่าที่มีอยู่แล้ว
 
 ```python
 scores = {'alice': 95, 'bob': 87}
@@ -34,6 +36,16 @@ unknown = scores.get('dave', 0)      # returns 0 — no KeyError
 scores.setdefault('eve', 88)         # inserts eve=88 only if absent
 print(scores)
 # {'alice': 95, 'bob': 87, 'eve': 88}
+```
+
+เมื่อ *ทุก* key ที่หายไปควรได้ default — ไม่ใช่แค่การเข้าถึงครั้งแรก — `collections.defaultdict` เขียนโค้ดน้อยกว่าการเรียก `setdefault` ซ้ำ ๆ:
+
+```python
+from collections import defaultdict
+counts = defaultdict(int)
+for word in ['a', 'b', 'a', 'c', 'b', 'a']:
+    counts[word] += 1
+print(dict(counts))  # {'a': 3, 'b': 2, 'c': 1}
 ```
 
 ### การวนซ้ำด้วย `.items()`
@@ -47,6 +59,36 @@ for name, score in scores.items():
 
 สามารถวนซ้ำด้วย `.keys()` (ค่าเริ่มต้น) หรือ `.values()` แยกกันได้เช่นกัน
 
+### Dict view เป็น live ไม่ใช่ snapshot
+
+`.keys()`, `.values()`, และ `.items()` คืนค่าเป็น **view object** — มันสะท้อน dict ตามสภาพ *ปัจจุบัน* ทุกครั้งที่คุณดูมัน แทนที่จะ freeze copy ไว้ตอนเรียก:
+
+```python
+d = {'a': 1, 'b': 2}
+keys_view = d.keys()
+d['c'] = 3
+print(list(keys_view))  # ['a', 'b', 'c'] — the view saw the later insert
+```
+
+ถ้าต้องการ snapshot ที่ freeze ไว้เพื่อวนซ้ำอย่างปลอดภัยขณะแก้ไข dict ไปด้วย ให้ครอบ view ด้วย `list(...)` — มัน copy key ณ ตอนนั้นครั้งเดียว
+
+### การ merge dict: `|` และ `|=`
+
+ตั้งแต่ Python 3.9 `|` merge dict สองตัวเข้าด้วยกันเป็น dict **ใหม่** (key ของตัวหลังชนะเมื่อขัดแย้งกัน) และ `|=` merge dict ทางขวาเข้ากับ dict ทางซ้ายแบบใน place:
+
+```python
+a = {'x': 1, 'y': 2}
+b = {'y': 99, 'z': 3}
+merged = a | b
+print(merged)  # {'x': 1, 'y': 99, 'z': 3} — new dict, b's y wins
+print(a)       # {'x': 1, 'y': 2} — a itself is untouched by |
+
+a |= b
+print(a)       # {'x': 1, 'y': 99, 'z': 3} — now a is updated in place
+```
+
+`|` คือตัวแทนยุคใหม่ของ `{**a, **b}`; `|=` คือตัวแทนยุคใหม่ของ `a.update(b)`
+
 ### Dict comprehensions
 
 เหมือน list comprehension แต่สร้าง dict ใหม่ในนิพจน์เดียว
@@ -55,6 +97,84 @@ for name, score in scores.items():
 squared = {n: n**2 for n in range(1, 6)}
 # {1: 1, 2: 4, 3: 9, 4: 16, 5: 25}
 ```
+
+### Hashability: อะไรใช้เป็น dict key ได้บ้าง
+
+key ต้อง hashable ซึ่งหมายถึงต้องมี `__hash__` ที่สอดคล้องกับ `__eq__` เสมอ (key สองตัวที่เท่ากันต้อง hash เท่ากัน) `list` ไม่มี `__hash__` — เพราะมันเปลี่ยนแปลงได้ hash ของมันจึงไม่มีทางคงที่ — และ `tuple` ที่มี `list` อยู่ข้างในก็สืบทอดปัญหาเดียวกัน:
+
+```python
+bad_key = {[1, 2]: 'value'}
+# TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+```
+
+```python
+bad_key2 = {(1, [2, 3]): 'value'}
+# TypeError: cannot use 'tuple' as a dict key (unhashable type: 'list')
+```
+
+`str`, `int`, `float`, `bool`, tuple ของ hashable ล้วน ๆ, และ `frozenset` ล้วนเป็น key ที่ปลอดภัย
+
+### `Counter`: dict ที่ออกแบบมาสำหรับนับ
+
+`collections.Counter` คือ dict subclass ที่สร้างมาสำหรับนับ hashable item พร้อม arithmetic และการจัดอันดับด้วย `.most_common()` มาให้ในตัว:
+
+```python
+from collections import Counter
+letters = Counter('abracadabra')
+print(letters)               # Counter({'a': 5, 'b': 2, 'r': 2, 'c': 1, 'd': 1})
+print(letters.most_common(2))  # [('a', 5), ('b', 2)]
+```
+
+### ลำดับการแทรก เทียบกับ equality
+
+ลำดับการแทรกได้รับการรับประกันสำหรับการวนซ้ำ (`.keys()`, `.values()`, `.items()`, `for key in d`) — แต่ dict สองตัวยังคง `==` กันถ้ามี key และ value ชุดเดียวกัน **ไม่ว่าลำดับจะเป็นอย่างไร**:
+
+```python
+d1 = {'a': 1, 'b': 2}
+d2 = {'b': 2, 'a': 1}
+print(d1 == d2)  # True — equality ignores insertion order
+```
+
+อย่าพึ่งพาลำดับเพื่อบอกว่า "dict สองตัวนี้ต่างกัน" — ใช้ `==` เพื่อตรวจ equality และวนซ้ำเพื่อดูลำดับ
+
+### การแก้ไข dict ขณะวนซ้ำอยู่
+
+การเปลี่ยน*ขนาด*ของ dict (เพิ่มหรือลบ key) ขณะที่ loop กำลังวนซ้ำอยู่จะ raise `RuntimeError` — CPython ตรวจจับการเปลี่ยนขนาดได้และปฏิเสธที่จะเดาว่าควรทำอะไรต่อ:
+
+```python
+d = {'a': 1, 'b': 2, 'c': 3}
+for key in d:
+    if key == 'b':
+        del d[key]
+# RuntimeError: dictionary changed size during iteration
+```
+
+ให้วนซ้ำบน snapshot ของ key แทน — `list(d)` copy key ทั้งหมดครั้งเดียวล่วงหน้า ดังนั้นการลบออกจาก `d` ระหว่าง loop จึงไม่เปลี่ยนสิ่งที่ loop กำลังวนซ้ำอยู่อีกต่อไป:
+
+```python
+d = {'a': 1, 'b': 2, 'c': 3}
+for key in list(d):
+    if key == 'b':
+        del d[key]
+print(d)  # {'a': 1, 'c': 3}
+```
+
+การ reassign value ของ key ที่*มีอยู่แล้ว* (ไม่ใช่การเพิ่มหรือลบ) ไม่ได้เปลี่ยนขนาดของ dict จึงไม่ทำให้เกิด error นี้
+
+### การจัดการ `KeyError`: เลือกสไตล์เดียวแล้วใช้ให้สม่ำเสมอ
+
+มีสามวิธีที่ถูกต้องเท่ากันในการจัดการ key ที่อาจไม่มีอยู่ — การผสมทั้งสามแบบในโค้ดเดียวกันคือสิ่งที่ทำให้โค้ด AI เชื่อถือได้ยาก:
+
+```python
+inventory = {'apples': 10}
+for item in ['apples', 'bananas']:
+    if item in inventory:              # LBYL: check first
+        print(inventory[item])
+    else:
+        print('out of stock')
+```
+
+`.get(item, default)` (แนว EAFP กึ่งหนึ่ง เป็น expression เดียว) และ `try: ... except KeyError:` (EAFP แท้) คืออีกสองแบบ — ใช้ `.get()` เมื่อ default value เพียงพอแล้ว และใช้ `try/except` เมื่อ key ที่หายไปถือเป็นกรณีผิดปกติที่ต้องจัดการต่างจาก "ใช้ค่าแทน"
 
 ## Sets — element ที่ไม่ซ้ำและ set algebra
 
@@ -71,7 +191,13 @@ print(a - b)   # difference:       {1, 2}
 print(a ^ b)   # symmetric diff:   {1, 2, 5, 6}
 ```
 
-ใช้ `frozenset` สำหรับ set ที่เปลี่ยนแปลงไม่ได้ (hashable ใช้เป็น dict key หรือ set element ได้)
+ใช้ `frozenset` สำหรับ set ที่เปลี่ยนแปลงไม่ได้ — เพราะมันไม่เปลี่ยนแปลงเลย มันจึง hashable ในตัวเอง จึงใช้เป็น dict key หรืออยู่ใน set อื่นได้:
+
+```python
+fs = frozenset([1, 2, 3])
+group_lookup = {fs: 'group-a'}   # a plain set could never do this
+fs.add(4)                        # AttributeError: 'frozenset' object has no attribute 'add'
+```
 
 ## ตัวอย่างรันได้
 
@@ -105,9 +231,158 @@ print('symmetric diff:', sorted(a ^ b))
 
 <Playground code={dictsSetsCode} />
 
+playground ด้านล่างรันหัวข้อความลึกด้านบนทั้งหมด — การ merge ด้วย `|`/`|=`, live view, `defaultdict`, ข้อตกลงเรื่อง hashability, `Counter`, ลำดับการแทรกเทียบกับ equality, `RuntimeError` จากการแก้ไขขณะวนซ้ำ, และ `frozenset`:
+
+export const dictsSetsDepthCode = `
+# --- dict | and |= (3.9+) ---
+a = {'x': 1, 'y': 2}
+b = {'y': 99, 'z': 3}
+merged = a | b
+print('merged (new dict):', merged)
+print('a unchanged:', a)
+
+a |= b
+print('a after |=:', a)
+
+# --- dict views are live, not a snapshot ---
+d = {'a': 1, 'b': 2}
+keys_view = d.keys()
+print('view before:', list(keys_view))
+d['c'] = 3
+print('view after adding c:', list(keys_view))
+
+# --- d[k] vs .get vs .setdefault vs defaultdict ---
+scores = {'alice': 95}
+try:
+    scores['bob']
+except KeyError as e:
+    print('KeyError:', e)
+
+print('get missing:', scores.get('bob', 0))
+scores.setdefault('bob', 80)
+print('after setdefault:', scores)
+scores.setdefault('alice', 999)
+print('setdefault does not overwrite existing:', scores)
+
+from collections import defaultdict
+counts = defaultdict(int)
+for word in ['a', 'b', 'a', 'c', 'b', 'a']:
+    counts[word] += 1
+print('defaultdict counts:', dict(counts))
+
+# --- hashability contract: __hash__ + __eq__ ---
+try:
+    bad_key = {[1, 2]: 'value'}
+except TypeError as e:
+    print('TypeError:', e)
+
+try:
+    bad_key2 = {(1, [2, 3]): 'value'}
+except TypeError as e:
+    print('TypeError:', e)
+
+# --- Counter ---
+from collections import Counter
+letters = Counter('abracadabra')
+print('Counter:', letters)
+print('most common 2:', letters.most_common(2))
+
+# --- insertion order since 3.7; dict equality ignores order ---
+d1 = {'a': 1, 'b': 2}
+d2 = {'b': 2, 'a': 1}
+print('d1 == d2 (order ignored):', d1 == d2)
+print('d1 keys order:', list(d1.keys()))
+print('d2 keys order:', list(d2.keys()))
+
+# --- mutate a dict while iterating over it -> RuntimeError ---
+d3 = {'a': 1, 'b': 2, 'c': 3}
+try:
+    for key in d3:
+        if key == 'b':
+            del d3['b']
+except RuntimeError as e:
+    print('RuntimeError:', e)
+
+# Safe pattern: iterate over a snapshot of the keys
+d4 = {'a': 1, 'b': 2, 'c': 3}
+for key in list(d4):
+    if key == 'b':
+        del d4['b']
+print('safe delete result:', d4)
+
+# --- frozenset: hashable, usable as dict key or set element ---
+fs = frozenset([1, 2, 3])
+group_lookup = {fs: 'group-a'}
+print('frozenset as key:', group_lookup)
+try:
+    fs.add(4)
+except AttributeError as e:
+    print('AttributeError:', e)
+
+# --- KeyError handling: try/except vs .get vs 'in' check ---
+inventory = {'apples': 10}
+for item in ['apples', 'bananas']:
+    if item in inventory:
+        print(f'{item}: {inventory[item]}')
+    else:
+        print(f'{item}: out of stock')
+`.trim();
+
+<Playground code={dictsSetsDepthCode} />
+
+## Mental Model
+
+export const dictsSetsMentalModel = `flowchart LR
+  subgraph Dict["dict buckets (hash table)"]
+    H0["hash('alice') % n -> bucket 0"] --> KV0["'alice': 95"]
+    H1["hash('bob') % n -> bucket 1"] --> KV1["'bob': 87"]
+    H2["hash('carol') % n -> bucket 2"] --> KV2["'carol': 92"]
+  end
+  Lookup["scores['bob']"] -->|hash then compare with ==| H1`;
+
+<Mermaid code={dictsSetsMentalModel} title="dict จะ hash key เพื่อหา bucket แล้วยืนยันด้วย == — นี่คือเหตุผลที่ key ต้อง hashable และต้องมี equality ที่มีความหมาย" />
+
+## Trade-offs
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| lookup ด้วย key ใน `dict` | อ่าน/เขียนเฉลี่ย `O(1)` ไม่ว่าขนาดจะใหญ่แค่ไหน | ทุก key ต้อง hashable — ใช้ `list` เป็น key ไม่ได้ |
+| dict view (`.keys()`/`.items()`) | ไม่ copy — สะท้อน dict ที่เป็น live เสมอ | การแก้ไขขนาด dict ขณะวนซ้ำ view จะ raise `RuntimeError` |
+| `defaultdict` | ไม่ต้องเขียน `if key not in d` | การอ่านเฉย ๆ (`d[missing_key]`) จะ *สร้าง* key นั้นด้วยค่า default แบบเงียบ ๆ |
+| membership ของ `set` / `frozenset` | ตรวจ `in` เฉลี่ย `O(1)` | ไม่มีลำดับ — index ไม่ได้ ไม่รับประกันลำดับการวนซ้ำ |
+| `frozenset` เทียบกับ `set` | hashable — ใช้เป็น dict key หรือ set element ได้ | เปลี่ยนแปลงไม่ได้ — เรียก `.add()`/`.remove()` หลังสร้างไม่ได้ |
+
+## Common Misconceptions
+
+- **"`a.setdefault(k, v)` ตั้งค่าเป็น `v` เสมอ"** — ความจริง: มันตั้งค่า `v` เฉพาะเมื่อ `k` ไม่มีอยู่; ถ้า `k` มีอยู่แล้ว ค่าเดิมจะถูกเก็บไว้และคืนค่ากลับมา
+- **"`d.keys()` คือ list ที่เป็น snapshot คงที่ ณ ตอนที่เรียก"** — ความจริง: มันคือ live view — การแทรกในภายหลังลง `d` จะเห็นได้ผ่าน view object เดิม
+- **"object ใด ๆ ก็ใช้เป็น dict key ได้"** — ความจริง: มีแค่ object ที่ hashable เท่านั้น — container ที่เปลี่ยนแปลงได้ (`list` และ `tuple` ที่มีมันอยู่ข้างใน) จะ raise `TypeError`
+- **"dict ที่มี key ชุดเดียวกันแต่แทรกคนละลำดับคือ dict ที่ต่างกัน"** — ความจริง: `==` ไม่สนใจลำดับการแทรก มีแค่ลำดับการวนซ้ำเท่านั้นที่ต่างกัน
+- **"ลบ key จาก dict ขณะวนซ้ำได้ ตราบใดที่ระมัดระวัง"** — ความจริง: การเปลี่ยนขนาดของ dict ขณะวนซ้ำจะ raise `RuntimeError` เสมอ ไม่ว่าจะระวังแค่ไหน ให้วนซ้ำบน `list(d)` แทน
+
+## อ่านโค้ดที่ AI เขียน
+
+- loop ทำ `for key in some_dict:` แล้ว `del some_dict[key]` (หรือเพิ่ม key ใหม่) ข้างใน loop หรือเปล่า? นั่นคือ `RuntimeError: dictionary changed size during iteration` ที่รับประกันว่าจะเกิด — มองหา `list(some_dict)` ในบรรทัด `for` แทน
+- โค้ดใช้ `dict[key]` ที่ key อาจไม่มีอยู่ โดยไม่มี `try/except`, `.get()`, หรือการเช็ค `in` ล้อมรอบหรือเปล่า? นั่นคือ `KeyError` ที่ไม่มีการป้องกัน รอวันที่ cache miss หรือ input ผิดรูปแบบ
+- `list` หรือ `tuple` ที่มี `list` อยู่ข้างใน ถูกใช้ (หรือกำลังจะถูกใช้) เป็น dict key หรือ set element หรือเปล่า? นั่น raise `TypeError: unhashable type` ทันที
+- โค้ดสันนิษฐานว่าลำดับการวนซ้ำของ dict สะท้อน *เวลาที่ value ถูกอัปเดตล่าสุด* แทนที่จะเป็น *เวลาที่ key ถูกแทรกครั้งแรก* หรือเปล่า? การ reassign value ของ key ที่มีอยู่แล้วไม่ได้ย้ายตำแหน่งมันในลำดับการวนซ้ำ
+- `defaultdict(int)` (หรือคล้ายกัน) ถูกอ่านด้วย `d[key]` ในบริบทที่ "key นี้มีอยู่จริงหรือไม่" สำคัญหรือเปล่า? การอ่านเฉย ๆ จะสร้าง key นั้นด้วยค่า default แบบเงียบ ๆ — การอ่านนั้นไม่ได้ปราศจาก side effect
+
+<SpotTheBug code={`def purge_expired(cache, now):
+    for key, expires_at in cache.items():
+        if expires_at < now:
+            del cache[key]
+    return cache
+
+
+data = {'a': 1, 'b': 5, 'c': 2}
+print(purge_expired(data, now=3))`}>
+การลบ key ออกจาก `cache` ขณะที่ loop `for` กำลังวนซ้ำ `cache.items()` อยู่ ทำให้ขนาดของ dict เปลี่ยนกลางคัน CPython ตรวจจับสิ่งนี้และ raise `RuntimeError: dictionary changed size during iteration` — ตรวจสอบแล้วบน Python 3.14 traceback ชี้ไปที่บรรทัด `for` เอง ไม่ใช่ `del` วิธีแก้คือวนซ้ำบน snapshot ของ items แทน: `for key, expires_at in list(cache.items()):` หรือรวบรวม key ที่จะลบไว้ก่อน แล้วค่อยลบทีหลังในรอบที่สองหลัง loop จบ
+</SpotTheBug>
+
 <Callout title="dict รักษาลำดับการแทรก (3.7+); set ไม่มีลำดับ">
-ตั้งแต่ Python 3.7 `dict` รับประกันว่า `list(d.keys())` คืน key ตามลำดับที่แทรกเข้ามาครั้งแรก
-Set ไม่มีการรับประกันลำดับ — ใช้ `sorted()` เพื่อสร้างลำดับที่ทำซ้ำได้จาก set
+ตั้งแต่ Python 3.7 `dict` รับประกันว่า `list(d.keys())` คืน key ตามลำดับที่แทรกเข้ามาครั้งแรก — แต่ `==` ระหว่าง dict สองตัวไม่สนใจลำดับนั้นเลย
+Set ไม่มีการรับประกันลำดับเลย — ใช้ `sorted()` เพื่อสร้างลำดับที่ทำซ้ำได้จาก set
 สังเกตว่า `{}` ว่างเปล่าสร้าง **dict** ไม่ใช่ set
 เพื่อสร้าง set ว่างเปล่า ให้เขียน `set()`
 </Callout>
@@ -121,7 +396,8 @@ export const quizDictsSets = [
             "คืน 0",
             "คืน dict ว่างเปล่า"
         ],
-        answer: 2
+        answer: 2,
+        explain: ".get(key, default) ไม่ raise KeyError เลย — มันคืนค่า default (0 ในที่นี้) เมื่อ key ไม่มีอยู่ และไม่แก้ไข dict เลย"
     },
     {
         q: "`scores.setdefault('eve', 88)` ทำอะไรเมื่อ 'eve' มีอยู่ใน scores แล้ว?",
@@ -131,17 +407,52 @@ export const quizDictsSets = [
             "ไม่ทำอะไร — ค่าเดิมถูกเก็บไว้",
             "ลบ key"
         ],
-        answer: 2
+        answer: 2,
+        explain: "setdefault จะแทรกค่า default ที่ให้มาเฉพาะเมื่อ key ไม่มีอยู่เท่านั้น ถ้า key มีอยู่แล้ว ค่าปัจจุบันจะไม่ถูกแตะต้องและถูกคืนกลับมา"
     },
     {
-        q: "การดำเนินการ set ใดที่คืนค่า element ที่อยู่ใน ทั้งสอง set?",
-        options: ["a | b", "a & b", "a - b", "a ^ b"],
-        answer: 1
+        q: "โค้ดนี้พิมพ์อะไร?\n\nd = {'a': 1}\nview = d.keys()\nd['b'] = 2\nprint(list(view))",
+        options: [
+            "['a']",
+            "['a', 'b']",
+            "raise RuntimeError",
+            "[] — view ถูกทำให้ใช้ไม่ได้เมื่อ dict ถูกแก้ไข"
+        ],
+        answer: 1,
+        explain: "dict.keys() คืนค่าเป็น live view ไม่ใช่ snapshot ที่ freeze ไว้ มันสะท้อนสถานะปัจจุบันของ dict ทุกครั้งที่คุณดูมัน ดังนั้นการแทรก 'b' ในภายหลังจึงเห็นได้ผ่าน view object เดิม"
     },
     {
-        q: "จะสร้าง set ว่างเปล่าใน Python ได้อย่างไร?",
-        options: ["{}", "set()", "[]", "frozenset({})"],
-        answer: 1
+        q: "โค้ดนี้ raise อะไร?\n\nd = {'a': 1, 'b': 2}\nfor key in d:\n    if key == 'a':\n        del d[key]",
+        options: [
+            "ไม่มีอะไร — มันลบ 'a' แล้ว loop จบตามปกติ",
+            "KeyError: 'a'",
+            "RuntimeError: dictionary changed size during iteration",
+            "TypeError: 'dict' object does not support item deletion"
+        ],
+        answer: 2,
+        explain: "การลบ key เปลี่ยนขนาดของ dict ขณะที่ loop กำลังวนซ้ำอยู่ CPython ตรวจจับการเปลี่ยนขนาดนี้ในขั้นตอนวนซ้ำถัดไปทันที แล้ว raise RuntimeError แทนที่จะเดาว่าควรทำอะไรต่อ การวนซ้ำบน list(d) แทนจะหลีกเลี่ยงปัญหานี้ได้"
+    },
+    {
+        q: "ข้อใดใช้เป็น dict key ได้โดยไม่ raise TypeError?",
+        options: [
+            "[1, 2, 3]",
+            "(1, [2, 3])",
+            "(1, 2, 3)",
+            "{1, 2, 3}"
+        ],
+        answer: 2,
+        explain: "key ต้อง hashable tuple ธรรมดาที่มีแต่ element hashable อย่าง (1, 2, 3) นั้น hashable list ไม่มีทาง hashable ได้เลย (เพราะเปลี่ยนแปลงได้), tuple ที่มี list อยู่ข้างในก็สืบทอดความไม่ hashable นั้นมา และ set (ต่างจาก frozenset) ก็เปลี่ยนแปลงได้และไม่ hashable เช่นกัน"
+    },
+    {
+        q: "`{'a': 1, 'b': 2} == {'b': 2, 'a': 1}` ได้ผลลัพธ์เป็นอะไร?",
+        options: [
+            "False — key ถูกแทรกคนละลำดับกัน",
+            "True — dict equality เทียบ key และ value ไม่ใช่ลำดับการแทรก",
+            "raise TypeError — dict เทียบด้วย == ไม่ได้",
+            "True ก็ต่อเมื่อ dict ทั้งสองวนซ้ำในลำดับเดียวกันด้วย"
+        ],
+        answer: 1,
+        explain: "dict รักษาลำดับการแทรกไว้เพื่อการวนซ้ำ แต่ == จะตรวจว่า dict ทั้งสองมี key-value pair ชุดเดียวกันหรือไม่ ไม่ว่าจะแทรกลำดับไหน dict ทั้งสองในที่นี้มีเนื้อหาเหมือนกันทุกประการ จึง == กัน"
     }
 ];
 

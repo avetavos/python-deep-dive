@@ -9,11 +9,13 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## A guided tour of essential stdlib modules
 
 The Python standard library is large, but a handful of modules appear in almost every serious codebase.
-This lesson gives you a runnable introduction to five of them: `collections`, `itertools`, `datetime`, `json`, and `pathlib`.
+This lesson gives you a runnable introduction to five of them: `collections`, `itertools`, `datetime`, `json`, and `pathlib` — plus `functools`, `decimal`, `enum`, `secrets`, and `subprocess`.
 
 ---
 
@@ -56,11 +58,15 @@ print(p.x, p.y)   # 3 4
 **`chain`** flattens multiple iterables into one stream.
 **`islice`** lazily slices any iterator.
 **`groupby`** groups consecutive equal-key elements — the input *must be sorted* by the same key first.
+**`accumulate`** yields running totals (or any running binary operation). **`pairwise`** yields consecutive overlapping pairs. **`compress`** filters one iterable by a parallel boolean iterable.
 
 ```python
 import itertools
 list(itertools.chain([1, 2], [3, 4]))          # [1, 2, 3, 4]
 list(itertools.islice(range(100), 5))          # [0, 1, 2, 3, 4]
+list(itertools.accumulate([1, 2, 3, 4]))       # [1, 3, 6, 10]
+list(itertools.pairwise([1, 2, 3, 4]))         # [(1, 2), (2, 3), (3, 4)]
+list(itertools.compress("ABCDEF", [1, 0, 1, 0, 1, 1]))  # ['A', 'C', 'E', 'F']
 ```
 
 ---
@@ -95,22 +101,71 @@ print("chained:", merged)
 data = [("a", 1), ("a", 2), ("b", 3), ("b", 4)]
 for key, group in itertools.groupby(data, key=lambda t: t[0]):
     print(key, list(group))
+
+# --- accumulate / pairwise / compress ---
+print("running totals:", list(itertools.accumulate([1, 2, 3, 4])))
+print("pairwise:", list(itertools.pairwise([1, 2, 3, 4])))
+print("compressed:", list(itertools.compress("ABCDEF", [1, 0, 1, 0, 1, 1])))
 `.trim();
 
 <Playground code={collIterCode} />
 
 ---
 
-## `datetime` — dates, times, and arithmetic
+## `datetime` — aware vs naive, and why the difference matters
 
-The `datetime` module handles dates, times, and the arithmetic between them.
-`datetime.datetime` objects are immutable; operations like adding a `timedelta` return a new object.
+A `datetime` is either **naive** (no timezone attached — just numbers, ambiguous about what moment in time they mean) or **aware** (`tzinfo` is set — an unambiguous point in time). Mixing the two raises `TypeError`, on purpose:
+
+```python
+import datetime as dt
+
+naive = dt.datetime(2026, 9, 22, 10, 0, 0)
+aware = dt.datetime(2026, 9, 22, 10, 0, 0, tzinfo=dt.timezone.utc)
+print(naive.tzinfo, aware.tzinfo)   # None UTC
+
+naive - aware
+# TypeError: can't subtract offset-naive and offset-aware datetimes
+```
+
+`datetime.now()` with no argument returns a **naive local** time — a frequent source of bugs when that value is stored, compared, or sent to another timezone. Always pass a timezone:
+
+```python
+now_utc = dt.datetime.now(dt.timezone.utc)   # aware, unambiguous
+```
+
+`datetime.utcnow()` looks like the fix but isn't — it returns a **naive** datetime that happens to hold UTC numbers, and is deprecated:
+
+```python
+import warnings
+warnings.simplefilter("always")
+dt.datetime.utcnow()
+# DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled
+# for removal in a future version. Use timezone-aware objects to represent
+# datetimes in UTC: datetime.datetime.now(datetime.UTC).
+```
+
+For real timezones (not just a fixed UTC offset — actual DST rules, actual regions), use `zoneinfo` (stdlib since 3.9):
+
+```python
+from zoneinfo import ZoneInfo
+
+bkk = dt.datetime(2026, 9, 22, 10, 0, tzinfo=ZoneInfo("Asia/Bangkok"))
+print(bkk, "-> utc:", bkk.astimezone(dt.timezone.utc))
+# 2026-09-22 10:00:00+07:00 -> utc: 2026-09-22 03:00:00+00:00
+```
+
+`datetime.fromisoformat` parses the ISO 8601 strings that JSON APIs, logs, and databases actually produce, offset included:
+
+```python
+dt.datetime.fromisoformat("2026-09-22T10:00:00+07:00")
+# datetime.datetime(2026, 9, 22, 10, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=25200)))
+```
 
 The demo below uses a **fixed date** so the output is always deterministic — a good habit when writing examples or tests.
 
 ---
 
-## `json` — serialisation and deserialisation
+## `json` — serialisation, `default=`, and precision
 
 `json.dumps` converts a Python object to a JSON string; `json.loads` parses it back.
 The `separators` argument lets you strip whitespace for compact output.
@@ -119,6 +174,37 @@ The `separators` argument lets you strip whitespace for compact output.
 import json
 s = json.dumps({"key": "value"}, separators=(",", ":"))
 # '{"key":"value"}'
+```
+
+`json` only knows a fixed set of Python types out of the box — a `Decimal` (the right type for money, see below) raises `TypeError` unless you supply `default=`, a fallback called for anything it doesn't recognise:
+
+```python
+from dataclasses import dataclass, asdict
+from decimal import Decimal
+
+@dataclass
+class Order:
+    id: int
+    total: Decimal
+
+o = Order(1, Decimal("19.99"))
+json.dumps(asdict(o))
+# TypeError: Object of type Decimal is not JSON serializable
+
+def default(obj):
+    if isinstance(obj, Decimal):
+        return str(obj)
+    raise TypeError(f"not serializable: {type(obj)}")
+
+json.dumps(asdict(o), default=default)
+# '{"id": 1, "total": "19.99"}'
+```
+
+`ensure_ascii=True` (the default) escapes every non-ASCII character to a `\uXXXX` sequence — safe everywhere, but unreadable for non-English text. Set it to `False` when you know the consumer handles UTF-8:
+
+```python
+json.dumps({"city": "กรุงเทพ"})                    # '{"city": "\\u0e01\\u0e23..."}'
+json.dumps({"city": "กรุงเทพ"}, ensure_ascii=False)  # '{"city": "กรุงเทพ"}'
 ```
 
 ---
@@ -135,15 +221,78 @@ print("pi day:", dt.strftime("%Y-%m-%d %H:%M:%S"))
 delta = datetime.timedelta(days=10)
 print("plus 10 days:", (dt + delta).date())
 
+# aware vs naive
+aware = dt.replace(tzinfo=datetime.timezone.utc)
+print("naive tzinfo:", dt.tzinfo, "| aware tzinfo:", aware.tzinfo)
+try:
+    dt - aware
+except TypeError as e:
+    print("TypeError:", e)
+
 # json round-trip
 obj = {"name": "Python", "versions": [3, 10, 11]}
 s = json.dumps(obj, separators=(",", ":"))
 print("serialized:", s)
 back = json.loads(s)
 print("name:", back["name"], "| latest:", back["versions"][-1])
+
+# ensure_ascii
+print(json.dumps({"note": "café"}))
+print(json.dumps({"note": "café"}, ensure_ascii=False))
 `.trim();
 
 <Playground code={dtJsonCode} />
+
+---
+
+## `functools` — `lru_cache`, `partial`, `reduce`, `singledispatch`
+
+```python
+from functools import lru_cache, partial, reduce, singledispatch
+
+@lru_cache(maxsize=128)
+def fib(n: int) -> int:
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+fib(30)                # 832040 -- cached after the first call
+fib.cache_info()        # CacheInfo(hits=28, misses=31, maxsize=128, currsize=31)
+```
+
+`lru_cache` needs every argument to be **hashable** — an AI-generated cache decorator on a function that takes a `list` fails at call time, not at decoration time:
+
+```python
+@lru_cache
+def total(items: list) -> int:
+    return sum(items)
+
+total([1, 2, 3])
+# TypeError: unhashable type: 'list'
+```
+
+`partial` freezes some arguments of a callable, producing a new one with fewer parameters — useful for adapting a function to an API that calls it with a fixed shape. `reduce` folds an iterable down to one value with a binary function. `singledispatch` picks an implementation based on the type of the first argument — a lightweight alternative to a chain of `isinstance` checks:
+
+```python
+add3 = partial(lambda a, b, c: a + b + c, 1, 2)
+add3(3)   # 6
+
+reduce(lambda acc, x: acc + x, [1, 2, 3, 4], 0)   # 10
+
+@singledispatch
+def describe(x):
+    return f"generic: {x!r}"
+
+@describe.register
+def _(x: int):
+    return f"int: {x}"
+
+@describe.register
+def _(x: str):
+    return f"str: {x!r}"
+
+describe(5)      # 'int: 5'
+describe("hi")   # "str: 'hi'"
+describe(3.14)   # 'generic: 3.14'
+```
 
 ---
 
@@ -165,7 +314,116 @@ config  = project / "config.toml"
 print(config)
 ```
 
+`open()` without `encoding=` inherits the platform's default text encoding — `UTF-8` on most Linux/macOS setups today, but historically `cp1252` on Windows. Always pass `encoding="utf-8"` explicitly so the same code behaves identically everywhere, including when the content has non-ASCII text:
+
+```python
+p = Path("notes.txt")
+p.write_text("สวัสดี\n", encoding="utf-8")
+with open(p, encoding="utf-8") as f:
+    print(repr(f.read()))   # 'สวัสดี\n'
+```
+
 > `pathlib` manipulates filesystem paths — run this locally; the browser sandbox has no real filesystem.
+
+---
+
+## `subprocess` — running other programs safely
+
+`subprocess.run` with `check=True` raises `CalledProcessError` on a non-zero exit code instead of silently continuing; `capture_output=True` collects stdout/stderr instead of dumping to the terminal; `timeout=` prevents a hung child process from hanging your program forever.
+
+```python
+import subprocess
+
+result = subprocess.run(
+    ["echo", "hello"], check=True, capture_output=True, text=True, timeout=5
+)
+print(result.stdout.strip())   # 'hello'
+
+subprocess.run(["false"], check=True, capture_output=True, text=True)
+# subprocess.CalledProcessError: Command '['false']' returned non-zero exit status 1.
+
+subprocess.run(["sleep", "5"], timeout=0.2)
+# subprocess.TimeoutExpired: Command '['sleep', '5']' timed out after 0.2 seconds
+```
+
+`shell=True` with any untrusted string is a command-injection vulnerability — the whole string is handed to the system shell, `;`, `&&`, and backticks included:
+
+```python
+user_filename = "notes.txt; echo INJECTED"
+subprocess.run(f"ls {user_filename}", shell=True)
+# real output includes a line "INJECTED" -- the shell ran a second command
+```
+
+The fix is to pass a list (no shell involved, no metacharacter interpretation) and let `subprocess` handle quoting:
+
+```python
+subprocess.run(["ls", user_filename])  # looks for a literal file named
+                                        # "notes.txt; echo INJECTED" -- not found, no injection
+```
+
+> `subprocess` spawns real OS processes — run this locally; there is no process model in the browser sandbox.
+
+---
+
+## `secrets` vs `random`
+
+`random` is a fast, **reproducible** (seedable) pseudo-random generator — perfect for simulations, games, and shuffling test data, and completely unsuitable for anything security-related, because its state can be recovered from enough output. `secrets` uses the OS's cryptographically secure source and has no seeding at all:
+
+```python
+import random, secrets
+
+random.seed(0)
+random.randint(1, 100)      # 50 -- reproducible given the same seed, by design
+secrets.token_hex(8)        # e.g. 'e1535f914b8e7eb4' -- cryptographically unpredictable
+secrets.choice(["a", "b", "c"])
+```
+
+Use `secrets` for tokens, password reset links, API keys, and session IDs — never `random`.
+
+---
+
+## `decimal` — exact arithmetic for money
+
+Floating-point `float` cannot represent most decimal fractions exactly, which is disastrous for money:
+
+```python
+print(0.1 + 0.2)                              # 0.30000000000000004
+
+from decimal import Decimal
+print(Decimal("0.1") + Decimal("0.2"))        # 0.3
+print(Decimal("19.99") * 3)                   # 59.97
+```
+
+Always construct a `Decimal` from a **string** (`Decimal("0.1")`), never from a `float` (`Decimal(0.1)`) — the latter faithfully reproduces the float's own imprecision instead of fixing it.
+
+---
+
+## `enum` — named constants that are actually a type
+
+A raw string or int for a status code accepts any value, typo included; an `Enum` is a closed, type-checked set of named values.
+
+```python
+from enum import Enum, auto, IntFlag
+
+class Status(Enum):
+    PENDING = auto()
+    SHIPPED = auto()
+    DELIVERED = auto()
+
+print(Status.SHIPPED)              # Status.SHIPPED
+print(Status.SHIPPED.name, Status.SHIPPED.value)  # SHIPPED 2
+print(Status.SHIPPED == Status.SHIPPED)            # True
+
+class Perm(IntFlag):
+    READ = 1
+    WRITE = 2
+    EXEC = 4
+
+p = Perm.READ | Perm.WRITE
+print(p, Perm.READ in p, Perm.EXEC in p)    # Perm.READ|WRITE True False
+```
+
+`IntFlag` supports bitwise combination directly, which makes it the right tool for permission sets; a plain `Enum` does not support `|` between members.
 
 ---
 
@@ -217,9 +475,61 @@ print(to_2dp(3.14159))
 
 <Callout title="Reach for stdlib before adding a dependency">
 Every module on this page ships with Python — no `pip install` required.
-Before adding a third-party library, ask whether `collections`, `itertools`, `datetime`, `json`, or `pathlib` already solves the problem.
+Before adding a third-party library, ask whether `collections`, `itertools`, `datetime`, `json`, `pathlib`, `functools`, `decimal`, `enum`, or `secrets` already solves the problem.
 They are faster to import, zero-dependency, and battle-tested across every Python version you are likely to target.
 </Callout>
+
+## Mental Model
+
+<Mermaid code={`flowchart LR
+  Naive["naive datetime -- no tzinfo, ambiguous"] -->|"tzinfo=timezone.utc"| Aware["aware datetime -- unambiguous point in time"]
+  Naive -.->|"naive - aware"| Err["TypeError: can't mix naive and aware"]
+  Aware -->|".astimezone(tz)"| Other["same instant, different tzinfo"]
+  Str["ISO 8601 string"] -->|"fromisoformat()"| Aware`} title="datetime: naive vs aware is a type-level distinction, not just a missing field" />
+
+`datetime.now()` and `datetime.utcnow()` both return **naive** objects — the only difference is which wall-clock numbers they contain. Neither carries timezone information, so neither can be safely compared, subtracted from, or converted relative to an aware datetime; Python raises `TypeError` rather than silently guessing. The fix is always the same: attach a `tzinfo` at the point a `datetime` is created (`datetime.now(timezone.utc)`, or `ZoneInfo(...)` for a real region), and keep it aware from then on.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| `namedtuple` / `Counter` / `defaultdict` | Zero-dependency, fast, battle-tested | Less flexible than a full class when behaviour (methods) is needed |
+| Aware `datetime` everywhere | No ambiguity, safe comparisons across timezones | One extra argument at every construction site; easy to forget |
+| `Decimal` for money | Exact decimal arithmetic, no float rounding surprises | Slower than `float`, and arithmetic with `float` raises `TypeError` |
+| `secrets` over `random` | Cryptographically safe tokens | Not seedable — you lose reproducibility, which is the point |
+| `subprocess.run([...])` over `shell=True` | No shell-injection surface | Loses shell features (pipes, globs) you'd have to reimplement in Python |
+| `lru_cache` | Free memoization, one decorator | Every argument must be hashable; unbounded `maxsize=None` can leak memory |
+
+## Common Misconceptions
+
+- **`datetime.now()` gives you "the current UTC time".** It gives naive **local** time with no timezone attached at all — neither UTC nor local in a way Python can verify. Use `datetime.now(timezone.utc)`.
+- **`datetime.utcnow()` is the "UTC-safe" version of `now()`.** It returns UTC numbers but as a **naive** object — indistinguishable from any other naive datetime, and deprecated since 3.12 for exactly this reason.
+- **`subprocess.run(cmd, shell=True)` is fine as long as `cmd` "looks like" a simple command.** Any string built from user or external input handed to `shell=True` is a command-injection vector the moment it contains `;`, `&&`, backticks, or `$(...)`.
+- **`random.choice` is fine for generating a password reset token.** `random`'s output is reproducible from its internal state; `secrets` exists precisely because "random-looking" and "cryptographically unpredictable" are different properties.
+- **`0.1 + 0.2 == 0.3` in Python, because Python is a "precise" language.** Python's `float` is IEEE-754 double precision, the same binary floating point every mainstream language uses — the same imprecision applies. `Decimal` (constructed from strings) is the fix, not a different Python.
+
+## Reading AI-generated code
+
+Before trusting generated code using these modules, check for:
+
+- `datetime.now()` or `datetime.utcnow()` used anywhere a timestamp is stored, compared, or sent across a timezone boundary — both return naive objects; `datetime.now(timezone.utc)` is almost always what was meant.
+- `subprocess.run(cmd, shell=True)` where any part of `cmd` comes from user input, a config file, or another service — a real command-injection path, not a theoretical one.
+- `open(path)` with no `encoding=` argument — works on the author's machine, breaks the moment the file has non-ASCII content on a platform with a different default encoding.
+- `float` used for a price, balance, or any monetary total — `Decimal` constructed from a string is the correct type.
+- `random` used to generate anything that must be unguessable (tokens, temporary passwords, session IDs) — that's what `secrets` is for.
+
+<SpotTheBug code={`import subprocess
+from pathlib import Path
+
+
+def export_report(filename: str, content: str) -> None:
+    report_path = Path("/tmp/reports") / filename
+    with open(report_path, "w") as f:
+        f.write(content)
+    # Compress the report using the user-supplied filename
+    subprocess.run(f"gzip /tmp/reports/{filename}", shell=True)`} lang="python">
+Two bugs: `open(report_path, "w")` has no `encoding=`, so behavior depends on the platform's default text encoding for any non-ASCII `content`. Worse, `subprocess.run(f"gzip /tmp/reports/{filename}", shell=True)` builds a shell command string directly from `filename` — a caller passing `filename="report.txt; rm -rf /tmp/reports"` gets that second command executed by the shell. Verified: `subprocess.run("ls notes.txt; echo INJECTED", shell=True)` really does print `INJECTED`, proving the shell interprets `;` as a command separator. Fix both: `open(report_path, "w", encoding="utf-8")`, and `subprocess.run(["gzip", str(report_path)])` — a list, no shell, no injection.
+</SpotTheBug>
 
 export const quizStdlibTour = [
     {
@@ -230,7 +540,8 @@ export const quizStdlibTour = [
             "Counter({1: 'a', 2: 'b'})",
             "{'a': 1, 'b': 1}"
         ],
-        answer: 0
+        answer: 0,
+        explain: "Counter's repr always shows the class name, e.g. Counter({'a': 2, 'b': 1}) -- verified on 3.14. Counting 'aab' gives 2 'a' and 1 'b', printed most-common-first."
     },
     {
         q: "Why must data be sorted before passing to `itertools.groupby`?",
@@ -240,7 +551,8 @@ export const quizStdlibTour = [
             "groupby is faster on sorted data",
             "Python dicts are unordered"
         ],
-        answer: 1
+        answer: 1,
+        explain: "groupby scans linearly and starts a new group every time the key changes -- it never looks ahead. Unsorted input silently produces multiple small groups for the same key instead of one, with no error raised."
     },
     {
         q: "Which `datetime` method formats a date as a string?",
@@ -250,7 +562,52 @@ export const quizStdlibTour = [
             "datetime.strftime(format_string)",
             "str(datetime)"
         ],
-        answer: 2
+        answer: 2,
+        explain: "strftime takes a format string (e.g. '%Y-%m-%d') for custom output. isoformat() is a real method too, but it only produces the fixed ISO 8601 shape, not arbitrary formats."
+    },
+    {
+        q: "```python\nimport datetime as dt\nnaive = dt.datetime(2026, 9, 22, 10, 0)\naware = dt.datetime(2026, 9, 22, 10, 0, tzinfo=dt.timezone.utc)\nnaive - aware\n```\nWhat happens?",
+        options: [
+            "Returns a timedelta of 0",
+            "TypeError -- can't subtract offset-naive and offset-aware datetimes",
+            "Silently treats naive as UTC and returns a valid result",
+            "Raises ValueError"
+        ],
+        answer: 1,
+        explain: "Python refuses to guess whether a naive datetime means UTC or local time, so comparing or subtracting a naive and an aware datetime always raises TypeError. Verified message: \"can't subtract offset-naive and offset-aware datetimes\".",
+    },
+    {
+        q: "```python\nimport subprocess\nfilename = \"notes.txt; echo INJECTED\"\nsubprocess.run(f\"ls {filename}\", shell=True)\n```\nWhat does the real output include?",
+        options: [
+            "Only an error that notes.txt was not found",
+            "A line reading INJECTED -- the shell executed the second command after the semicolon",
+            "Nothing -- shell=True escapes special characters automatically",
+            "A SyntaxError before the subprocess even runs"
+        ],
+        answer: 1,
+        explain: "shell=True hands the whole string to the system shell, which treats ';' as a command separator. Verified: running this actually prints 'INJECTED' -- the classic shell-injection vulnerability when any part of the command string comes from untrusted input.",
+    },
+    {
+        q: "Why use `Decimal(\"0.1\")` instead of `Decimal(0.1)`?",
+        options: [
+            "There's no difference -- both give an exact 0.1",
+            "Decimal(0.1) faithfully reproduces float 0.1's own binary-fraction imprecision; Decimal(\"0.1\") parses the exact decimal value",
+            "Decimal(0.1) raises TypeError",
+            "Decimal(\"0.1\") is slower"
+        ],
+        answer: 1,
+        explain: "A float literal 0.1 is already an imprecise binary approximation before Decimal ever sees it -- constructing from the float just captures that same imprecision exactly. Constructing from the string \"0.1\" parses the decimal value directly, with no float round-trip.",
+    },
+    {
+        q: "Why is `secrets.token_hex()` preferred over `random.getrandbits()` for a password-reset token?",
+        options: [
+            "secrets is faster",
+            "random is seedable and its output can be reproduced/predicted from its internal state; secrets uses an OS-level cryptographically secure source",
+            "There's no real difference, it's just a naming convention",
+            "secrets produces longer tokens"
+        ],
+        answer: 1,
+        explain: "random.seed(0) makes every future random.* call in that process deterministic -- fine for simulations, unacceptable for anything an attacker could exploit by predicting the value. secrets never accepts a seed and draws from the OS's CSPRNG.",
     }
 ];
 

@@ -1,6 +1,6 @@
 ---
 title: Variables & Types
-description: 'Dynamic typing, built-in scalar types, type(), conversions, and truthiness in Python.'
+description: 'Dynamic typing, names vs objects, is vs ==, mutability, truthiness, and floating-point precision in Python.'
 sidebar:
   order: 2
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Variables and dynamic typing
 
@@ -24,6 +26,51 @@ x = [1, 2, 3]   # x now references a list
 This is called **dynamic typing**.
 The type travels with the object, not the variable name.
 
+## Names bind to objects
+
+A Python name is not a box that holds a value — it is a **label tied to an object**.
+`=` never copies; it only makes a name point at an object that already exists (or was just created).
+If two names point at the same *mutable* object, a mutation through one name is visible through the other:
+
+```python
+a = [1, 2]
+b = a          # b is bound to the SAME object as a, not a copy
+b.append(3)
+print(a)       # [1, 2, 3] -- mutating through b also changes what a sees
+print(a is b)  # True -- same object, two names
+
+c = a.copy()   # a new, independent object with equal contents
+c.append(99)
+print(a)       # [1, 2, 3] -- unaffected by mutating c
+print(a is c)  # False
+```
+
+`id(obj)` returns a number that is unique to an object for its lifetime (in CPython, its memory address).
+Two names refer to the same object exactly when `id(a) == id(b)` — which is exactly what `a is b` checks for you.
+This is the single most common bug shape in code that "worked in testing": a function receives a list, mutates it in place assuming it owns a private copy, and the caller's list changes too.
+
+## Identity vs equality: `is` and `==`
+
+`==` asks "do these two objects have the same value?" (it calls `__eq__`).
+`is` asks "are these two names bound to the *exact same object*?" (it compares `id()`).
+For small integers and some literals, CPython's implementation details make `is` *look* like it also checks value — right up until it doesn't:
+
+```python
+small1 = 100
+small2 = 100
+print(small1 is small2)   # True -- CPython caches small ints -5..256
+
+big1 = 257
+big2 = 257
+print(big1 is big2)       # True -- literal 257 folded to one constant in this file
+
+big3 = int("257")
+big4 = int("257")
+print(big3 is big4)       # False -- built at runtime, two separate objects
+```
+
+`big1 is big2` prints `True` here because both `257` literals live in the same compiled code and the compiler deduplicated the constant — a detail of *this* file, not a guarantee of the language. The moment the same value is produced by a computation (`int("257")`, a sum, a value read from a file), it is a fresh object and `is` returns `False`. Never use `is` to compare values — use `==`. Reserve `is` for identity checks that are meant to be identity checks: `x is None`, `x is True`, `x is some_specific_object`.
+
 ## Built-in scalar types
 
 Python ships with four scalar types you will use in every program:
@@ -38,6 +85,22 @@ Python ships with four scalar types you will use in every program:
 There is also `None` — a singleton that represents the absence of a value.
 `None` has its own type, `NoneType`, and there is exactly one `None` object in the entire Python process.
 Always test for it with `is None`, never `== None`.
+
+## Mutability
+
+Whether an object can change *in place* after creation — without becoming a different object — is called mutability. This is independent of variable names: it is a property of the object itself.
+
+| Type | Mutable? | Note |
+|---|---|---|
+| `int`, `float`, `bool`, `complex` | No | Any "change" creates a new object |
+| `str` | No | Every string method returns a new string |
+| `tuple` | No | The tuple's slots can't be reassigned — but an element that is itself mutable (a `list` inside a `tuple`) can still change |
+| `frozenset` | No | The immutable sibling of `set` |
+| `list` | Yes | `.append`, `.sort`, slice assignment all mutate in place |
+| `dict` | Yes | Keys and values can be added, changed, removed |
+| `set` | Yes | Elements can be added or removed |
+
+Aliasing (two names, one object) only causes surprises for **mutable** types. Aliasing an `int` or a `str` is harmless — there is no operation that changes a string or an int in place, so every name bound to it will only ever see the value it was created with.
 
 ## Checking types at runtime
 
@@ -86,6 +149,64 @@ else:
     print("name is empty")   # this branch runs
 ```
 
+That list is exactly the trap: `0`, `""`, and `[]` are **valid, present values** that happen to be falsy — they are not the same thing as "no value was given." `if x:` cannot tell "the caller passed 0" apart from "the caller passed nothing." Whenever `0`, `""`, or `[]` are meaningful inputs, check identity against `None` instead of truthiness:
+
+```python
+def set_volume(vol=None):
+    if vol:              # BUG: 0 (mute) is falsy
+        return vol
+    return 50
+
+print(set_volume(0))     # 50 -- wrong: mute (0) silently became the default
+
+def set_volume_fixed(vol=None):
+    if vol is not None:  # checks "was something given", not "is it truthy"
+        return vol
+    return 50
+
+print(set_volume_fixed(0))  # 0 -- correct
+```
+
+## Floating-point precision
+
+`float` is IEEE 754 double precision — a fixed number of binary bits, which cannot represent most decimal fractions exactly. This is not a Python bug; every language with binary floats has it.
+
+```python
+import math
+from decimal import Decimal
+
+print(0.1 + 0.2)                       # 0.30000000000000004
+print(0.1 + 0.2 == 0.3)                # False
+print(math.isclose(0.1 + 0.2, 0.3))    # True
+print(Decimal("0.1") + Decimal("0.2")) # 0.3
+```
+
+Never compare floats with `==` unless you constructed both sides from the exact same literal/computation. Use `math.isclose(a, b)` for general comparisons, or switch to `decimal.Decimal` (constructed from strings, not floats) when you need exact decimal arithmetic — money is the canonical example.
+
+## Shadowing a builtin
+
+`list`, `str`, `dict`, `type`, `id`, `input`, `sum`, and every other builtin are just names in the built-in scope — nothing stops you from rebinding one:
+
+```python
+items = [1, 2, 3]
+list = items          # shadows the builtin `list` type in this scope
+print(list([4, 5]))   # TypeError: 'list' object is not callable
+```
+
+Once `list` is rebound, the name no longer refers to the builtin type anywhere later in that scope — calling `list(...)` now tries to call the object stored in `list` (a plain list, not callable) instead of constructing a new list. The fix is simply never using a builtin's name for a variable; `del list` also removes the shadow, but renaming the variable is the real fix.
+
+## `bool` is a subclass of `int`
+
+`True` and `False` are not a separate primitive type bolted onto Python — `bool` is a subclass of `int`, and `True`/`False` behave as `1`/`0` in every numeric context:
+
+```python
+print(True + True)            # 2
+print(isinstance(True, int))  # True
+print(True == 1)              # True
+```
+
+This is why `sum([True, True, False])` is a perfectly normal (if surprising the first time) way to count how many items in a list of booleans are `True` — it evaluates to `2`.
+
 ## Full runnable demo
 
 export const variablesTypesCode = `
@@ -113,6 +234,131 @@ for v in falsy_values:
 
 <Playground code={variablesTypesCode} />
 
+The second playground below is a self-contained tour of everything on this page that can silently go wrong: aliasing, `is` vs `==`, truthiness, float precision, shadowing, and `bool` arithmetic.
+
+export const variablesDepthCode = `
+import math
+from decimal import Decimal
+
+# 1. Names bind to objects; assignment never copies.
+a = [1, 2]
+b = a  # b is bound to the SAME list object, not a copy
+b.append(3)
+print("a:", a)
+print("a is b:", a is b)
+c = a.copy()  # an independent object with an equal value
+c.append(99)
+print("a after c mutated:", a)
+print("a == c:", a == c, "| a is c:", a is c)
+
+# 2. is vs ==: small-int cache and same-file constant folding make "is"
+# LOOK like a value comparison... until the value is built at runtime.
+small1 = 100
+small2 = 100
+print("100 is 100 (cached -5..256):", small1 is small2)
+
+big1 = 257
+big2 = 257
+print("257 is 257 (literals, same file):", big1 is big2)
+
+big3 = int("257")
+big4 = int("257")
+print("int('257') is int('257'):", big3 is big4)
+
+# 3. Truthiness: 0 / "" / [] are valid values, not "missing".
+def set_volume(vol=None):
+    if vol:  # BUG: a real 0 (mute) is falsy, so it falls through to the default
+        return vol
+    return 50  # default volume
+
+print("set_volume(0), buggy:", set_volume(0))
+
+def set_volume_fixed(vol=None):
+    if vol is not None:
+        return vol
+    return 50
+
+print("set_volume(0), fixed:", set_volume_fixed(0))
+
+# 4. Float precision.
+print("0.1 + 0.2 ==", 0.1 + 0.2)
+print("0.1 + 0.2 == 0.3:", 0.1 + 0.2 == 0.3)
+print("isclose:", math.isclose(0.1 + 0.2, 0.3))
+print("Decimal:", Decimal("0.1") + Decimal("0.2"))
+
+# 5. Shadowing a builtin.
+items = [1, 2, 3]
+list = items  # shadows the builtin list type in this scope
+print("list (shadowed name):", list)
+try:
+    list([4, 5])
+except TypeError as e:
+    print(f"list([4, 5]) -> TypeError: {e}")
+del list  # remove the shadow; the builtin is visible again
+print("list([4, 5]) after del:", list([4, 5]))
+
+# 6. bool is a subclass of int.
+one = 1
+print("True + True ==", True + True)
+print("isinstance(True, int):", isinstance(True, int))
+print("True == 1:", True == 1, "| True is one:", True is one)
+`.trim();
+
+<Playground code={variablesDepthCode} />
+
+## Mental Model
+
+Think of a name as a label tied to an object with a piece of string, not a box that stores a value. `a = [1, 2]` ties the label `a` to a list object. `b = a` ties a second label `b` to *that same object* — no new object is created. `b.append(3)` writes into the object; both labels still see the change, because they point at the same thing. `c = a.copy()` creates a brand-new object with equal contents and ties `c` to it — from then on the two objects change independently.
+
+<Mermaid code={namesDiagram} title="a and b label the same list object; c labels an independent copy" />
+
+export const namesDiagram = `flowchart LR
+  subgraph Names
+    aL["a"]
+    bL["b"]
+    cL["c"]
+  end
+  obj1(["list object #1: [1, 2, 3]"])
+  obj2(["list object #2: [1, 2, 99]"])
+  aL --> obj1
+  bL --> obj1
+  cL --> obj2`;
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Dynamic typing | No type declarations; fast prototyping; flexible containers | Type errors surface at runtime instead of before the program runs |
+| Assignment binds, never copies | O(1) regardless of object size — passing large data around is free | Aliasing bugs: mutating through one name mutates every name bound to that object |
+| `is` identity check | O(1), never calls `__eq__` | Looks like it works for small ints and same-file literals, then silently breaks for larger or runtime-built values |
+| Truthy/falsy coercion in `if` | Concise conditionals (`if items:`) | Valid values (`0`, `""`, `[]`) collapse into the same branch as "missing" |
+| Arbitrary-precision `int` | No silent integer overflow, ever | `float` still has only 53 bits of precision — `0.1 + 0.2 != 0.3` |
+
+## Common Misconceptions
+
+- **"`=` copies the value, like it does in some other languages."** It does not — `=` binds a name to an object. For mutable objects, two names can end up referring to the very same one.
+- **"`is` and `==` are interchangeable for numbers and strings."** They often agree by implementation accident (the small-int cache, literal folding) until a value falls outside that range or is built at runtime.
+- **"`0` means the same thing as `None`."** `0`, `""`, and `[]` are legitimate values that happen to be falsy; `None` is the actual "no value" sentinel.
+- **"`0.1 + 0.2 == 0.3` because that's basic arithmetic."** Binary floating point cannot represent `0.1` or `0.2` exactly; use `math.isclose` or `Decimal` when exactness matters.
+- **"Reassigning a builtin name like `list` is harmless if I don't use it again nearby."** It shadows the builtin for the rest of that scope — any later call to `list(...)` in the same scope breaks.
+
+## Reading AI-generated code
+
+- Does the code compare to `None` with `==` instead of `is`? `if value == None:` works by accident (`NoneType.__eq__` happens to agree) but `is None` is the correct, idiomatic check.
+- Does a variable reuse a builtin's name (`list`, `str`, `type`, `id`, `dict`, `input`, `sum`, ...)? If so, check whether that builtin is called anywhere later in the same scope.
+- Does `if value:` need to accept `0`, `""`, or `[]` as a real, valid input? If so it should be `if value is not None:`.
+- Does the code compare two `int` or `str` values with `is` instead of `==`? Only identity checks (`is None`, `is True`, `is some_sentinel`) should use `is`.
+- Does the code compare floats with `==` directly, instead of `math.isclose` or `Decimal`?
+- Does a function receive a mutable argument (a `list` or `dict`) and mutate it in place without the caller clearly expecting that?
+
+<SpotTheBug code={`def process(data):
+    list = get_items(data)   # shadows the builtin list
+    if list == None:         # should be "is None"
+        return []
+    return list`} lang="python">
+Two bugs stacked in four lines. First, `list = get_items(data)` shadows the builtin `list` type inside this function — if `process` ever needs to call `list(...)` later, it will fail with `TypeError: 'list' object is not callable` (or silently do the wrong thing if `get_items` can return something callable). Second, `if list == None:` relies on `__eq__` agreeing with identity, which works for `None` today but is not the idiomatic or guaranteed-safe check; the correct form is `if list is None:`. Fix: rename the variable (`items = get_items(data)`) and use `is None`.
+</SpotTheBug>
+
 <Callout title="Everything is an object">
 In Python, `42` is not a primitive — it is an instance of the `int` class.
 That means it has methods: `(42).bit_length()` returns `6`.
@@ -122,34 +368,65 @@ This is why `True + True` evaluates to `2`.
 
 export const quizVariablesTypes = [
   {
-    q: "What is dynamic typing in Python?",
+    q: "```python\na = [1, 2]\nb = a\nb.append(3)\nprint(a)\n```\nWhat does this print?",
     options: [
-      "Variables must be declared with a type before use",
-      "The type is determined by the object a variable references, not by declaration",
-      "All variables are automatically converted to strings",
-      "Type checking happens at compile time"
+      "[1, 2]",
+      "[1, 2, 3]",
+      "A TypeError, because a is immutable",
+      "[3]"
     ],
-    answer: 1
+    answer: 1,
+    explain: "b = a binds b to the same list object as a — no copy is made. Mutating through b (append) mutates the one shared object, so a shows the change too."
   },
   {
-    q: "Which of the following is falsy in Python?",
-    options: ["1", "\"0\"", "[]", "True"],
-    answer: 2
-  },
-  {
-    q: "How should you test whether a variable holds None?",
+    q: "```python\ndef set_volume(vol=None):\n    if vol:\n        return vol\n    return 50\n\nprint(set_volume(0))\n```\nWhat does this print?",
     options: [
-      "if x == None:",
-      "if x is None:",
-      "if type(x) == NoneType:",
-      "if x.is_none():"
+      "0",
+      "50",
+      "None",
+      "TypeError"
     ],
-    answer: 1
+    answer: 1,
+    explain: "0 is falsy, so `if vol:` cannot distinguish \"caller passed 0\" from \"caller passed nothing.\" It falls through to the default 50. The fix is `if vol is not None:`."
   },
   {
-    q: "What does `bool` inherit from in Python?",
-    options: ["object", "int", "str", "type"],
-    answer: 1
+    q: "Why can `x = 257; y = 257; print(x is y)` print True in a script, while the same values built with `int(\"257\")` at runtime print False for `is`?",
+    options: [
+      "257 is inside CPython's cached small-int range, so it is always the same object",
+      "Literal 257s written in the same compiled file can be folded into one shared constant, but is never guaranteed by the language and never applies to runtime-built values",
+      "is always compares value, exactly like ==, for integers",
+      "The REPL and a script always produce identical is results"
+    ],
+    answer: 1,
+    explain: "257 is outside the -5..256 small-int cache. The True you sometimes see for same-file literals is an implementation detail (constant folding), not a language guarantee — never rely on is for value comparison."
+  },
+  {
+    q: "Which of these types is mutable in Python?",
+    options: ["tuple", "frozenset", "list", "str"],
+    answer: 2,
+    explain: "list supports in-place mutation (append, sort, slice assignment, ...). tuple, frozenset, and str are all immutable — every operation on them returns a new object."
+  },
+  {
+    q: "```python\nlist = [1, 2, 3]\nprint(list([4, 5]))\n```\nWhat happens?",
+    options: [
+      "[4, 5]",
+      "[1, 2, 3, 4, 5]",
+      "TypeError: 'list' object is not callable",
+      "NameError: name 'list' is not defined"
+    ],
+    answer: 2,
+    explain: "Assigning to the name list shadows the builtin list type. list is now a plain list object, not the constructor, so calling it like a function raises TypeError."
+  },
+  {
+    q: "What does `True + True` evaluate to, and why?",
+    options: [
+      "True, because booleans do not support arithmetic",
+      "2, because bool is a subclass of int and True behaves as 1",
+      "A TypeError: unsupported operand type(s)",
+      "1.0, because addition always promotes to float"
+    ],
+    answer: 1,
+    explain: "bool is a subclass of int; True and False behave exactly as 1 and 0 in numeric contexts, so True + True is int addition: 2."
   }
 ];
 

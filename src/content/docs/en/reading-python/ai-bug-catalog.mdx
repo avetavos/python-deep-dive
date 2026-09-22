@@ -1,0 +1,1203 @@
+---
+title: The AI bug catalog
+description: '24 bugs AI-generated Python produces constantly — the wrong code, the real symptom, the fix, and which tool (if any) catches it.'
+sidebar:
+  order: 2
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+Every pattern below was written to look exactly like the Python an AI assistant actually produces, then run on `python3.14 -X dev -W error::RuntimeWarning`, checked with `ruff`/`mypy --strict`/`pyright`/`bandit` where relevant, and quoted verbatim from those runs — not reconstructed from memory. Each entry ends with **Caught by**, naming the one tool that actually flags it, or stating plainly that nothing does.
+
+The 24 patterns are grouped the same way as the **[Review Checklist](/python/en/reading-python/review-checklist/)** that follows this lesson: mutability, errors, async/concurrency, typing, resources & security, and tooling/style.
+
+<Playground code={mutableDefaultCode} />
+
+export const mutableDefaultCode = `def add_item(item: str, cart: list[str] = []) -> list[str]:
+    cart.append(item)
+    return cart
+
+
+first = add_item("apple")
+second = add_item("banana")
+print(first)
+print(second is first)
+`.trim();
+
+This first pattern is the one worth running yourself before reading any further — the playground above prints `['apple', 'banana']` for `first`, not `['apple']`, and `True` for the identity check. Everything below follows the same rule: real code, real output, no exceptions.
+
+## Mutability
+
+### 1. A mutable default argument is created once, not per call
+
+`cart: list[str] = []` is evaluated exactly once, when `add_item` is *defined* — not once per call. Every call that does not pass its own `cart` shares that same list object forever.
+
+**Symptom — real output** (matches the playground above):
+
+```text
+['apple', 'banana']
+True
+```
+
+`second = add_item("banana")` was supposed to start a fresh cart; instead it appended onto the cart from the *first* call, and `second is first` proves they are the same object.
+
+**Fix:** default to `None` and create the list inside the function body:
+
+```python
+def add_item(item: str, cart: list[str] | None = None) -> list[str]:
+    if cart is None:
+        cart = []
+    cart.append(item)
+    return cart
+```
+
+**Caught by:** `ruff`'s `B006`, directly, no configuration needed:
+
+```text
+B006 Do not use mutable data structures for argument defaults
+help: Replace with `None`; initialize within function
+```
+
+See **[Functions](/python/en/basics/functions/)**.
+
+<SpotTheBug code={`def log_event(event: str, history: list[str] = []) -> list[str]:
+    history.append(event)
+    return history
+
+
+first_run = log_event("startup")
+second_run = log_event("startup")`}>
+
+Same bug, different names. `second_run` is not a fresh log — it is the *same* list as `first_run`, now containing `["startup", "startup"]`, because `history = []` was only ever evaluated once, at function-definition time. Fix: `history: list[str] | None = None`, then `if history is None: history = []` inside the body.
+
+</SpotTheBug>
+
+### 2. A closure inside a loop captures the loop variable, not its value
+
+```python
+def make_multipliers() -> list:
+    return [lambda x: x * i for i in range(3)]
+
+
+fns = make_multipliers()
+print([f(10) for f in fns])
+```
+
+Each lambda closes over the *variable* `i`, not the value it held when the lambda was created. By the time any lambda is called, the comprehension has finished and `i` holds its final value, `2` — every lambda sees the same, final `i`.
+
+**Symptom — real output:**
+
+```text
+[20, 20, 20]
+```
+
+Not `[0, 10, 20]`, which is what a reader skimming "each lambda multiplies by its own `i`" would expect.
+
+**Fix:** bind the current value as a default argument, which *is* evaluated once per lambda creation:
+
+```python
+def make_multipliers() -> list:
+    return [lambda x, i=i: x * i for i in range(3)]
+```
+
+**Caught by:** `ruff`'s `B023`, directly:
+
+```text
+B023 Function definition does not bind loop variable `i`
+```
+
+See **[Closures](/python/en/functions-deep/closures/)**.
+
+### 3. Aliasing — a function mutates the list its caller passed in
+
+```python
+def normalize(scores: list[int]) -> list[int]:
+    scores.sort()
+    for i in range(len(scores)):
+        scores[i] = max(scores[i], 0)
+    return scores
+
+
+original = [3, -1, 2]
+result = normalize(original)
+print("caller's list after normalize:", original)
+print("result is original:", result is original)
+```
+
+`normalize` looks like a pure function — it takes a list and returns a list — but `scores.sort()` and `scores[i] = ...` both mutate the list object itself. The caller's `original` is changed even though nothing about the call site (`normalize(original)`) suggests that.
+
+**Symptom — real output:**
+
+```text
+caller's list after normalize: [0, 2, 3]
+result is original: True
+```
+
+The caller almost certainly expected `original` to stay `[3, -1, 2]` and `result` to be the normalized copy.
+
+**Fix:** copy before mutating, if the function is meant to be non-destructive: `scores = list(scores)` as the first line, or use `sorted(scores)` instead of `scores.sort()`.
+
+**Caught by:** nothing. This is a pure semantic/API-contract question — no linter counts whether a function's docstring or name promised not to mutate its argument. See **[Lists & Tuples](/python/en/data-structures/lists-tuples/)**.
+
+### 4. `[[0] * n] * m` — every row is the same shared list
+
+```python
+grid = [[0] * 3] * 3
+grid[0][0] = 1
+print(grid)
+```
+
+`[[0] * 3] * 3` creates *one* inner list `[0, 0, 0]`, then repeats a *reference* to that same list three times — it does not create three independent rows.
+
+**Symptom — real output:**
+
+```text
+[[1, 0, 0], [1, 0, 0], [1, 0, 0]]
+```
+
+Writing to `grid[0][0]` changed every row, because all three rows are the same object.
+
+**Fix:** build each row independently with a comprehension, so each `[0] * 3` call creates a fresh list:
+
+```python
+grid = [[0] * 3 for _ in range(3)]
+```
+
+**Caught by:** nothing — both the buggy and fixed versions are valid, ordinary Python; this is purely a semantic trap in how `*` on a list repeats references, not values. See **[Lists & Tuples](/python/en/data-structures/lists-tuples/)**.
+
+## Errors
+
+### 5. `is` used to compare values instead of `==`
+
+```python
+a = "hello"
+b = "".join(["h", "e", "l", "l", "o"])
+print(a == b)
+print(a is b)
+
+x = 1000
+y = int("1000")
+print(x == y)
+print(x is y)
+```
+
+`is` checks object identity, not equality. CPython interns some small integers (`-5` to `256`) and some string literals compiled together, which can make `is` look like it "works" for values in that range — but `b` was built at runtime via `.join()` and `y` via `int(str)`, so neither one is the same object as its `==`-equal counterpart.
+
+**Symptom — real output:**
+
+```text
+True
+False
+True
+False
+```
+
+Both pairs are equal (`==` is `True`), but neither pair is the *same object* (`is` is `False`) — `is` gives the wrong answer for "are these the same value" the moment either operand isn't a small cached integer or a compile-time-deduplicated literal.
+
+**Fix:** use `==` for value comparison; reserve `is` for singleton checks (`is None`, `is True`, `is False`) where identity *is* the actual contract.
+
+**Caught by:** `ruff`'s `F632`, but only for the direct-literal form (`x is 5`, `s is "foo"`):
+
+```text
+F632 Use `==` to compare constant literals
+```
+
+The variable-vs-variable form shown above — the one that actually bit this demo — is not flagged by `F632` or any other tool in this course's list; the object-identity coincidence has to be caught by eye. See **[Variables & Types](/python/en/basics/variables-types/)**.
+
+### 6. A broad `except` silently swallows the wrong thing
+
+```python
+def risky_lookup(data: dict, key: str) -> int:
+    try:
+        return data[key]
+    except:
+        pass
+    return -1
+
+
+print(risky_lookup({}, "x"))
+print(risky_lookup(None, "x"))
+```
+
+**Symptom — real output:**
+
+```text
+-1
+-1
+```
+
+A missing key correctly returns `-1`. But `risky_lookup(None, "x")` raises `TypeError: 'NoneType' object is not subscriptable` — a real bug (wrong argument type), not a missing key — and the bare `except:` swallows it exactly the same way, returning `-1` as if nothing happened.
+
+The async version of this bug is more dangerous: catching too broadly around an `await` can swallow the task's own cancellation.
+
+```python
+async def worker(n: int) -> None:
+    try:
+        await asyncio.sleep(n)
+        print(f"worker {n} finished normally")
+    except BaseException as e:
+        print(f"worker swallowed {type(e).__name__}: {e!r} -- keeps running")
+
+
+async def main() -> None:
+    task = asyncio.create_task(worker(5))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    await task
+    print("main: task.cancelled() =", task.cancelled())
+```
+
+**Symptom — real output:**
+
+```text
+worker swallowed CancelledError: CancelledError() -- keeps running
+main: task.cancelled() = False
+```
+
+`task.cancel()` is supposed to make the task stop. Instead, `except BaseException` catches the `asyncio.CancelledError` raised inside `await asyncio.sleep(n)`, prints a message, and returns normally — `task.cancelled()` is `False`, meaning the cancellation request was silently absorbed and the task reports itself as having finished normally.
+
+**Fix:** name the specific exception you expect (`except KeyError:` for the sync case). In async code, never catch `BaseException` (or a bare `except:`) across an `await` unless you immediately re-raise `asyncio.CancelledError`; catching only `Exception` is the safer default because `CancelledError` inherits from `BaseException`, not `Exception`, precisely so ordinary error handlers don't intercept it.
+
+**Caught by:** `ruff`'s `E722` for the bare `except:` and `S110` for the `try`/`except`/`pass` shape:
+
+```text
+E722 Do not use bare `except`
+S110 `try`-`except`-`pass` detected, consider logging the exception
+```
+
+For the async `except BaseException` form, `ruff`'s `BLE001` (blind-except) fires directly:
+
+```text
+BLE001 Do not catch blind exception: `BaseException`
+```
+
+`BLE001` does **not** fire on the bare `except:` / `except: pass` form above — that one is only caught by `E722`/`S110`. See **[Exceptions](/python/en/typing-errors/exceptions/)**.
+
+### 7. `raise e` instead of bare `raise` adds a needless frame — and AI code writes it constantly
+
+```python
+def a():
+    b()
+
+def b():
+    raise ValueError("deep failure")
+
+def reraise_bare():
+    try:
+        a()
+    except ValueError:
+        raise
+
+def reraise_e():
+    try:
+        a()
+    except ValueError as e:
+        raise e
+```
+
+**Symptom — real output**, counting traceback frames with `traceback.extract_tb`:
+
+```text
+bare raise frames: 4
+raise e frames: 5
+```
+
+Both re-raise "the same" exception, but `raise e` adds one more frame — the `raise e` line itself — to the traceback. On a deep call stack this makes the traceback longer and slightly more confusing to read, for zero benefit.
+
+**Fix:** use bare `raise` to re-raise an exception unchanged.
+
+**Caught by:** `ruff`'s `TRY201`, directly:
+
+```text
+TRY201 Use `raise` without specifying exception name
+help: Remove exception name
+```
+
+See **[Exceptions](/python/en/typing-errors/exceptions/)**.
+
+### 8. `assert` used to validate input — it vanishes under `-O`
+
+```python
+def withdraw(balance: int, amount: int) -> int:
+    assert amount <= balance, "insufficient funds"
+    return balance - amount
+
+
+print(withdraw(100, 30))
+print(withdraw(100, 999))
+```
+
+**Symptom — real output, normal run:**
+
+```text
+70
+Traceback (most recent call last):
+  ...
+AssertionError: insufficient funds
+```
+
+**Symptom — real output, `python3.14 -O`:**
+
+```text
+70
+-899
+```
+
+Under `-O` the `assert` statement is stripped from the compiled bytecode entirely — the condition is never evaluated, and a withdrawal for more than the balance silently produces a negative number instead of failing.
+
+**Fix:** use `if`/`raise` for anything that must always be checked:
+
+```python
+def withdraw(balance: int, amount: int) -> int:
+    if amount > balance:
+        raise ValueError("insufficient funds")
+    return balance - amount
+```
+
+**Caught by:** `ruff`'s `S101` (also `bandit`'s `B101`), directly:
+
+```text
+S101 Use of `assert` detected
+```
+
+See **[Exceptions](/python/en/typing-errors/exceptions/)**.
+
+## Async & concurrency
+
+### 9. A coroutine created without `await` never runs
+
+```python
+async def greet(name: str) -> None:
+    await asyncio.sleep(0.01)
+    print(f"hello, {name}")
+
+
+async def main() -> None:
+    greet("Ada")  # missing await -- creates a coroutine object, never runs it
+    await asyncio.sleep(0.02)
+    print("main done")
+```
+
+Calling `greet("Ada")` without `await` does not run the function's body at all — it creates a coroutine *object* and immediately discards it. `"hello, Ada"` never prints.
+
+**Symptom — real output** (captured by wrapping the call in `warnings.catch_warnings(record=True)` so the demo stays runnable under this course's verifier, which turns `RuntimeWarning` into an error):
+
+```text
+caught: RuntimeWarning: coroutine 'greet' was never awaited
+main done
+```
+
+Only `"main done"` prints — the greeting silently never happens. Without the `catch_warnings` wrapper, Python still reports this the moment the abandoned coroutine object is garbage-collected:
+
+```text
+Exception ignored while finalizing coroutine <coroutine object greet at 0x...>:
+RuntimeWarning: coroutine 'greet' was never awaited
+```
+
+**Fix:** add the missing `await greet("Ada")`, or, if the call is genuinely meant to run in the background, `asyncio.create_task(greet("Ada"))` and keep a reference to the task (see pattern 10).
+
+**Caught by:** nothing statically — no linter can prove a coroutine-returning call is missing its `await` in general. Only running the code (`python3.14 -X dev`) surfaces the `RuntimeWarning`, and only if the coroutine actually gets garbage-collected during the run. See **[asyncio basics](/python/en/async-concurrency/asyncio-basics/)**.
+
+### 10. Fire-and-forget `create_task` — the task can vanish before it runs
+
+```python
+async def send_metric(name: str) -> None:
+    await asyncio.sleep(0.2)
+    print(f"metric sent: {name}")  # this line may never run
+
+
+async def handle_request(n: int) -> str:
+    asyncio.create_task(send_metric(f"request-{n}"))  # no reference kept anywhere
+    return f"response-{n}"
+
+
+async def main() -> None:
+    results = [await handle_request(i) for i in range(3)]
+    print(results)
+    # main returns immediately -- nothing is waiting for the background tasks
+```
+
+**Symptom — real output:**
+
+```text
+['response-0', 'response-1', 'response-2']
+```
+
+None of the three `"metric sent: ..."` lines ever print. `asyncio.run(main())` closes the event loop the instant `main` returns, cancelling every task nothing is still awaiting — silently, with no error, no warning in this run.
+
+**Fix:** keep every background task's reference in a set owned by something with a longer lifetime than the function that created it, and remove it on completion — the pattern the official `asyncio` docs recommend:
+
+```python
+background_tasks: set[asyncio.Task] = set()
+
+def spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+```
+
+**Caught by:** `ruff`'s `RUF006`, directly:
+
+```text
+RUF006 Store a reference to the return value of `asyncio.create_task`
+```
+
+See **[Tasks & gather](/python/en/async-concurrency/async-await/)**.
+
+### 11. `time.sleep` inside async code blocks the entire event loop
+
+```python
+async def slow_task(n: int) -> None:
+    print(f"task {n} start")
+    time.sleep(0.3)  # blocks the WHOLE event loop, not just this task
+    print(f"task {n} done")
+
+
+async def main() -> None:
+    start = time.perf_counter()
+    await asyncio.gather(slow_task(1), slow_task(2), slow_task(3))
+    elapsed = time.perf_counter() - start
+    print(f"elapsed: {elapsed:.2f}s (should be ~0.3s if truly concurrent)")
+```
+
+`time.sleep` is a blocking, synchronous call — it does not yield control back to the event loop the way `await asyncio.sleep(...)` does. While one task sleeps, *nothing else in the process can run*, including the other two "concurrent" tasks.
+
+**Symptom — real output:**
+
+```text
+task 1 start
+task 1 done
+task 2 start
+task 2 done
+task 3 start
+task 3 done
+elapsed: 0.93s (should be ~0.3s if truly concurrent)
+```
+
+The three tasks ran one after another, taking roughly 3× as long as if they had actually overlapped — `asyncio.gather` looks concurrent in the source but is fully serialized at runtime. Running with `-X dev` (which also enables asyncio debug mode) additionally logs a slow-callback warning for each blocked task:
+
+```text
+Executing <Task finished name='Task-2' coro=<slow_task() done, ...> took 0.311 seconds
+```
+
+**Fix:** use `await asyncio.sleep(...)` for a delay, or `await loop.run_in_executor(None, blocking_fn)` for a genuinely blocking call you cannot avoid.
+
+**Caught by:** `ruff`'s `ASYNC251` (the `flake8-async` rule set), directly:
+
+```text
+ASYNC251 Async functions should not call `time.sleep`
+```
+
+`python -X dev`'s asyncio debug mode additionally logs the slow callback at runtime, as shown above. See **[GIL & threads](/python/en/async-concurrency/gil-threads/)**.
+
+### 12. Shared mutable state mutated across an `await` with no lock
+
+```python
+class Account:
+    def __init__(self, balance: int) -> None:
+        self.balance = balance
+
+    async def withdraw(self, amount: int) -> bool:
+        if amount > self.balance:
+            return False
+        await asyncio.sleep(0)  # simulates an awaited I/O call mid-operation
+        self.balance -= amount  # another task can run between the check and this line
+        return True
+
+
+async def main() -> None:
+    acct = Account(balance=100)
+    results = await asyncio.gather(
+        acct.withdraw(80),
+        acct.withdraw(80),
+    )
+    print("withdraw results:", results)
+    print("final balance:", acct.balance)
+```
+
+Both `withdraw` calls check `amount > self.balance` (`80 > 100` is `False` for both) *before* either one reaches the `await` — the event loop can switch between them at that `await` point, and both proceed to subtract `80`, even though the account only ever had `100`.
+
+**Symptom — real output:**
+
+```text
+withdraw results: [True, True]
+final balance: -60
+```
+
+Both withdrawals report success, and the balance goes negative — a classic time-of-check-to-time-of-use race, made possible by any `await` between the check and the mutation, not by real OS-thread parallelism.
+
+**Fix:** guard the whole check-then-mutate sequence with an `asyncio.Lock`:
+
+```python
+def __init__(self, balance: int) -> None:
+    self.balance = balance
+    self._lock = asyncio.Lock()
+
+async def withdraw(self, amount: int) -> bool:
+    async with self._lock:
+        if amount > self.balance:
+            return False
+        await asyncio.sleep(0)
+        self.balance -= amount
+        return True
+```
+
+**Caught by:** nothing. This is a genuine race condition — its presence depends on the exact interleaving the event loop happens to choose, and no static tool proves or disproves it. See **[Tasks & gather](/python/en/async-concurrency/async-await/)**.
+
+### 13. `multiprocessing.Pool` without an `if __name__ == "__main__":` guard
+
+```python
+from multiprocessing import Pool
+
+def square(n: int) -> int:
+    return n * n
+
+pool = Pool(processes=4)  # module-level -- no __main__ guard
+print(pool.map(square, [1, 2, 3, 4]))
+```
+
+On macOS and Windows, the default start method is `spawn` (Linux since 3.14 defaults to `forkserver` off the main interpreter — see **[multiprocessing](/python/en/async-concurrency/multiprocessing/)**). A `spawn`/`forkserver` worker process re-imports the *entire* module that started it. If `Pool(...)` runs at module level with no guard, every re-import creates *another* `Pool`, which spawns *more* workers, which re-import the module again — runaway recursive process creation.
+
+**Symptom — real output** (this run was killed after 5 seconds; it does not stop on its own and must be killed manually — **do not run this unguarded on your own machine**):
+
+```text
+Traceback (most recent call last):
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=7, pipe_handle=18)
+  File ".../multiprocessing/spawn.py", line 122, in spawn_main
+    exitcode = _main(fd, parent_sentinel)
+  ...
+```
+
+28,569 lines of recursive tracebacks were captured in five seconds before the process tree was force-killed — each worker spawning more workers, each of those re-importing the module and hitting `Pool(...)` again.
+
+**Fix:** guard the entry point, and prefer the context-manager form so the pool is always closed:
+
+```python
+if __name__ == "__main__":
+    with Pool(processes=4) as pool:
+        print(pool.map(square, [1, 2, 3, 4]))
+```
+
+**Real output, fixed version:**
+
+```text
+[1, 4, 9, 16]
+```
+
+**Caught by:** nothing static — no linter counts whether module-level code that spawns processes is guarded. The failure is purely a runtime property of the chosen start method. See **[multiprocessing](/python/en/async-concurrency/multiprocessing/)**.
+
+## Typing
+
+### 14. `__eq__` defined without `__hash__` makes the instance unhashable
+
+```python
+class Point:
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Point):
+            return NotImplemented
+        return self.x == other.x and self.y == other.y
+
+
+p = Point(1, 2)
+print(p == Point(1, 2))
+print({p})
+```
+
+Defining `__eq__` on a class makes Python set `__hash__` to `None` automatically, unless you also define `__hash__` yourself — two objects that compare equal must hash equal, and Python cannot guarantee that for a class it does not control the hashing of.
+
+**Symptom — real output:**
+
+```text
+True
+Traceback (most recent call last):
+  ...
+TypeError: cannot use 'Point' as a set element (unhashable type: 'Point')
+```
+
+`p == Point(1, 2)` works fine; putting a `Point` in a `set` (or using it as a `dict` key) crashes.
+
+**Fix:** define `__hash__` alongside `__eq__` if instances need to be hashable (and are effectively immutable), or accept that the class is deliberately unhashable and document it:
+
+```python
+def __hash__(self) -> int:
+    return hash((self.x, self.y))
+```
+
+**Caught by:** `ruff`'s `PLW1641`, directly:
+
+```text
+PLW1641 Object does not implement `__hash__` method
+```
+
+See **[Dunder methods](/python/en/oop-data-model/dunder-methods/)**.
+
+### 15. A mutable class attribute is shared by every instance
+
+```python
+class ShoppingCart:
+    items: list[str] = []  # class attribute, shared across every instance
+
+    def add(self, item: str) -> None:
+        self.items.append(item)
+
+
+cart_a = ShoppingCart()
+cart_b = ShoppingCart()
+cart_a.add("apple")
+cart_b.add("banana")
+print("cart_a.items:", cart_a.items)
+print("cart_b.items:", cart_b.items)
+print("same list object:", cart_a.items is cart_b.items)
+```
+
+`items: list[str] = []` declared at class level is exactly one list, owned by the class — `self.items.append(...)` finds no instance attribute named `items`, so it mutates the shared class attribute instead. This is the class-body sibling of pattern 1's mutable default argument.
+
+**Symptom — real output:**
+
+```text
+cart_a.items: ['apple', 'banana']
+cart_b.items: ['apple', 'banana']
+same list object: True
+```
+
+Two independently constructed carts share one list — adding to either one affects both.
+
+**Fix:** initialize per-instance mutable state in `__init__` (or a dataclass `field(default_factory=list)`):
+
+```python
+def __init__(self) -> None:
+    self.items: list[str] = []
+```
+
+**Caught by:** `ruff`'s `RUF012`, directly:
+
+```text
+RUF012 Mutable default value for class attribute
+help: Consider initializing in `__init__` or annotating with `typing.ClassVar`
+```
+
+See **[Classes](/python/en/oop-data-model/classes/)**.
+
+### 16. `Any` plus a blanket `# type: ignore` disables checking entirely
+
+```python
+from typing import Any
+
+def process_config(config: Any) -> int:
+    return config.retries + 1  # type: ignore
+
+print(process_config({"retries": "3"}))
+```
+
+`Any` tells every checker to stop verifying anything about `config` — attribute access, arithmetic, all of it. The `# type: ignore` on top silences whatever might otherwise be flagged. Together, nothing is checked at all, and the crash only shows up at runtime.
+
+**Symptom — real output:**
+
+```text
+Traceback (most recent call last):
+  ...
+AttributeError: 'dict' object has no attribute 'retries'
+```
+
+**mypy --strict output — real, unmodified:**
+
+```text
+Success: no issues found in 1 source file
+```
+
+**pyright output — real, unmodified:**
+
+```text
+0 errors, 0 warnings, 0 informations
+```
+
+Both checkers, run in their strictest configuration, report a completely clean file — `Any` and the blanket ignore make the AttributeError above invisible to static analysis entirely.
+
+**Fix:** give `config` a real type (a `TypedDict`, a dataclass, or a Pydantic model) instead of `Any`, and remove the blanket ignore — if a specific line genuinely needs one, name the exact error code it suppresses.
+
+**Caught by:** nothing that checks *types* — `mypy --strict` and `pyright` are both silent, which is the point of this entry. `ruff`'s `ANN401` flags the `Any` parameter itself, and `PGH003` flags the un-coded ignore comment:
+
+```text
+ANN401 Dynamically typed expressions (typing.Any) are disallowed in `config`
+PGH003 Use specific rule codes when ignoring type issues
+```
+
+See **[Type hints](/python/en/typing-errors/type-hints/)**.
+
+### 17. `X | None` used but never actually narrowed before use
+
+```python
+def greeting(name: str | None) -> str:
+    return "Hello, " + name.upper()
+
+print(greeting("ada"))
+print(greeting(None))
+```
+
+The parameter is correctly typed `str | None`, but the body never checks for `None` before calling `.upper()` on it — the type hint documents the possibility without the code actually handling it.
+
+**Symptom — real output:**
+
+```text
+Hello, ADA
+Traceback (most recent call last):
+  ...
+AttributeError: 'NoneType' object has no attribute 'upper'
+```
+
+**mypy --strict output — real:**
+
+```text
+error: Item "None" of "str | None" has no attribute "upper"  [union-attr]
+Found 1 error in 1 file (checked 1 source file)
+```
+
+**pyright output — real:**
+
+```text
+error: "upper" is not a known attribute of "None" (reportOptionalMemberAccess)
+1 error, 0 warnings, 0 informations
+```
+
+Both checkers agree here, and both catch it *before* the code is ever run.
+
+**Fix:** narrow before using:
+
+```python
+def greeting(name: str | None) -> str:
+    if name is None:
+        return "Hello, stranger"
+    return "Hello, " + name.upper()
+```
+
+**Caught by:** both `mypy --strict` (`union-attr`) and `pyright` (`reportOptionalMemberAccess`), directly, with no configuration needed — this pattern has no honest excuse to reach code review. See **[Type hints](/python/en/typing-errors/type-hints/)**.
+
+### 18. `list[Dog]` passed where `list[Animal]` is expected — generic invariance
+
+```python
+class Animal:
+    def speak(self) -> str:
+        return "..."
+
+class Dog(Animal):
+    def speak(self) -> str:
+        return "Woof"
+
+class Cat(Animal):
+    def speak(self) -> str:
+        return "Meow"
+
+def add_a_cat(animals: list[Animal]) -> None:
+    animals.append(Cat())  # perfectly legal for list[Animal]
+
+dogs: list[Dog] = [Dog(), Dog()]
+add_a_cat(dogs)
+for d in dogs:
+    print(d.speak())
+```
+
+`Dog` is an `Animal`, but `list[Dog]` is **not** a `list[Animal]` as far as the type system is concerned — `list` is *invariant* in its element type, precisely because `add_a_cat` is allowed to append any `Animal` (including a `Cat`) into whatever list it receives. If this call were allowed, `dogs` would end up holding a `Cat`, silently breaking every future assumption that every element of `dogs` is a `Dog`.
+
+**Symptom — real output** (the interpreter itself does not stop this; the type checkers do, before it ever runs):
+
+```text
+Woof
+Woof
+Meow
+```
+
+Nothing crashes at runtime — that is exactly the danger: the corrupted list works fine until something calls a `Dog`-only method on what turns out to be a `Cat`.
+
+**mypy --strict output — real:**
+
+```text
+error: Argument 1 to "add_a_cat" has incompatible type "list[Dog]"; expected "list[Animal]"  [arg-type]
+note: "list" is invariant -- see https://mypy.readthedocs.io/en/stable/common_issues.html#variance
+note: Consider using "Sequence" instead, which is covariant
+```
+
+**pyright output — real:**
+
+```text
+error: Argument of type "list[Dog]" cannot be assigned to parameter "animals" of type "list[Animal]" in function "add_a_cat"
+  "list[Dog]" is not assignable to "list[Animal]"
+    Type parameter "_T@list" is invariant, but "Dog" is not the same as "Animal"
+    Consider switching from "list" to "Sequence" which is covariant (reportArgumentType)
+```
+
+Both checkers agree, and both suggest the same fix.
+
+**Fix:** if `add_a_cat` only needs to *read* the list, accept `Sequence[Animal]` (covariant) instead of `list[Animal]`; if it must be allowed to mutate a genuinely mixed-`Animal` list, the caller should not be passing a more specific `list[Dog]` in the first place.
+
+**Caught by:** both `mypy --strict` and `pyright`, directly, with no configuration needed. See **[Type hints](/python/en/typing-errors/type-hints/)**.
+
+## Resources & security
+
+### 19. `datetime.utcnow()` returns a naive datetime
+
+```python
+from datetime import datetime, timezone
+
+def is_expired(expires_at: datetime) -> bool:
+    return datetime.utcnow() > expires_at  # naive datetime -- no tzinfo
+
+aware_deadline = datetime.now(timezone.utc)
+print(is_expired(aware_deadline))
+```
+
+`datetime.utcnow()` returns the UTC wall-clock time but with **no timezone attached** — it "is" UTC only by convention, not by type. Comparing it against an aware datetime (one that does carry `tzinfo`, as `datetime.now(timezone.utc)` does) is not just wrong, it is a hard `TypeError`.
+
+**Symptom — real output:**
+
+```text
+.../19_naive_datetime.py:5: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+Traceback (most recent call last):
+  ...
+TypeError: can't compare offset-naive and offset-aware datetimes
+```
+
+`utcnow()` is also formally deprecated as of Python 3.12, with the interpreter itself pointing at the fix.
+
+**Fix:** use `datetime.now(timezone.utc)` (or `datetime.now(UTC)` since 3.11) everywhere a UTC timestamp is needed:
+
+```python
+def is_expired(expires_at: datetime) -> bool:
+    return datetime.now(timezone.utc) > expires_at
+```
+
+**Caught by:** `ruff`'s `DTZ003`, directly:
+
+```text
+DTZ003 `datetime.datetime.utcnow()` used
+help: Use `datetime.datetime.now(tz=...)` instead
+```
+
+See **[stdlib tour](/python/en/stdlib-testing-tooling/stdlib-tour/)**.
+
+### 20. `open()` without `with`, and without `encoding=`
+
+```python
+def read_report(path: str) -> str:
+    f = open(path)  # no `with`, no encoding= -- leaks the fd, platform-dependent decoding
+    data = f.read()
+    f.close()
+    return data
+```
+
+Two separate problems in one line: no `with` means the file descriptor stays open if `f.read()` raises before `f.close()` runs; no `encoding=` means the text is decoded using the platform's default locale encoding, which is UTF-8 on most Linux/macOS setups today but is **not** guaranteed — the exact same code can decode differently on a different machine.
+
+**Symptom — real output** (on this Unix machine, with a UTF-8 locale, this happens to round-trip cleanly — the danger is real but only visible cross-platform, which this environment cannot reproduce honestly):
+
+```text
+'héllo\n'
+```
+
+**Fix:** always use `with`, and always pass `encoding=` explicitly:
+
+```python
+def read_report(path: str) -> str:
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+```
+
+**Caught by:** `ruff`'s `SIM115` for the missing context manager, directly:
+
+```text
+SIM115 Use a context manager for opening files
+```
+
+The missing-`encoding` check (`PLW1514`) exists in `ruff` but is a **preview** rule, not enabled by default:
+
+```text
+warning: Selection `PLW1514` has no effect because preview is not enabled.
+```
+
+Run `ruff check --preview` to include it. See **[stdlib tour](/python/en/stdlib-testing-tooling/stdlib-tour/)**.
+
+### 21. `subprocess(..., shell=True)` with untrusted input is shell injection
+
+```python
+import subprocess
+
+def list_files(directory: str) -> str:
+    result = subprocess.run(f"ls {directory}", shell=True, capture_output=True, text=True)
+    return result.stdout
+
+print(list_files(". ; echo INJECTED"))
+```
+
+`shell=True` runs the whole string through `/bin/sh`, which interprets `;`, `&&`, backticks, and `$()` — an attacker (or just messy input) can append arbitrary commands.
+
+**Symptom — real output:** the directory listing followed by a line that was never part of any file name:
+
+```text
+... (directory listing) ...
+INJECTED
+```
+
+The `; echo INJECTED` in the argument ran as a second, completely separate shell command.
+
+**Fix:** pass a list of arguments and never set `shell=True` for anything built from external input:
+
+```python
+def list_files(directory: str) -> str:
+    result = subprocess.run(["ls", directory], capture_output=True, text=True)
+    return result.stdout
+```
+
+**Caught by:** `ruff`'s `S602` (also `bandit`'s `B602`, plus `B404` for importing `subprocess` at all), directly:
+
+```text
+S602 `subprocess` call with `shell=True` identified, security issue
+```
+
+See **[stdlib tour](/python/en/stdlib-testing-tooling/stdlib-tour/)**.
+
+### 22. `mock.patch` patches the wrong location
+
+```python
+# weather_from_import.py
+from requests import get
+
+def get_temperature(city: str) -> float:
+    response = get(f"https://api.example.com/weather/{city}")
+    return response.json()["temp"]
+```
+
+```python
+# test_weather_from_import_wrong.py
+from unittest.mock import patch
+import weather_from_import
+
+@patch("requests.get")  # WRONG: weather_from_import already bound its own name `get`
+def test_get_temperature(mock_get):
+    mock_get.return_value.json.return_value = {"temp": 72.0}
+    result = weather_from_import.get_temperature("bangkok")  # calls the REAL requests.get
+    assert result == 72.0
+```
+
+`unittest.mock.patch("requests.get")` replaces the attribute `get` on the `requests` module. But `weather_from_import.py` did `from requests import get` — that created its *own*, separate name `get` inside the `weather_from_import` module, bound to the original function at import time. Patching `requests.get` afterward never touches `weather_from_import.get` at all.
+
+**Symptom — real pytest output:**
+
+```text
+requests.exceptions.ConnectionError: HTTPSConnectionPool(host='api.example.com', port=443): Max retries exceeded with url: /weather/bangkok (Caused by NameResolutionError("...Failed to resolve 'api.example.com'..."))
+1 failed in 0.14s
+```
+
+The mock had zero effect — the test made a real network call to a domain that does not exist, and failed with a DNS error, not with the mocked value. In a CI environment with different network conditions, this exact bug can just as easily produce a false **pass** instead of a loud failure, if the code path happens to tolerate the real call — see **[Worked Review 4](/python/en/reading-python/worked-review-4/)** for that variant.
+
+**Fix:** always patch the name *as looked up from the module under test* — `@patch("weather_from_import.get")`, not `@patch("requests.get")` — because that is the actual attribute the code under test will call.
+
+**Caught by:** nothing. No tool inspects whether a `@patch` target string matches how the code under test actually imported the name; the test can fail loudly (as here), or silently pass for the wrong reason. Only a human reading both files side by side catches it. See **[pytest](/python/en/stdlib-testing-tooling/pytest/)**.
+
+### 23. `requirements.txt` left unpinned, or installed with `sudo pip`
+
+```text
+requests
+urllib3==1.26.4
+```
+
+An unpinned dependency (`requests` with no version) resolves to whatever the latest compatible version happens to be *on the day someone runs `pip install`* — the same `requirements.txt` can install different, potentially vulnerable code a month apart. `sudo pip install ...` installs into the system Python that the operating system itself depends on, which can silently break unrelated OS tooling and requires root privileges for what should be a user- or project-scoped operation.
+
+**Symptom — real `pip-audit` output**, run against the exact pinned line above:
+
+```text
+Found 18 known vulnerabilities in 1 package
+Name    Version ID              Fix Versions
+------- ------- --------------- -------------
+urllib3 1.26.4  PYSEC-2021-108  1.26.5
+urllib3 1.26.4  PYSEC-2023-192  1.26.17,2.0.6
+urllib3 1.26.4  PYSEC-2023-212  1.26.18,2.0.7
+...
+```
+
+Pinning is necessary for reproducibility, but it is not sufficient on its own — a pin can just as easily freeze in a *known-vulnerable* version forever, which is exactly what `pip-audit`/`uv`'s audit tooling exists to catch on an ongoing basis.
+
+**Fix:** pin every dependency (`uv lock` generates and maintains this automatically), run `pip-audit` (or `uv`'s equivalent) in CI, and never install into a system-managed Python — use a virtual environment (`uv venv`) or `pipx` for standalone tools.
+
+**Caught by:** `pip-audit`/`uv audit`-equivalent tooling catches a *pinned-but-vulnerable* version, as shown above. Nothing automated catches an *unpinned* requirement itself, and nothing automated stops `sudo pip install` — both are process discipline, not something a linter can see. See **[venv, pip & uv](/python/en/stdlib-testing-tooling/venv-pip/)**.
+
+## Tooling & style
+
+### 24. `print()` instead of `logging` in library code
+
+```python
+def process_batch(items: list[int]) -> list[int]:
+    results = []
+    for item in items:
+        if item < 0:
+            print(f"skipping invalid item: {item}")  # library code -- caller can't filter/redirect this
+            continue
+        results.append(item * 2)
+    return results
+
+print(process_batch([1, -2, 3]))
+```
+
+**Symptom — real output:**
+
+```text
+skipping invalid item: -2
+[2, 6]
+```
+
+The output looks harmless here, but `print` inside library code (as opposed to a script's own CLI output) cannot be filtered by level, redirected to a file or log aggregator, disabled in production, or correlated with a timestamp and logger name — every one of which `logging` gives you for free.
+
+**Fix:**
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+def process_batch(items: list[int]) -> list[int]:
+    results = []
+    for item in items:
+        if item < 0:
+            logger.warning("skipping invalid item: %s", item)
+            continue
+        results.append(item * 2)
+    return results
+```
+
+**Caught by:** `ruff`'s `T201`, directly, on every `print` call in the file:
+
+```text
+T201 `print` found
+help: Remove `print`
+```
+
+See **[Logging](/python/en/stdlib-testing-tooling/index/)**.
+
+## Mental Model
+
+```text
+24 patterns, sorted by who actually catches them:
+
+ruff (default rule sets)  → 1 (B006), 2 (B023), 7 (TRY201), 8 (S101), 10 (RUF006),
+                             11 (ASYNC251), 14 (PLW1641), 15 (RUF012), 16 (ANN401/PGH003),
+                             19 (DTZ003), 20 (SIM115), 21 (S602), 24 (T201)
+ruff, partially            → 5 (F632 -- literal form only), 6 (E722/S110 sync;
+                             BLE001 async -- two different rules for two shapes of
+                             the same mistake)
+bandit                     → 8 (B101), 21 (B602/B404) -- overlaps ruff's S-rules
+mypy --strict + pyright    → 17 (union-attr / reportOptionalMemberAccess),
+                             18 (arg-type / reportArgumentType) -- both agree
+mypy --strict, silent      → 16 -- Any + blanket ignore defeats strict mode entirely
+pyright, silent            → 16 -- same file, same silence
+python -X dev (runtime)    → 9 (RuntimeWarning), 19 (DeprecationWarning)
+pip-audit / uv audit       → 23, but only the pinned-and-vulnerable half of it
+Nothing                    → 3, 4, 12, 13, 22, and the unpinned/sudo half of 23 --
+                             a full third of the catalog
+```
+
+<Callout title="A third of this catalog has no automated safety net">
+Eight of the twenty-four patterns above are caught by no tool this course covers, run with any configuration. That is the actual argument for this module: tooling narrows what you have to read for by eye, it never replaces reading. Run every tool in **[Verification Tools](/python/en/reading-python/verification-tools/)** on every diff — and still read the diff.
+</Callout>
+
+export const quizAiBugCatalog = [
+  {
+    q: "```python\ndef add_item(item, cart=[]):\n    cart.append(item)\n    return cart\n\nfirst = add_item(\"apple\")\nsecond = add_item(\"banana\")\n```\nWhat does `second` contain, and why?",
+    options: [
+      "['banana'] -- each call gets a fresh cart",
+      "['apple', 'banana'] -- the default list is created once at definition time and shared across every call that doesn't pass its own",
+      "TypeError -- you cannot append to a default argument",
+      "[] -- default arguments are always reset per call"
+    ],
+    answer: 1,
+    explain: "cart=[] is evaluated exactly once, when the function is defined. Every call that omits cart shares that same list object, so second accumulates on top of first's append."
+  },
+  {
+    q: "Why does `except BaseException` inside an async function's try/await block specifically endanger cancellation, in a way `except Exception` does not?",
+    options: [
+      "except Exception is always slower to execute",
+      "asyncio.CancelledError inherits from BaseException, not Exception, precisely so ordinary exception handlers don't intercept a cancellation request -- catching BaseException defeats that design",
+      "BaseException cannot be caught at all in async functions",
+      "There is no difference; both catch the exact same set of exceptions"
+    ],
+    answer: 1,
+    explain: "CancelledError deliberately sits under BaseException, not Exception, so that task.cancel() reliably propagates through ordinary 'except Exception' error handling. Catching BaseException (or a bare except:) swallows that signal too, and the task silently reports itself as finished instead of cancelled."
+  },
+  {
+    q: "Given identical mypy --strict and pyright output of 'no issues found' on a function typed `def process_config(config: Any) -> int:` that crashes at runtime with AttributeError, what does that tell you?",
+    options: [
+      "Both tools have a bug",
+      "The function is actually correct and the crash is unrelated to typing",
+      "Any turns off type checking for everything it touches -- a clean strict-mode report is not evidence of correctness when Any is anywhere in the signature",
+      "mypy and pyright only check syntax, not runtime behavior, so this is expected for all functions"
+    ],
+    answer: 2,
+    explain: "Any is a deliberate escape hatch: every checker treats it as compatible with everything, so operations on an Any-typed value are never flagged, no matter how wrong they are. A clean strict report next to an Any parameter proves nothing about that parameter's actual usage."
+  },
+  {
+    q: "Why does `ruff`'s `F632` catch `x is 5` but not `a is b` where `a` and `b` are two separately-constructed strings that happen to be equal?",
+    options: [
+      "F632 is broken and should catch both",
+      "F632 only recognizes the direct literal-comparison shape at the syntax level; whether two arbitrary runtime values happen to be the same object is a property of interning and object construction that static analysis can't determine in general",
+      "String comparisons are never checked by any tool",
+      "is is always safe for strings specifically"
+    ],
+    answer: 1,
+    explain: "F632 pattern-matches `is`/`is not` against a literal on one side -- a purely syntactic check. Whether two runtime-constructed values happen to share an object identity depends on CPython's interning behavior, which is an implementation detail no linter statically resolves for arbitrary expressions."
+  },
+  {
+    q: "A pytest test uses `@patch(\"requests.get\")` to mock a function inside `weather.py`, which does `from requests import get` at its top. What happens?",
+    options: [
+      "The mock works normally -- patch always finds every reference to the same function",
+      "The patch has no effect on weather.py's code, because `from requests import get` created a separate name bound in weather.py's own namespace, not a lookup of requests.get at call time",
+      "pytest raises an error immediately because the patch target doesn't exist",
+      "weather.py fails to import"
+    ],
+    answer: 1,
+    explain: "unittest.mock.patch replaces an attribute on the object named in the string. `from requests import get` already copied the function reference into weather.py's own module namespace at import time -- patching requests.get afterward never touches weather.py's separate `get` name."
+  },
+  {
+    q: "Two concurrent asyncio tasks both call `Account.withdraw(80)` on an account with balance=100, and the check happens before an `await asyncio.sleep(0)` mid-function. What is the real, observed result?",
+    options: [
+      "One withdrawal succeeds and one fails, as expected for balance=100",
+      "Both withdrawals report success and the balance goes negative (-60), because both tasks pass the balance check before either one reaches the mutation",
+      "asyncio automatically serializes any two calls to the same object's method",
+      "A RuntimeError is raised for concurrent access to the same object"
+    ],
+    answer: 1,
+    explain: "Without a lock, the event loop can switch between the two tasks at the await point that sits between the check and the mutation -- both tasks observe balance=100 as still sufficient before either one has subtracted anything, so both proceed."
+  },
+  {
+    q: "Why is a `Pool()` call with no `if __name__ == \"__main__\":` guard dangerous specifically on macOS and Windows, more so than a missing guard would be on classic Linux `fork`?",
+    options: [
+      "It isn't -- the guard is only a style preference everywhere",
+      "spawn/forkserver workers re-import the entire starting module from scratch; an unguarded module-level Pool() call re-executes on every re-import, creating more pools and more workers recursively",
+      "macOS and Windows do not support multiprocessing at all",
+      "The guard is only needed when using threads, not processes"
+    ],
+    answer: 1,
+    explain: "fork duplicates the already-running process's memory, so module-level code doesn't re-run in the child. spawn and forkserver start a fresh interpreter that re-imports the launching module -- if that import has the side effect of creating a Pool, each new worker creates its own pool of workers, recursively, until the machine is overwhelmed."
+  },
+  {
+    q: "Both mypy --strict and pyright reject `add_a_cat(dogs)` where `dogs: list[Dog]` and `add_a_cat` expects `list[Animal]`, even though `Dog` is an `Animal`. Why?",
+    options: [
+      "Dog does not actually inherit from Animal in this example",
+      "list is invariant in its element type -- add_a_cat is allowed to append any Animal (including a Cat) into whatever list it receives, so accepting a list[Dog] there would let a Cat end up inside a list the caller believes contains only Dogs",
+      "Both tools have an unrelated bug in this specific case",
+      "list[Dog] and list[Animal] are actually the same type, so this should be allowed and both tools are wrong"
+    ],
+    answer: 1,
+    explain: "Covariance would only be sound if the list were read-only. Because add_a_cat can append into the list it's given, allowing list[Dog] where list[Animal] is expected would let a Cat get appended into what the caller still believes is a list of only Dogs -- exactly the hole invariance exists to close."
+  }
+];
+
+<Quiz client:visible id="reading-python/ai-bug-catalog" questions={quizAiBugCatalog} />
+
+<ProgressTracker client:visible id="reading-python/ai-bug-catalog" />

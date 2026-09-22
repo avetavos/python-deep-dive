@@ -1,0 +1,181 @@
+---
+title: How to read Python you did not write
+description: 'A reading order for unfamiliar Python — mutable data flow first, then the exception path, then task and resource lifetimes, then type hints read skeptically.'
+sidebar:
+  order: 1
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+
+Every earlier module in this course taught you to *write* Python. This module teaches the other half of the job: reading Python someone — or something — else wrote, and deciding whether it is correct. An AI assistant will hand you code that runs, prints plausible output, and looks exactly like the idiomatic examples you have been studying. Running without error is not the same as correct. The four questions below are the order experienced Python reviewers actually read code in, and every later lesson in this module drills one of them.
+
+## Follow where mutable data flows
+
+Python passes every argument by object reference, and most of the objects you pass around — `list`, `dict`, `set`, and any class instance without `frozen=True` — are mutable. Before you read what a function *returns*, read what it *touches*:
+
+- Does the function mutate an argument in place, return a new object, or both?
+- If it returns the same object it was given (`return the_list`), does the caller expect a new list, or does it expect the mutation and the return value to be the same thing?
+- Is a default argument (`def f(items=[])`) a mutable object that gets created once, at *definition* time, and then shared across every call that does not pass its own?
+- Does a class attribute declared at the class level (not inside `__init__`) get shared across every instance, the way a module-level variable is shared across every caller?
+
+None of this requires running the code. A reviewer who reads `def restock(inventory: dict[str, int], item: str, qty: int) -> dict[str, int]:` and sees the body does `inventory[item] = ...` before `return inventory` already knows: this mutates the caller's dict *and* hands back the same object — so the next thing to check is whether every caller expected that.
+
+## Follow the exception path
+
+Python's `try`/`except` is opt-in, not enforced by the compiler the way a Go or Rust error return is — nothing forces a caller to notice that a function can raise. Reading a function well means tracing every way it can fail, not just its happy-path `return`:
+
+- What does the function raise, and under what condition? Is that documented anywhere, or only discoverable by reading the body?
+- Is a broad `except Exception` (or bare `except:`) used anywhere between the raise and where you'd expect it to be handled — and does it swallow more than the one failure mode it was written for?
+- Does `assert` appear where real input validation belongs? `assert` vanishes entirely under `python -O`.
+- In async code, is `except Exception` (or a broader `except BaseException`) sitting between a task and its `.cancel()` — swallowing the cancellation itself?
+
+The lesson that catalogs exactly how AI-generated code gets this wrong is **[The AI Bug Catalog](/python/en/reading-python/ai-bug-catalog/)** — this page assumes you already know `try`/`except`/`finally` from the [Exceptions](/python/en/typing-errors/exceptions/) lesson, and instead trains you to spot the violations.
+
+## Follow task and resource lifetimes
+
+Anything with a `.close()`, a `with` block, or a `create_task()` call has a lifetime that Python does not track for you. For every acquired resource or spawned task, ask:
+
+- Who is responsible for closing it — the function that opened it, or whatever it was handed to?
+- Is the release guaranteed on every path, including an early `return` or a raised exception — usually via `with`, not a bare `.close()` at the end of the function?
+- For an `asyncio.create_task(...)` call: is the returned `Task` object stored anywhere? An unreferenced task can be garbage-collected before it finishes, silently dropping whatever work it was doing.
+- Does anything ever `await` that task, so a raised exception inside it actually surfaces instead of vanishing?
+
+## Read type hints skeptically
+
+A type hint is a claim, not a guarantee. Nothing checks it at runtime unless you add your own validation:
+
+- Does the function's *body* actually match what the signature promises — or does it silently accept `None` where the hint says `str`, because nothing enforces it at the call the code was tested with?
+- Is `Any` used anywhere a more specific type was available? `Any` does not just mean "unchecked here" — it turns off checking for everything it touches downstream, too.
+- Was the type hint checked with a real tool (`mypy --strict`, `pyright`) — or does it just *look* plausible because it compiles (there is no such thing as a Python hint failing to "compile")?
+
+<Playground code={readingOrderCode} />
+
+export const readingOrderCode = `def restock(inventory: dict[str, int], item: str, qty: int) -> dict[str, int]:
+    # Reading order in practice: (1) this function MUTATES the dict you pass
+    # in -- it does not copy it -- so every caller's reference to that same
+    # dict sees the change too. (2) It can raise ValueError; the return value
+    # on the happy path is the SAME object as the input, which is easy to
+    # miss if you only skim the final return statement.
+    if qty < 0:
+        raise ValueError(f"qty must be >= 0, got {qty}")
+    inventory[item] = inventory.get(item, 0) + qty
+    return inventory
+
+
+warehouse = {"widgets": 10}
+same_dict = restock(warehouse, "widgets", 5)
+print("warehouse after restock:", warehouse)
+print("same object returned:", same_dict is warehouse)
+
+try:
+    restock(warehouse, "widgets", -3)
+except ValueError as e:
+    print(f"restock rejected: {e}")
+print("warehouse unchanged after the rejected call:", warehouse)
+`.trim();
+
+## Mental Model
+
+<Mermaid code={`flowchart TD
+  A["Read the code"] --> B["Where does mutable state flow -- mutated in place, or copied?"]
+  B --> C["What can raise here, and who actually catches it?"]
+  C --> D["What owns each task/resource, and who releases it?"]
+  D --> E["Do the type hints hold at runtime, or are they just claims?"]
+  E --> F["Only now: judge correctness"]`} title="Reading order for Python you did not write" />
+
+```text
+Reading order for a function you did not write:
+
+1. Mutable data flow → mutated in place? returned as a new object? both? shared class/default state?
+2. Exception path     → what can raise, is it documented, is it swallowed by something too broad?
+3. Task/resource life → who closes it, is release guaranteed on every path, is a task ever awaited?
+4. Type hints         → checked by mypy/pyright, or just plausible-looking prose?
+
+Skipping straight to "it ran and printed something reasonable" answers none of these.
+```
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Tracing mutable data flow first | Catches aliasing and shared-default bugs before you trust any return value | Requires knowing which builtins are mutable and which argument-passing actually shares state |
+| Tracing the whole exception path | Finds swallowed, mis-scoped, or `assert`-based "validation" that AI code hides | Slower than reading only the happy-path `return` |
+| Tracking task/resource lifetimes explicitly | Finds leaked file handles and dropped background tasks before they page someone at 3am | Requires holding more state in your head while reading async code |
+| Treating type hints as claims, not guarantees | Finds the gap between what a signature promises and what the body actually does | Requires running `mypy`/`pyright` yourself — the hint alone proves nothing |
+
+## Common Misconceptions
+
+- **"It ran and printed something reasonable, so it's correct."** Every pattern in this module's catalog runs and produces plausible output on its happy path — that is exactly what makes it dangerous.
+- **"Reading the happy-path `return` is reading the function."** The `except` clauses, the `assert`s, and the code between an `await` and the next line are usually where AI-generated code hides its mistakes.
+- **"If a human wrote it, it's fine; only AI code needs this scrutiny."** Every pattern in this module's catalog also appears in human-written Python — AI just produces it at a much higher and more confident-looking volume.
+- **"A type hint means the value is guaranteed to have that type."** A hint is unchecked at runtime unless something (a validator, a checker in CI) actually enforces it. Untrusted input can violate any hint silently.
+
+<Callout title="Read for the mechanism, not for the vibe">
+Every rule in this module ends at something concrete: a real traceback, a real warning, a real `mypy`/`pyright`/`ruff` message, or a specific line where a task is dropped or a resource is never released. When you review code — your own or an AI's — look for the concrete violation, not just whether the code "feels" idiomatic.
+</Callout>
+
+export const quizReadingPythonIndex = [
+  {
+    q: "```python\ndef restock(inventory: dict[str, int], item: str, qty: int) -> dict[str, int]:\n    inventory[item] = inventory.get(item, 0) + qty\n    return inventory\n```\nBefore reading anything else about this function, what have you already learned from its body?",
+    options: [
+      "Nothing — you must run it to know anything",
+      "It mutates the caller's dict in place, and the returned dict is the same object as the argument",
+      "It always creates a brand-new dict and leaves the caller's dict untouched",
+      "It is guaranteed to be safe for concurrent use"
+    ],
+    answer: 1,
+    explain: "inventory[item] = ... mutates the dict argument directly, and `return inventory` hands back that same object -- there is no copy anywhere in this function."
+  },
+  {
+    q: "Why is the exception path usually more important to read carefully than the happy-path return?",
+    options: [
+      "Python requires more lines of code for exception handling than success handling",
+      "The happy path is what quick manual testing exercises and rewards looking correct, so mistakes concentrate in how failures are raised, caught, or swallowed",
+      "The interpreter does not check the exception path",
+      "Exception paths always execute before the happy path"
+    ],
+    answer: 1,
+    explain: "The happy path is what a quick `python demo.py` run exercises and what looks right in a demo; the exception path -- what's raised, what's caught, what's silently swallowed by a broad except or a stripped assert -- is where AI-generated code most often hides a subtle bug."
+  },
+  {
+    q: "For `asyncio.create_task(send_metric(...))` called with no variable to hold the result, what should a reviewer check?",
+    options: [
+      "Whether send_metric has a descriptive name",
+      "Whether the returned Task is stored anywhere and eventually awaited, since an unreferenced task can be garbage-collected before it finishes",
+      "Whether the function uses tabs or spaces for indentation",
+      "Nothing -- create_task always runs to completion regardless of references"
+    ],
+    answer: 1,
+    explain: "A Task's lifetime is not tracked by the language the way a returned value is -- if nothing keeps a reference to it and awaits it, it can be silently garbage-collected mid-flight, dropping whatever work it was doing with no error at all."
+  },
+  {
+    q: "A function is annotated `def greeting(name: str) -> str:`. What does that annotation actually guarantee at runtime?",
+    options: [
+      "Python will raise TypeError if name is not a str",
+      "Nothing by itself -- annotations are not enforced at runtime; only a checker like mypy/pyright (run separately, before execution) or your own validation code can catch a mismatch",
+      "The function will fail to import if called with the wrong type",
+      "mypy runs automatically every time the function is called"
+    ],
+    answer: 1,
+    explain: "Type hints are not enforced by the interpreter. Nothing stops `greeting(None)` from running and blowing up somewhere inside the function body -- catching the mismatch requires a separate static-checker run or explicit runtime validation."
+  },
+  {
+    q: "Why does this module's reading order put 'follow mutable data flow' before 'read type hints'?",
+    options: [
+      "Type hints are never useful",
+      "A type hint can claim a value is immutable-looking (e.g. list[int]) while the function body still mutates the caller's actual list object -- the hint alone doesn't tell you that",
+      "Mutable data flow is only relevant in code with no type hints at all",
+      "There is no meaningful order; all four checks are interchangeable"
+    ],
+    answer: 1,
+    explain: "A signature like `def f(items: list[int]) -> None` says nothing about whether the function mutates the list it was given -- that's a behavioral fact you can only get by reading (or testing) the body, which is exactly why mutable-data-flow is checked independently of the type hints."
+  }
+];
+
+<Quiz client:visible id="reading-python/index" questions={quizReadingPythonIndex} />
+
+<ProgressTracker client:visible id="reading-python/index" />

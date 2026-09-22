@@ -5,9 +5,12 @@ sidebar:
   order: 2
 ---
 
+import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Event loop
 
@@ -63,6 +66,21 @@ unused = greet("Python")
 unused.close()
 ```
 
+## Warning เรื่อง never-awaited ไม่ใช่แค่ความสวยงาม
+
+`RuntimeWarning` ด้านบนคือ CPython กำลังบอกว่าเนื้อหาของ coroutine **ไม่เคยรันเลย** — ไม่ใช่แค่ lint จุกจิก ในโค้ด production เรื่องนี้มักหมายความว่าลืมใส่ `await` หน้าการเรียก ซึ่งทำให้ network request, database write หรือ `asyncio.sleep` ที่ตั้งใจไว้กลายเป็น no-op แบบเงียบๆ:
+
+```python
+async def send_email(to: str) -> None:
+    print(f"sending email to {to}")
+
+async def process_signup(email: str) -> None:
+    send_email(email)   # BUG: missing `await` — the coroutine object is created and discarded
+    print("signup processed")
+```
+
+การเรียก `process_signup("a@example.com")` จะพิมพ์ `signup processed` และ return ตามปกติ — ไม่มี exception ไม่มีอาการชัดเจน สัญญาณเดียวที่มีแบบ real-time คือ `RuntimeWarning` เมื่อ coroutine object ถูก garbage-collect นี่คือเหตุผลที่ `-X dev` (หรือ `-W error::RuntimeWarning` ใน CI) ควรอยู่ใน test suite ของ asyncio ทุกชุด: มันเปลี่ยน no-op เงียบๆ ให้กลายเป็น failure ทันทีที่จุดเรียกที่ลืม `await`
+
 ## `await` หยุดและกลับมาทำงาน
 
 keyword `await` ใช้ได้เฉพาะภายในฟังก์ชัน `async def` เท่านั้น
@@ -88,6 +106,48 @@ asyncio.run(main())
 # data-A
 ```
 
+## `await` แบบ sequential ใน loop เทียบกับ `asyncio.gather`
+
+การเขียน `for item in items: await do(item)` คือรูปแบบที่พบบ่อยที่สุดที่ทำให้โค้ด async ที่ AI สร้างดูเหมือน concurrent แต่จริงๆ ไม่ใช่ แต่ละ iteration รอทั้งหมดจนกว่า iteration ก่อนหน้าจะเสร็จ — loop นี้เป็นแบบ sequential ทีละ `await`:
+
+```python
+import asyncio
+import time
+
+async def fetch(label: str) -> str:
+    await asyncio.sleep(0.2)
+    return f"{label} done"
+
+async def sequential() -> None:
+    start = time.perf_counter()
+    results = []
+    for label in ["A", "B", "C"]:
+        results.append(await fetch(label))   # each await blocks the loop until this one finishes
+    print(f"sequential: {round(time.perf_counter() - start, 1)}s")   # ~0.6s (3 × 0.2s)
+
+asyncio.run(sequential())
+```
+
+`asyncio.gather` schedule coroutines ทั้งสามตัวพร้อมกันแทน ดังนั้นเวลารวมคือของตัวที่ *ช้าที่สุด* ไม่ใช่ผลรวม:
+
+```python
+import asyncio
+import time
+
+async def fetch(label: str) -> str:
+    await asyncio.sleep(0.2)
+    return f"{label} done"
+
+async def concurrent() -> None:
+    start = time.perf_counter()
+    await asyncio.gather(fetch("A"), fetch("B"), fetch("C"))
+    print(f"gather: {round(time.perf_counter() - start, 1)}s")   # ~0.2s (all three overlap)
+
+asyncio.run(concurrent())
+```
+
+กฎง่ายๆ คือ: `for` loop ที่ `await` งานที่เป็นอิสระต่อกันทีละตัวคือ bug ที่รอให้เจอตอน code review เว้นแต่แต่ละ iteration ต้องพึ่งผลลัพธ์ของ iteration ก่อนหน้าจริงๆ
+
 ## `asyncio.run` — จุดเข้าหลัก
 
 `asyncio.run(coro)` สร้าง event loop ใหม่, รัน coroutine จนเสร็จสมบูรณ์, ปิด loop และคืนค่าผลลัพธ์
@@ -104,7 +164,20 @@ result = asyncio.run(compute(7))
 print(result)    # 49
 ```
 
-เรียก `asyncio.run` ครั้งเดียวต่อโปรแกรม ที่ระดับบนสุด อย่า nest การเรียก `asyncio.run` — การเรียกภายในจะ raise `RuntimeError: This event loop is already running`
+การเรียก `asyncio.run` ครั้งที่สอง แบบ sequential หลังจากครั้งแรก return และปิด loop ไปแล้ว ทำได้ปกติ — แต่ละครั้งได้ loop ใหม่เป็นของตัวเอง:
+
+```python
+import asyncio
+
+async def compute(x: int) -> int:
+    await asyncio.sleep(0)
+    return x ** 2
+
+print(asyncio.run(compute(3)))   # 9
+print(asyncio.run(compute(3)))   # 9 — a second, independent event loop, same process
+```
+
+สิ่งที่ *ไม่* ปกติคือการเรียก `asyncio.run` **จากภายใน** coroutine ที่กำลังรันบน loop อยู่แล้ว — นั่นคือ nesting ไม่ใช่ sequencing และมันจะ raise `RuntimeError` ดูบท Async / Await สำหรับ failure mode แบบนี้
 
 ## `asyncio.gather` — รัน coroutines แบบ concurrent
 
@@ -189,7 +262,85 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-## ส่องโปรแกรมที่กำลังรันอยู่ (Python 3.14)
+## `async with` และ `async for`
+
+Asynchronous context manager และ iterator มีเหตุผลเดียวกับ synchronous — setup/teardown และ iteration — เพียงแต่ `__aenter__`/`__aexit__`/`__anext__` เป็น coroutines ดังนั้นแต่ละขั้นตอนสามารถ `await` ได้เอง (เช่น async DB driver ที่ flush connection, async generator ที่รอ chunk ถัดไป):
+
+```python
+import asyncio
+
+class AsyncResource:
+    async def __aenter__(self) -> "AsyncResource":
+        await asyncio.sleep(0.01)          # e.g. an async connection handshake
+        print("acquired resource")
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await asyncio.sleep(0.01)          # e.g. an async flush/close
+        print("released resource")
+
+async def numbers(n: int):
+    for i in range(n):
+        await asyncio.sleep(0.01)
+        yield i                             # an async generator — defines __anext__ automatically
+
+async def main() -> None:
+    async with AsyncResource() as res:
+        print("using the resource")
+
+    async for i in numbers(3):
+        print(f"got {i}")
+
+asyncio.run(main())
+```
+
+การ break ออกจาก `async for` loop ก่อนกำหนดขณะวนบน async generator สามารถทำให้ generator ค้างอยู่กลาง `yield` โดยไม่ได้รัน cleanup (`finally`, `try`/`except GeneratorExit`) `contextlib.aclosing` ปิดมันให้แน่นอนไม่ว่ากรณีใด เหมือนกับที่ generator ธรรมดาใน `for` loop ได้ฟรีจาก reference counting:
+
+```python
+from contextlib import aclosing
+
+async def numbers(n: int):
+    for i in range(n):
+        yield i
+
+async def main() -> None:
+    async with aclosing(numbers(5)) as gen:
+        async for i in gen:
+            if i == 1:
+                break
+    # gen.aclose() already ran here, even though the loop exited early
+
+asyncio.run(main())
+```
+
+## `CancelledError` เป็น `BaseException` — ต้อง re-raise เสมอ
+
+`asyncio.CancelledError` inherit จาก `BaseException` ไม่ใช่ `Exception` (ตั้งแต่ Python 3.8) เป็นการตั้งใจ: handler `except Exception:` แบบกว้างๆ — ที่มีไว้จับ error ระดับ application — ต้องไม่จับและทิ้ง cancellation request โดยไม่ตั้งใจ:
+
+```python
+import asyncio
+
+async def leaky_cancel_handler() -> None:
+    try:
+        await asyncio.sleep(10)
+    except Exception as e:
+        # This does NOT match CancelledError — it inherits from BaseException.
+        print(f"caught: {e!r}")
+
+async def main() -> None:
+    task = asyncio.create_task(leaky_cancel_handler())
+    await asyncio.sleep(0.01)
+    task.cancel()
+    await task   # CancelledError propagates straight through — except Exception never ran
+
+asyncio.run(main())
+```
+
+ถ้าต้องการดัก cancellation เพื่อทำ cleanup — ปิดไฟล์, ปล่อย lock — ให้จับ `asyncio.CancelledError` โดยเฉพาะ รัน cleanup แล้วจบด้วย `raise` เพื่อให้ cancellation ทำงานต่อเสมอ การกลืนมัน (`except asyncio.CancelledError: pass`) จะทำให้ task ดู "ถูกยกเลิก" ในสายตาผู้เรียก ทั้งที่โค้ดของคุณยังรันต่อผ่านจุด cancellation ไป ซึ่งทำลาย guarantee ที่ `TaskGroup`/`wait_for`/`timeout()` ทั้งหมดพึ่งพา
+
+## Debug mode และการส่องโปรแกรมที่กำลังรันอยู่ (Python 3.14)
+
+`asyncio.run(main(), debug=True)` (หรือ environment variable `PYTHONASYNCIODEBUG=1`) เปิด check เพิ่มเติม: log coroutine ที่ไม่เคยถูก await ตั้งแต่ตอนที่เกิดขึ้น (ไม่ใช่แค่ตอน GC), เตือนเมื่อ callback block loop นานเกินไป และรายงาน "Task was destroyed but it is pending"
 
 เวลา async service ค้าง คำถามที่ยากคือ coroutine ตัวไหนที่ติดอยู่ Python 3.14 เข้าไปเกาะ process ที่ *กำลังรัน*
 แล้วพิมพ์ task tree ออกมาได้เลย ไม่ต้องใส่ instrument ไม่ต้อง restart:
@@ -203,10 +354,182 @@ python -m asyncio pstree 12345  # ต้นไม้ของ await
 เกาะ process ที่รันอยู่ได้ด้วย ส่วนภายใน code ของคุณเอง `asyncio.capture_call_graph()` และ
 `asyncio.print_call_graph()` ให้ภาพเดียวกันสำหรับ task ปัจจุบัน
 
-<Callout title="รันตัวอย่างเหล่านี้ในเครื่องของคุณ">
-บทนี้ไม่มี in-browser runner — รันตัวอย่างในเครื่องของคุณด้วย `python3.14` ทุกตัวอย่างใช้
-`asyncio.run(main())` ซึ่งเป็น entry point มาตรฐาน: วาง code ลงในไฟล์ `.py` แล้วรันด้วย
-`python3 asyncio_basics.py`
+## Depth demo: ทุกอย่างข้างบน รันจริง
+
+export const asyncioBasicsDepthCode = `
+import asyncio
+import time
+from contextlib import aclosing
+
+# --- sequential await in a loop vs asyncio.gather ---
+async def fetch(label: str) -> str:
+    await asyncio.sleep(0.2)
+    return f"{label} done"
+
+async def sequential() -> float:
+    start = time.perf_counter()
+    results = []
+    for label in ["A", "B", "C"]:
+        results.append(await fetch(label))  # each iteration waits for the previous one
+    elapsed = time.perf_counter() - start
+    print(f"  sequential: {results}")
+    return elapsed
+
+async def concurrent() -> float:
+    start = time.perf_counter()
+    results = await asyncio.gather(fetch("A"), fetch("B"), fetch("C"))
+    elapsed = time.perf_counter() - start
+    print(f"  gather:     {results}")
+    return elapsed
+
+# --- async with / async for / async generators ---
+class AsyncResource:
+    async def __aenter__(self) -> "AsyncResource":
+        await asyncio.sleep(0.01)
+        print("  acquired resource")
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await asyncio.sleep(0.01)
+        print("  released resource")
+
+    async def read(self) -> str:
+        return "resource data"
+
+async def numbers(n: int):
+    for i in range(n):
+        await asyncio.sleep(0.01)
+        yield i
+
+async def demo_async_with_for() -> None:
+    async with AsyncResource() as res:
+        print(f"  got: {await res.read()}")
+
+    async for i in numbers(3):
+        print(f"  async for got: {i}")
+
+    gen = numbers(5)
+    async with aclosing(gen):
+        async for i in gen:
+            print(f"  early-exit item: {i}")
+            if i == 1:
+                break
+    print("  aclosing closed the generator cleanly despite the early break")
+
+# --- CancelledError is a BaseException, not an Exception ---
+async def leaky_cancel_handler() -> None:
+    try:
+        await asyncio.sleep(10)
+    except Exception as e:
+        print(f"  except Exception caught: {e!r}")  # never runs
+
+async def correct_cancel_handler() -> None:
+    try:
+        await asyncio.sleep(10)
+    except asyncio.CancelledError:
+        print("  cleaning up before re-raising")
+        raise
+
+async def demo_cancellation() -> None:
+    task = asyncio.create_task(leaky_cancel_handler())
+    await asyncio.sleep(0.01)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        print("  CancelledError propagated out untouched -- except Exception inside never matched it")
+
+    task2 = asyncio.create_task(correct_cancel_handler())
+    await asyncio.sleep(0.01)
+    task2.cancel()
+    try:
+        await task2
+    except asyncio.CancelledError:
+        print("  task cancelled cleanly after cleanup ran")
+
+async def main() -> None:
+    print("=== sequential vs gather ===")
+    seq_time = await sequential()
+    con_time = await concurrent()
+    print(f"  sequential took {round(seq_time, 1)}s, gather took {round(con_time, 1)}s")
+
+    print("=== async with / async for / async generators ===")
+    await demo_async_with_for()
+
+    print("=== CancelledError must be re-raised ===")
+    await demo_cancellation()
+
+asyncio.run(main())
+`.trim();
+
+<Playground code={asyncioBasicsDepthCode} />
+
+<Callout title="รันตัวอย่าง walkthrough ในเครื่องของคุณ">
+ตัวอย่างแบบ prose ด้านบนใช้ `\`\`\`python` fence ธรรมดา และตั้งใจให้วางลงไฟล์ `.py` แล้วรันด้วย `python3.14` Depth demo Playground ด้านบนรัน idea เดียวกันแบบ live ในเบราว์เซอร์ผ่าน Pyodide
+</Callout>
+
+## Mental Model
+
+ลองนึกภาพ event loop เป็นพนักงานคนเดียวที่โต๊ะเดียวมี in-tray เดียว ทุก coroutine คือ task ที่นั่งอยู่ใน tray นั้น พนักงานหยิบ task มาทำจนกว่าจะเจอ `await` — นั่นคือ coroutine กำลังบอกว่า "ฉันกำลังรอสิ่งภายนอกอยู่ ช่วยเอาฉันกลับไปวางใน tray แล้วไปทำงานของคนอื่นระหว่างนี้" พนักงานไม่เคยทำสอง task พร้อมกันในเสี้ยววินาทีเดียวกัน เพียงแต่ไม่เคยนั่งว่างรอ I/O ตัวหนึ่งในขณะที่ task อื่นพร้อมทำงานอยู่
+
+<Mermaid code={`sequenceDiagram
+  participant EventLoop as Event loop
+  participant A as Coroutine A
+  participant B as Coroutine B
+  A->>EventLoop: await asyncio.sleep(0.2)
+  EventLoop->>B: run B until its next await
+  B->>EventLoop: await asyncio.sleep(0.1)
+  EventLoop-->>B: B's sleep is done first — resume B
+  B->>EventLoop: return
+  EventLoop-->>A: A's sleep is done — resume A
+  A->>EventLoop: return`} title="await หนึ่งครั้งคืนการควบคุมให้ loop เสมอ loop จะรัน coroutine ที่พร้อมก่อนตัวไหนก่อน" />
+
+นี่คือเหตุผลที่ coroutine เดียวที่ไม่เคย `await` ใน loop ยาวๆ ทำให้ทุกตัวอื่นอดตาย: พนักงานไม่สามารถวาง task ลงแล้วสลับออกไปได้ — มีแค่ `await` เท่านั้นที่สร้างโอกาสนั้น
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| Event loop เธรดเดียว | ไม่ต้องใช้ lock สำหรับโค้ดระหว่างจุด `await` | coroutine ช้าตัวเดียวที่ไม่ `await` block ทุกตัวอื่น |
+| `asyncio.gather` | fan-out แบบ concurrent ง่ายๆ โค้ดน้อย | exception แรกยกเลิก siblings เว้นแต่ใช้ `return_exceptions=True` |
+| `TaskGroup` (3.11+) | lifetime มีโครงสร้าง ยกเลิก sibling อัตโนมัติเมื่อ fail | API ใหม่; ต้องใช้ `except*` เพื่อแกะ `ExceptionGroup` |
+| `async with` / `async for` | setup/teardown และ iteration `await` ได้เอง | `async for` ที่ break ตรงๆ อาจข้าม cleanup ของ generator — ต้องใช้ `aclosing` |
+| `-X dev` / debug mode | เห็น coroutine ที่ไม่เคย await และ callback ช้าทันที | overhead เพิ่ม — ใช้เฉพาะ dev/CI ไม่ใช่ production |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"`asyncio` ให้ parallelism"** จริงๆ มันให้ concurrency บนเธรดเดียว coroutine สองตัวไม่เคยรัน bytecode ในเสี้ยววินาทีเดียวกัน ตัวหนึ่งต้อง yield ผ่าน `await` ก่อนตัวอื่นจะทำงานต่อ
+- **"`for` loop ของ `await` calls concurrent อยู่แล้วเพราะเป็น async code"** ไม่จริง — แต่ละ `await` ใน loop body ยัง block iteration นั้นจนกว่าจะเสร็จ มีแค่การ schedule ด้วย `gather`/`TaskGroup`/`create_task` เท่านั้นที่ทำให้มันซ้อนกันได้
+- **"`except Exception` ปลอดภัยสำหรับ catch-all ใน async code"** มันพลาด `asyncio.CancelledError` แบบเงียบๆ — ซึ่งถูกต้องตาม contract ของ `Exception` แต่มักทำให้คนที่คาดว่ามันจะจับ "อะไรก็ตามที่ผิดพลาด" ประหลาดใจ
+- **"เรียก `asyncio.run` สองครั้งคือ nesting event loops"** เรียกสองครั้งติดกันที่ระดับบนสุดทำได้ปกติ — แต่ละครั้งได้ loop อิสระ Nesting หมายถึงเรียก **จากภายใน** coroutine ที่กำลังรันอยู่แล้ว ซึ่งเป็นคนละเรื่อง (และพังเสมอ)
+- **"coroutine ที่ไม่เคย await แค่เปลืองหน่วยความจำ"** มันยังหมายความว่า *เนื้อหาของ coroutine ไม่เคยรันเลย* — side effect ใดๆ ข้างใน (การเขียน, request, การเปลี่ยนสถานะ) ไม่เคยเกิดขึ้นแบบเงียบๆ
+
+## อ่านโค้ดที่ AI เขียน
+
+ก่อนเชื่อโค้ด `asyncio` ที่ AI สร้าง ตรวจสิ่งเหล่านี้:
+
+- ทุก `async def` call ถูก `await`, `create_task`, หรือส่งเข้า `gather`/`TaskGroup` จริงหรือไม่? การเรียก `coro_fn(...)` เปล่าๆ โดยไม่มี `await` สร้าง coroutine object แล้วไม่ทำอะไรต่อ
+- มี `except Exception:` แบบกว้างๆ ใน coroutine ที่ `task.cancel()` เข้าถึงได้หรือไม่? ถ้ามี มันจะ re-raise เมื่อเจอ `asyncio.CancelledError` หรือไม่ หรือโค้ดที่สร้างใช้ `except:` เปล่าๆ ที่กลืน cancellation ไปพร้อมกับ bug จริง?
+- มี `for` loop ที่ `await` งานอิสระทีละตัวในจุดที่ควรใช้ `gather`/`TaskGroup` อย่างชัดเจนหรือไม่?
+- `async for` บน generator มี `break` ก่อนกำหนดโดยไม่ใช้ `aclosing` หรือไม่?
+- โค้ดรันภายใต้ `-X dev` หรือ `-W error::RuntimeWarning` ใน CI หรือไม่ เพื่อให้ `await` ที่ลืมใส่ fail แบบดังชัดแทนที่จะไม่ทำอะไรแบบเงียบๆ?
+
+<SpotTheBug code={`async def close_connection(conn) -> None:
+    await conn.aclose()
+
+async def handle_request(conn) -> None:
+    try:
+        await conn.serve()
+    except asyncio.CancelledError:
+        pass  # "handle" cancellation quietly
+    finally:
+        await close_connection(conn)
+`} lang="python">
+โค้ดนี้ดูรอบคอบ — มี `finally` ที่ปิด connection ด้วยซ้ำ แต่ `except asyncio.CancelledError: pass` กลืน cancellation แทนที่จะ re-raise: จากมุมมองผู้เรียก (`TaskGroup`, `wait_for`, หรือ `timeout()` ที่ยกเลิก task นี้) task ไม่ได้หยุดจริงๆ — มันยังรันต่อผ่านจุด cancellation ไปแล้ว return ตามปกติแทน โค้ดใดๆ ที่รอให้ task นี้ถูกยกเลิกจริง (เพื่อดำเนินการ shutdown ของตัวเอง หรือรู้ว่างานถูกยกเลิก) จะค้างหรือได้ผลลัพธ์ผิด วิธีแก้คือทำ cleanup ใน `except` block แล้ว `raise` (หรือลบ `except asyncio.CancelledError` ออกไปเลยแล้วพึ่ง `finally` ซึ่งรันเสมอไม่ว่า exception จะถูก re-raise หรือไม่)
+</SpotTheBug>
+
+<Callout title="await คือจุดเดียวที่การควบคุมเปลี่ยนมือ">
+ระหว่าง `await` expression สองตัว coroutine รันเหมือน synchronous code ธรรมดาทุกประการ — ไม่มี coroutine อื่นแทรกได้ Concurrency ใน asyncio เกิดขึ้นแค่ *ที่* `await` เท่านั้น และเกิดเมื่อคุณ schedule มากกว่าหนึ่ง coroutine อย่างชัดเจน (`gather`, `TaskGroup`, `create_task`) `for` loop ของ `await` แบบ sequential ไม่ concurrent เพียงเพราะฟังก์ชันเป็น `async def`
 </Callout>
 
 export const quizAsyncioBasics = [
@@ -218,7 +541,8 @@ export const quizAsyncioBasics = [
       "Future",
       "None"
     ],
-    answer: 1
+    answer: 1,
+    explain: "การเรียก coroutine function ไม่ได้รัน body เลย -- มันสร้างและคืน coroutine object เท่านั้น body จะรันก็ต่อเมื่อ object นั้นถูก await หรือ schedule บน event loop (create_task, gather, TaskGroup)"
   },
   {
     q: "entry point มาตรฐานสำหรับรัน top-level async coroutine คืออะไร?",
@@ -228,27 +552,63 @@ export const quizAsyncioBasics = [
       "await coro ที่ระดับ module",
       "asyncio.start(coro)"
     ],
-    answer: 1
+    answer: 1,
+    explain: "asyncio.run(coro) สร้าง event loop ใหม่ ขับ coroutine จนเสร็จ แล้วปิด loop -- เป็น entry point มาตรฐานเรียกครั้งเดียวสำหรับโปรแกรม async ใน Python 3.7+"
   },
   {
-    q: "`asyncio.gather(a(), b(), c())` รับประกันอะไรเกี่ยวกับลำดับผลลัพธ์?",
+    q: "```python\nasync def fetch(label, delay):\n    await asyncio.sleep(delay)\n    return label\n\nasync def main():\n    results = []\n    for label, delay in [(\"A\", 0.2), (\"B\", 0.2), (\"C\", 0.2)]:\n        results.append(await fetch(label, delay))\n    print(results)\n\nasyncio.run(main())\n```\nใช้เวลาประมาณเท่าไหร่ และเพราะอะไร?",
     options: [
-      "ผลลัพธ์อยู่ในลำดับ completion — coroutine ที่เร็วสุดก่อน",
-      "ผลลัพธ์อยู่ในลำดับ input ไม่ว่า coroutine ไหนจะเสร็จก่อน",
-      "ผลลัพธ์เรียงตามตัวอักษรของชื่อ coroutine",
-      "ลำดับไม่แน่นอน"
+      "~0.2s -- asyncio รันทุกอย่างแบบ concurrent โดยค่าเริ่มต้น",
+      "~0.6s -- แต่ละ await ใน loop block จนกว่า call นั้นจะเสร็จก่อนตัวถัดไปจะเริ่ม",
+      "~0.0s -- await ไม่ block",
+      "ค้างตลอดไป"
     ],
-    answer: 1
+    answer: 1,
+    explain: "await ใน for loop เป็นแบบ sequential: loop body หยุดและกลับมาทำงานทีละรอบ ดังนั้น sleep 0.2s สามตัวรวมกันได้ประมาณ 0.6s มีแค่การ schedule พร้อมกัน (gather หรือ TaskGroup) เท่านั้นที่จะทำให้การรอซ้อนกันได้"
   },
   {
-    q: "argument ใดใน `asyncio.gather` ทำให้ `gather` คืน exceptions เป็น values แทนการส่งต่อ?",
+    q: "ทำไม `asyncio.CancelledError` ถึงไม่ถูก `except Exception:` จับ?",
     options: [
-      "ignore_errors=True",
-      "safe_mode=True",
-      "return_exceptions=True",
-      "collect_errors=True"
+      "การจับ CancelledError เป็น syntax error",
+      "CancelledError inherit จาก BaseException ไม่ใช่ Exception โดยการออกแบบ",
+      "asyncio ปิดการใช้ except Exception ภายใน coroutine",
+      "มันเกิดขึ้นนอก try block เท่านั้น"
     ],
-    answer: 2
+    answer: 1,
+    explain: "ตั้งแต่ Python 3.8 asyncio.CancelledError inherit ตรงจาก BaseException นี่คือความตั้งใจ: except Exception แบบกว้างๆ ที่มีไว้จับ bug ระดับ application ไม่ควรจับและทิ้ง cancellation request โดยไม่ตั้งใจ"
+  },
+  {
+    q: "```python\nasync def main():\n    print(9)\n\nasyncio.run(main())\nasyncio.run(main())\n```\nเกิดอะไรขึ้นเมื่อรันโค้ดนี้?",
+    options: [
+      "RuntimeError: event loop is already running",
+      "พิมพ์ 9 สองครั้ง -- แต่ละ asyncio.run call ได้ event loop อิสระของตัวเอง",
+      "asyncio.run ครั้งที่สองถูกข้ามแบบเงียบๆ",
+      "deadlock"
+    ],
+    answer: 1,
+    explain: "การเรียก asyncio.run แบบ sequential โดยครั้งแรกเสร็จสมบูรณ์ก่อนครั้งถัดไปจะเริ่ม รองรับได้เต็มที่ -- แต่ละครั้งสร้าง loop ใหม่แล้วปิดหลังเสร็จ RuntimeError เกิดเฉพาะเมื่อเรียก asyncio.run จาก*ภายใน*coroutine ที่กำลังรันอยู่บน loop แล้ว (nesting ไม่ใช่ sequencing)"
+  },
+  {
+    q: "```python\nasync def numbers(n):\n    for i in range(n):\n        yield i\n\nasync def main():\n    async with aclosing(numbers(5)) as gen:\n        async for i in gen:\n            if i == 1:\n                break\n```\n`aclosing` รับประกันอะไรที่ loop ธรรมดาไม่มี `async with` จะไม่รับประกัน?",
+    options: [
+      "loop จะรันครบทั้ง 5 item ไม่ว่าจะมี break",
+      "cleanup ของ async generator (aclose) จะรันแม้ loop จะออกก่อนกำหนดผ่าน break",
+      "generator จะเริ่มนับใหม่จาก 0 ในการเรียกครั้งถัดไป",
+      "ไม่มีผลอะไร -- aclosing ไม่มีผลกับ generator"
+    ],
+    answer: 1,
+    explain: "การ break ออกจาก async for loop ก่อนกำหนดสามารถทำให้ async generator ที่อยู่ข้างใต้ค้างอยู่กลาง yield โดยไม่เคยรัน cleanup path เลย contextlib.aclosing ห่อ generator ด้วย async context manager ที่เรียก aclose() ตอนออก รับประกันว่า cleanup รันไม่ว่า loop จะจบปกติหรือออกก่อนกำหนด"
+  },
+  {
+    q: "ภายใต้ `python3.14 -X dev` อะไรทำให้เกิด `RuntimeWarning: coroutine '...' was never awaited`?",
+    options: [
+      "การเรียกฟังก์ชัน async def ด้วยจำนวน argument ผิด",
+      "coroutine object ถูก garbage-collect โดยไม่เคยถูก await หรือปิดเลย",
+      "การใช้ async def แทน def",
+      "การลืมเรียก asyncio.run เลย"
+    ],
+    answer: 1,
+    explain: "coroutine object ทุกตัวติดตามว่ามันเคยถูก await หรือปิดอย่างชัดเจนหรือไม่ ถ้าถูก garbage-collect โดยที่ทั้งสองอย่างไม่เกิดขึ้น เนื้อหาของมัน*ไม่เคยรันเลย* -- warning จะขึ้นตอนนั้น นี่คือเหตุผลที่ -X dev / -W error::RuntimeWarning ใน CI จับ await ที่ลืมใส่ได้ทันทีแทนที่จะปล่อยให้ไม่ทำอะไรแบบเงียบๆ"
   }
 ];
 

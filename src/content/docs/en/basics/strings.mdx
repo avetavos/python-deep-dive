@@ -1,6 +1,6 @@
 ---
 title: Strings
-description: 'String methods, slicing, f-strings, t-strings (Python 3.14), join/split, and immutability in Python.'
+description: 'String methods, slicing, bytes vs str, f-strings, t-strings (Python 3.14), the strip() cutset trap, repr vs str, and why += in a loop is quadratic.'
 sidebar:
   order: 5
 ---
@@ -9,6 +9,8 @@ import Playground from '../../../../components/Playground.astro';
 import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
 
 ## Strings are sequences of Unicode characters
 
@@ -54,6 +56,22 @@ print(s[-7:])    # Python!
 print(s[::-1])   # !nohtyP ,olleH  (reversed)
 print(s[::2])    # Hlo yhn
 ```
+
+## `bytes` vs `str`
+
+`str` is text — an immutable sequence of Unicode *code points*, with no inherent byte size. `bytes` is raw data — an immutable sequence of integers 0–255. Everything crossing a network socket, a file opened in binary mode, or most encryption/hashing APIs is `bytes`, not `str`. `.encode()` turns `str` into `bytes` using a named encoding; `.decode()` turns `bytes` back into `str`, and raises `UnicodeDecodeError` if the bytes are not valid for that encoding:
+
+```python
+s = "café"
+b = s.encode("utf-8")
+print(b)                    # b'caf\xc3\xa9'
+print(len(s), len(b))       # 4 5 -- "é" is one character but two UTF-8 bytes
+print(b.decode("utf-8"))    # café
+
+b.decode("ascii")   # UnicodeDecodeError: 'ascii' codec can't decode byte 0xc3 ...
+```
+
+`len(s)` counts *characters*; `len(b)` counts *bytes* — they only agree when every character is ASCII. Decoding with the wrong encoding is a common source of crashes when data crosses a boundary (a file, a network response, a subprocess) without an explicit, matching `encoding=` on both ends.
 
 ## f-strings (formatted string literals)
 
@@ -121,8 +139,19 @@ print(shout(t"hello {variety}, and {1 + 1} more"))
 
 <Playground code={tstringCode} />
 
+## Choosing `str.format`, an f-string, or a t-string
+
+All three share the same `{}`/format-spec mini-language, but they answer different questions:
+
+| Form | Evaluates to | When |
+|---|---|---|
+| `str.format(...)` | `str`, immediately | The template string is data — read from a config file, a translation table, or user-supplied at runtime, so it cannot be an f-string literal in your source |
+| f-string | `str`, immediately | You want finished text right now, in your own source code, and nothing downstream needs to tell values apart from literal text |
+| t-string | `Template`, lazily | The result is headed somewhere that must escape or validate values separately from literal text — SQL, HTML, a shell command, a logging framework that redacts fields |
+
 Reach for an f-string when you want text now. Reach for a t-string when something downstream has to know
-which parts came from your program and which came from your data.
+which parts came from your program and which came from your data. Reach for `str.format` only when the
+template itself is not a literal in your source.
 
 ## `join()` and `split()`
 
@@ -138,7 +167,57 @@ print(parts)
 print(rejoined)
 ```
 
+## String concatenation in a loop is quadratic
+
+`str` is immutable, so `result += "x"` does not extend `result` in place — it builds an **entirely new** string object, copying every existing character plus the new one, then rebinds `result` to it. Doing that `n` times copies roughly `1 + 2 + ... + n` characters in total: O(n²). `"".join(pieces)` computes the total length once and copies each character exactly once: O(n).
+
+```python
+import time
+
+n = 20000
+start = time.perf_counter()
+result = ""
+for i in range(n):
+    result += "x"
+concat_time = time.perf_counter() - start
+
+start = time.perf_counter()
+joined = "".join("x" for _ in range(n))
+join_time = time.perf_counter() - start
+
+print(result == joined)                       # True
+print(concat_time > join_time)                # True (machine-dependent, but the trend holds)
+```
+
 Always join with a string method (`", ".join(items)`), never concatenate in a loop — loop concatenation creates O(n²) intermediate strings.
+
+## The `strip()` cutset trap
+
+`s.strip(chars)` does not remove a literal prefix/suffix substring — `chars` is treated as a **set of individual characters**, each stripped from both ends for as long as it keeps matching:
+
+```python
+domain = "www.example.com"
+print(domain.strip("www."))          # "example.com" -- looks correct... but only by luck
+
+messy = "www.wow.com"
+print(messy.strip("www."))           # "ow.com" -- also eats the "w" that starts "wow"
+print(messy.removeprefix("www."))    # "wow.com" -- compares a literal substring instead
+```
+
+`strip("www.")` builds the cutset `{'w', '.'}` — any run of `w` or `.` characters at either end gets removed, regardless of order or how many there are. It happened to give the "right" answer for `domain` only because none of `example.com`'s edge characters are `w` or `.`. The moment the real content starts with one of those characters (`"wow.com"`), `strip` eats into it. Use `removeprefix()` / `removesuffix()` (Python 3.9+) when you mean "remove this exact substring," and reserve `strip()` for "trim any of these characters" (like whitespace).
+
+## `repr()` vs `str()`
+
+`str(obj)` produces a human-readable form; `repr(obj)` produces an unambiguous, developer-facing form — ideally one that could be pasted back into Python to recreate the object. `print()` uses `str()`; the REPL and containers (printing a `list` of strings) use `repr()`:
+
+```python
+text = "line1\nline2"
+print(str(text))    # line1
+                     # line2   (an actual newline)
+print(repr(text))   # 'line1\nline2'  (the escape sequence, visible, on one line)
+```
+
+This is why `print(["a\n", "b"])` shows `['a\n', 'b']` with the escape visible, even though `print("a\n")` alone shows a real line break — a list's `str()` falls back to calling `repr()` on each element, precisely so escape characters and quote boundaries stay visible instead of scrambling the output.
 
 ## Full runnable demo
 
@@ -174,6 +253,98 @@ except TypeError as e:
 
 <Playground code={stringsCode} />
 
+The second playground is a tour of the pitfalls above: encoding/decoding, the `strip()` cutset trap, `repr` vs `str`, and the quadratic cost of looped concatenation.
+
+export const stringsDepthCode = `
+import time
+
+# 1. bytes vs str: encoding, decoding, and the errors that cross the boundary.
+s = "café"
+b = s.encode("utf-8")
+print("encoded:", b)
+print("len(str) vs len(bytes):", len(s), len(b))
+print("decoded back:", b.decode("utf-8"))
+try:
+    b.decode("ascii")
+except UnicodeDecodeError as e:
+    print(f"UnicodeDecodeError: {e}")
+
+# 2. The strip() cutset trap: the argument is a SET of characters, not a substring.
+domain = "www.example.com"
+print(domain.strip("www."))          # "example.com" -- looks correct, but only by luck
+
+messy = "www.wow.com"
+print(messy.strip("www."))           # over-strips: eats into "wow" too
+print(messy.removeprefix("www."))    # removeprefix compares a literal substring instead
+
+# 3. repr() vs str().
+text = "line1\\nline2"
+print(str(text))    # the actual two lines
+print(repr(text))   # one line, escape sequence visible
+
+# 4. += in a loop is O(n^2); "".join is O(n).
+n = 20000
+start = time.perf_counter()
+result = ""
+for i in range(n):
+    result += "x"
+concat_time = time.perf_counter() - start
+
+start = time.perf_counter()
+joined = "".join("x" for _ in range(n))
+join_time = time.perf_counter() - start
+
+print("same content:", result == joined)
+print("concatenation was slower than join:", concat_time > join_time)
+`.trim();
+
+<Playground code={stringsDepthCode} />
+
+## Mental Model
+
+A `str` is not a mutable buffer of characters — every method call, every concatenation, and every slice produces a fresh, independent `str` object. Two names can point at the same string safely (unlike a `list`), because nothing can change it out from under either name. `bytes` follows the same immutable-value model, one layer lower — before Unicode decoding has happened.
+
+<Mermaid code={strTransformDiagram} title="Every string operation returns a new object; str and bytes convert via an explicit encoding" />
+
+export const strTransformDiagram = `flowchart LR
+  str1["str: 'café'"] -->|".encode('utf-8')"| bytesObj["bytes: b'caf\\xc3\\xa9'"]
+  bytesObj -->|".decode('utf-8')"| str2["str: 'café' (new object)"]
+  str1 -->|".upper()"| str3["str: 'CAFÉ' (new object)"]`;
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Immutable `str` | Safe to share across names/threads; usable as a dict key | Every transformation allocates a new string — including one built one character at a time |
+| `bytes`/`str` split | No ambiguity about whether data is decoded text or raw bytes | Every I/O boundary needs an explicit `encoding=`, and a wrong guess raises `UnicodeDecodeError` |
+| f-strings | Fast, readable, evaluated where you write them | The template itself can't be external data (a config value, a translation) |
+| t-strings | Values stay inspectable and escapable before assembly | One more concept to learn; nothing consumes a bare `Template` without library support |
+| `strip()`'s cutset semantics | One method handles "trim any of these characters," useful for whitespace | Easy to mistake for literal-prefix/suffix removal, which is a different operation (`removeprefix`/`removesuffix`) |
+
+## Common Misconceptions
+
+- **"`len(a_string)` and `len(a_string.encode())` are always the same."** Only for pure-ASCII text — any multi-byte character makes the byte length larger than the character count.
+- **"`s.strip("www.")` removes the literal prefix `"www."`."** It removes any run of the characters `w` and `.` from both ends — a character *set*, not a substring. Use `removeprefix`/`removesuffix` for literal removal.
+- **"`str(x)` and `repr(x)` always print the same thing."** They agree for simple numbers, but diverge for strings (quotes and escapes appear in `repr`) and for custom objects, where they can be defined completely differently.
+- **"Building a string with `+=` in a loop is just as fast as `''.join()`."** It is not — `str` is immutable, so each `+=` copies the whole string so far into a new object, making a loop of `n` concatenations O(n²) instead of O(n).
+- **"An f-string and a t-string do the same thing with a different prefix letter."** An f-string is a `str`, finished the instant it's written; a t-string is a `Template` object, still holding literal and interpolated parts separately for something downstream to process.
+
+## Reading AI-generated code
+
+- Does the code build a string with `+=` inside a loop, especially one that could run many iterations, instead of collecting pieces in a list and calling `"".join(...)` once?
+- Does `.strip(...)`, `.lstrip(...)`, or `.rstrip(...)` receive a multi-character argument where the intent looks like "remove this prefix/suffix," rather than "remove any of these characters"? That should probably be `removeprefix`/`removesuffix`.
+- Does the code mix `str` and `bytes` in one expression (for example concatenating a `str` and a `bytes` value), or call `.encode()`/`.decode()` without an explicit `encoding=` and then assume it always succeeds?
+- Does a log message or debug print use `str()` (or an f-string) on a value where the escape-visible, unambiguous form of `repr()` would actually be more useful for diagnosing a bug?
+- Is a template string built by hand with `%` or `.format()` when the string doesn't come from outside the source file — could it just be an f-string, or does it need to be a t-string because the result is headed somewhere with an injection risk?
+
+<SpotTheBug code={`def build_report(rows):
+    text = ""
+    for row in rows:
+        text += f"{row}\\n"
+    return text`} lang="python">
+This function looks correct — it does produce the right string — but for large `rows` it is quietly O(n²): `str` is immutable, so every `text += ...` copies the *entire* string built so far into a brand-new object just to add one more line. With a thousand rows that is roughly half a million characters copied instead of one thousand. The fix collects the pieces in a list and joins once: `return "\n".join(str(row) for row in rows) + "\n"`, which copies each character exactly once regardless of how many rows there are.
+</SpotTheBug>
+
 <Callout title="Strings are immutable">
 Once a string object is created, its characters cannot be changed.
 Every string method returns a **new** string; the original is never modified.
@@ -184,6 +355,56 @@ and call `"".join(pieces)` at the end — this is O(n) instead of O(n²).
 
 export const quizStrings = [
   {
+    q: "```python\ns = \"café\"\nb = s.encode(\"utf-8\")\nprint(len(s), len(b))\n```\nWhat does this print?",
+    options: ["4 4", "4 5", "5 5", "5 4"],
+    answer: 1,
+    explain: "len(s) counts 4 Unicode characters. In UTF-8, 'é' encodes to 2 bytes while the other three characters are 1 byte each, so len(b) is 5."
+  },
+  {
+    q: "```python\nmessy = \"www.wow.com\"\nprint(messy.strip(\"www.\"))\n```\nWhat does this print?",
+    options: [
+      "wow.com",
+      "www.wow.com",
+      "ow.com",
+      "Raises ValueError"
+    ],
+    answer: 2,
+    explain: "strip treats its argument as a set of characters {'w', '.'}, not a literal prefix. It strips every leading w/. character it finds, which eats into the 'w' that starts \"wow\" too, leaving \"ow.com\"."
+  },
+  {
+    q: "What is the idiomatic way to remove exactly the literal prefix \"www.\" from a string, without risking the strip() cutset behavior?",
+    options: [
+      "s.strip(\"www.\")",
+      "s.lstrip(\"www.\")",
+      "s.removeprefix(\"www.\")",
+      "s.replace(\"www.\", \"\")"
+    ],
+    answer: 2,
+    explain: "removeprefix (3.9+) compares a literal substring at the start and removes it only if it matches exactly once -- it never treats the argument as a set of characters the way strip/lstrip do."
+  },
+  {
+    q: "```python\nprint(str(\"a\\nb\"))\nprint(repr(\"a\\nb\"))\n```\nWhat does this print?",
+    options: [
+      "Two identical lines, both showing a literal \\n",
+      "First an actual line break (a then b on separate lines), then 'a\\nb' with the escape visible",
+      "Both raise a SyntaxError",
+      "Both print exactly: a\\nb"
+    ],
+    answer: 1,
+    explain: "str() (used by print) renders the actual newline, producing two visual lines. repr() shows the unambiguous, developer-facing form, with the newline as a visible \\n escape sequence inside quotes."
+  },
+  {
+    q: "Why is building a large string with `result += piece` inside a loop considered O(n^2)?",
+    options: [
+      "Because Python re-parses the loop body on every iteration",
+      "Because each += copies the entire string built so far into a new object, and this happens n times",
+      "Because string addition always triggers garbage collection",
+      "It is not O(n^2) -- str is mutable in CPython, so += is O(1) per call"
+    ],
+    answer: 1,
+    explain: "str is immutable, so result += piece can't extend result in place -- it allocates a new string and copies everything so far plus piece into it. Doing that n times copies roughly 1+2+...+n characters in total, which is O(n^2)."
+  },
+  {
     q: "What does a t-string (Python 3.14) evaluate to?",
     options: [
       "A `str`, exactly like an f-string",
@@ -191,47 +412,8 @@ export const quizStrings = [
       "A compiled regular expression",
       "A lazily evaluated generator of characters"
     ],
-    answer: 1
-  },
-  {
-    q: "What does `\"Hello, World!\"[7:]` return?",
-    options: [
-      "\"Hello, \"",
-      "\"World!\"",
-      "\"orld!\"",
-      "\"W\""
-    ],
-    answer: 1
-  },
-  {
-    q: "Which method is the idiomatic way to concatenate a list of strings?",
-    options: [
-      "str.concat(items)",
-      "sum(items, \"\")",
-      "\"\".join(items)",
-      "reduce(lambda a, b: a + b, items)"
-    ],
-    answer: 2
-  },
-  {
-    q: "What does the `f` prefix in `f\"Hello {name}\"` do?",
-    options: [
-      "Formats the string as a floating-point number",
-      "Evaluates expressions inside {} at runtime",
-      "Creates a frozen (immutable) string constant",
-      "Enables multi-line string syntax"
-    ],
-    answer: 1
-  },
-  {
-    q: "Why are strings described as immutable in Python?",
-    options: [
-      "They cannot be passed to functions",
-      "Their characters cannot be changed after creation; methods return new strings",
-      "They cannot be stored in lists",
-      "They are compiled to bytecode and cannot be read at runtime"
-    ],
-    answer: 1
+    answer: 1,
+    explain: "Unlike an f-string, which is finished the instant it's written, a t-string evaluates to a Template object that keeps the literal chunks and Interpolation objects separate so a library can escape or validate values before assembling final text."
   }
 ];
 

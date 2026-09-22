@@ -1,0 +1,148 @@
+---
+title: Review checklist
+description: 'A one-page, six-group checklist for reviewing Python code — each line links to the lesson that explains the underlying rule.'
+sidebar:
+  order: 3
+---
+
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+This is the checklist to run down — by eye, on any diff, yours or an AI's — after the tools in **[Verification Tools](/python/en/reading-python/verification-tools/)** have run and come back clean. It fits on one printed page on purpose: a checklist nobody actually opens during a review is worthless. Every line links to the lesson that explains *why*, and to the exact pattern number in the **[AI Bug Catalog](/python/en/reading-python/ai-bug-catalog/)** it guards against.
+
+## Mutability
+
+- Does a default argument use a mutable literal (`= []`, `= {}`, `= set()`) instead of `= None`? Catalog #1. See **[Functions](/python/en/basics/functions/)**.
+- Does a `lambda` or nested function inside a loop close over the loop variable itself, rather than its value at each iteration? Catalog #2. See **[Closures](/python/en/functions-deep/closures/)**.
+- Does a function that looks read-only actually mutate a `list`/`dict` argument in place (`.sort()`, `.append()`, `x[i] = ...`) without documenting it? Catalog #3. See **[Lists & Tuples](/python/en/data-structures/lists-tuples/)**.
+- Does `[[...] * n] * m` (or any `*`-repeated container of containers) create one shared inner object instead of independent ones? Catalog #4. See **[Lists & Tuples](/python/en/data-structures/lists-tuples/)**.
+- Is a class attribute declared at class level (not inside `__init__`) a mutable object shared by every instance? Catalog #15. See **[Classes](/python/en/oop-data-model/classes/)**.
+
+## Errors
+
+- Is `is` used anywhere it should be `==` — comparing values rather than checking a singleton (`None`/`True`/`False`)? Catalog #5. See **[Variables & Types](/python/en/basics/variables-types/)**.
+- Is there a bare `except:`, an `except Exception: pass`, or (in async code) an `except BaseException` sitting between an `await` and a task's `.cancel()`? Catalog #6. See **[Exceptions](/python/en/typing-errors/exceptions/)**.
+- Does `raise e` appear inside `except ... as e:` where a bare `raise` was intended? Catalog #7. See **[Exceptions](/python/en/typing-errors/exceptions/)**.
+- Does `assert` validate external input (arguments, user input, API responses) rather than an internal invariant? It vanishes under `-O`. Catalog #8. See **[Exceptions](/python/en/typing-errors/exceptions/)**.
+
+## Async & concurrency
+
+- Is every coroutine-returning call actually `await`ed, or handed to `asyncio.create_task`/`asyncio.gather`? Catalog #9. See **[asyncio basics](/python/en/async-concurrency/asyncio-basics/)**.
+- Does every `asyncio.create_task(...)` result get stored somewhere with a lifetime longer than the function that created it? Catalog #10. See **[Tasks & gather](/python/en/async-concurrency/async-await/)**.
+- Does any `async def` function call a blocking function (`time.sleep`, a synchronous HTTP client, blocking file I/O) instead of its `await`-based equivalent? Catalog #11. See **[GIL & threads](/python/en/async-concurrency/gil-threads/)**.
+- Is shared mutable state read-then-written across an `await` point with no `asyncio.Lock`? Catalog #12. See **[Tasks & gather](/python/en/async-concurrency/async-await/)**.
+- Does every `multiprocessing.Pool`/`Process` call sit behind `if __name__ == "__main__":`? Catalog #13. See **[multiprocessing](/python/en/async-concurrency/multiprocessing/)**.
+
+## Typing
+
+- Does a class define `__eq__` without also defining `__hash__` (or accepting, on purpose, that instances become unhashable)? Catalog #14. See **[Dunder methods](/python/en/oop-data-model/dunder-methods/)**.
+- Is `Any` used where a real type was available, or does a `# type: ignore` appear with no specific error code? Catalog #16. See **[Type hints](/python/en/typing-errors/type-hints/)**.
+- Is an `X | None` (or `Optional[X]`) parameter or return value used without a `None` check before the value is used? Catalog #17. See **[Type hints](/python/en/typing-errors/type-hints/)**.
+- Is a `list[Subtype]` passed where `list[Supertype]` is expected — and would `Sequence`/`Iterable` (covariant) actually be the correct parameter type instead of `list`? Catalog #18. See **[Type hints](/python/en/typing-errors/type-hints/)**.
+
+## Resources & security
+
+- Does the code call `datetime.utcnow()` (deprecated, naive) instead of `datetime.now(timezone.utc)`? Catalog #19. See **[stdlib tour](/python/en/stdlib-testing-tooling/stdlib-tour/)**.
+- Is every `open()` call inside a `with` block, and does it pass `encoding=` explicitly? Catalog #20. See **[stdlib tour](/python/en/stdlib-testing-tooling/stdlib-tour/)**.
+- Does any `subprocess` call use `shell=True` with a string built from external input? Catalog #21. See **[stdlib tour](/python/en/stdlib-testing-tooling/stdlib-tour/)**.
+- Does every `@patch("...")` target string match how the code under test actually imported the name — the module that calls it, not the module that defines it? Catalog #22. See **[pytest](/python/en/stdlib-testing-tooling/pytest/)**.
+- Is every dependency pinned, and has `pip-audit`/`uv`'s audit tooling run against the lockfile recently? Is anything ever installed with `sudo pip`? Catalog #23. See **[venv, pip & uv](/python/en/stdlib-testing-tooling/venv-pip/)**.
+
+## Tooling & style
+
+- Does library code call `print()` where `logging` belongs — anything the caller needs to be able to filter, redirect, or silence? Catalog #24. See **[Logging](/python/en/stdlib-testing-tooling/index/)**.
+
+<SpotTheBug code={`def get_config(overrides: dict | None = None) -> dict:
+    config = {"retries": 3, "timeout": 10}
+    if overrides:
+        config |= overrides
+    return config
+
+
+base = get_config()
+custom = get_config({"retries": 5})
+print(base)
+print(custom)`}>
+
+This one is actually correct — it is here to test whether you run the checklist mechanically or actually read the code. `overrides: dict | None = None` uses `None` as the default, not a mutable literal, so catalog #1 does not apply: `config = {...}` is a fresh dict created inside the function body on every call, and `config |= overrides` merges into *that* fresh dict, not into anything shared across calls. Running the checklist should tell you *where to look*, not hand you a bug that isn't there — `base` correctly prints `{'retries': 3, 'timeout': 10}` and `custom` prints `{'retries': 5, 'timeout': 10}`, independently.
+
+</SpotTheBug>
+
+## Copy-paste short version
+
+```text
+Mutability:  mutable default arg? loop-var closure? mutates caller's list? shared [[...]]*n rows? shared class attr?
+Errors:      is vs ==? bare/broad except (incl. BaseException across await)? raise e vs raise? assert validating input?
+Async:       every coroutine awaited/tasked? task reference kept? blocking call inside async def? shared state without Lock? Pool guarded by __main__?
+Typing:      __eq__ without __hash__? bare Any / uncoded type: ignore? Optional narrowed before use? list invariance respected?
+Resources:   utcnow()/naive datetime? open() with encoding=? subprocess shell=True? patch target matches import site? deps pinned + audited?
+Tooling:     print() instead of logging in library code?
+```
+
+<Callout title="A checklist narrows the search, it does not replace it">
+Every line above maps to one of the 24 patterns in the **[AI Bug Catalog](/python/en/reading-python/ai-bug-catalog/)** — a third of which no tool in this course catches automatically. Run this list on every diff regardless of how clean `ruff`/`mypy`/`pyright` came back.
+</Callout>
+
+export const quizReviewChecklist = [
+  {
+    q: "Which group does 'does every asyncio.create_task result get stored somewhere' belong to, and why that group rather than 'Typing'?",
+    options: [
+      "Typing — Task is a generic type",
+      "Async & concurrency — an unreferenced Task can be garbage-collected before it finishes, which is a lifetime problem, not a type-correctness problem",
+      "Mutability — Task objects are mutable",
+      "Tooling & style — it is a matter of code style, not correctness"
+    ],
+    answer: 1,
+    explain: "The checklist groups by what fails, not by which module is involved: a dropped task reference is a lifetime/ownership problem specific to async code, distinct from whether any type annotation on it is correct."
+  },
+  {
+    q: "Why does the checklist ask specifically 'does every @patch target match how the code under test imported the name' rather than just 'is there a mock'?",
+    options: [
+      "unittest.mock.patch replaces an attribute on the object named in the string, which only affects the code under test if that code looks up the name through the same path — a from-import binds its own separate name",
+      "Mocks are always correct as long as one exists somewhere in the test file",
+      "patch() cannot be used with from-import style imports at all",
+      "There is no difference between patching the defining module and the importing module"
+    ],
+    answer: 0,
+    explain: "A from-import copies a reference into the importing module's own namespace at import time. Patching the original location afterward never touches that separate, already-bound name -- the mock silently has zero effect, which content-only review misses unless you check the exact import style."
+  },
+  {
+    q: "The checklist tells you to check whether Pool/Process calls sit behind `if __name__ == \"__main__\":`. Why does this matter more on some platforms than others?",
+    options: [
+      "It doesn't -- this bug is identical on every platform",
+      "spawn/forkserver start methods (macOS, Windows, and non-macOS Unix since Python 3.14) re-import the launching module in each worker; fork (classic Linux default before 3.14) does not re-run module-level code",
+      "The guard only matters for threads, not processes",
+      "multiprocessing does not work at all without the guard"
+    ],
+    answer: 1,
+    explain: "fork duplicates the already-running process's memory, so module-level code doesn't re-execute in the child. spawn/forkserver start a fresh interpreter that re-imports the starting module -- an unguarded module-level Pool() call re-runs on every such re-import."
+  },
+  {
+    q: "Why is 'is Any used where a real type was available' on this checklist at all, given that mypy --strict and pyright both report zero errors on a file using Any exactly this way?",
+    options: [
+      "It shouldn't be -- checklists should only contain things a tool can verify",
+      "A checklist is exactly for judgment calls no tool makes; Any deliberately turns off checking, so a clean strict-mode report next to it proves nothing",
+      "mypy and pyright will eventually be updated to catch this",
+      "Any is never actually used in real code, so this line is defensive only"
+    ],
+    answer: 1,
+    explain: "This module's central point is that a chunk of the patterns it covers have no automated check at all -- Any is the clearest case, since it deliberately disables the exact tools that would otherwise catch a mismatch. The checklist exists to carry judgment calls tooling cannot make."
+  },
+  {
+    q: "```python\ndef get_config(overrides=None):\n    config = {\"retries\": 3}\n    if overrides:\n        config |= overrides\n    return config\n```\nDoes catalog pattern #1 (mutable default argument) apply here?",
+    options: [
+      "Yes -- config is a dict, and dicts are mutable",
+      "No -- the default is None, not a mutable literal, and config is a fresh dict created inside the function body on every call",
+      "Yes -- because |= mutates config in place",
+      "It depends on how many times the function is called"
+    ],
+    answer: 1,
+    explain: "Pattern #1 is specifically about the DEFAULT ARGUMENT being a mutable object evaluated once at definition time. Here the default is None (immutable, safe to share), and config itself is constructed fresh inside the function body every call -- there is nothing shared across calls to mutate."
+  }
+];
+
+<Quiz client:visible id="reading-python/review-checklist" questions={quizReviewChecklist} />
+
+<ProgressTracker client:visible id="reading-python/review-checklist" />

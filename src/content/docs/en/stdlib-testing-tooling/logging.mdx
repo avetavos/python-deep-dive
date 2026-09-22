@@ -1,0 +1,487 @@
+---
+title: 'Logging'
+description: 'The logging module in depth: loggers, hierarchy and propagation, levels, handlers and formatters, dictConfig, structured logging, and the warnings module.'
+sidebar:
+  order: 7
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+## Why libraries never `print`
+
+`print` writes unconditionally to stdout, with no level, no destination control, and no way for the *caller* of a library to decide whether they even want to see it. `logging` separates **what** a piece of code wants to say from **whether/where** it actually gets shown: the library only ever calls `logger.info(...)`/`logger.warning(...)`/etc., and the application assembles the actual handlers, levels, and destinations at its own entry point. A library that calls `print` for diagnostics has no way to be silenced, redirected to a file, or filtered by severity — a library that calls `logging.getLogger(__name__).info(...)` gets all of that for free, decided entirely by whoever imports it.
+
+## `getLogger(__name__)` and the logger hierarchy
+
+`logging.getLogger(name)` returns a singleton `Logger` for that name — calling it twice with the same name returns the *same* object. `__name__` (the importing module's dotted path, e.g. `"myapp.db.pool"`) is the conventional argument: it makes every logger's name mirror the package structure, and dots in the name create a real parent/child hierarchy that `logging` understands natively — `"myapp.db.pool"` is a child of `"myapp.db"`, which is a child of `"myapp"`.
+
+<Mermaid code={`flowchart BT
+  Pool["logger 'app.db.pool'"] -->|"propagates"| Db["logger 'app.db'"]
+  Db -->|"propagates"| App["logger 'app' -- has a StreamHandler"]
+  App -->|"propagates"| Root["root logger"]`} title="A dotted logger name is a parent/child chain; messages propagate upward to every ancestor's handlers by default" />
+
+A child logger with no handler of its own doesn't lose its messages — by default (`propagate = True`) every log record also travels up to each ancestor and runs through *their* handlers too, stopping only at the first ancestor with `propagate = False` or when it reaches the root.
+
+export const pg1Code = `
+import logging
+import sys
+
+logging.root.handlers.clear()
+for name in ("app", "app.db", "app.db.pool"):
+    logging.getLogger(name).handlers.clear()
+
+app = logging.getLogger("app")
+app.setLevel(logging.INFO)
+app_handler = logging.StreamHandler(sys.stdout)
+app_handler.setFormatter(logging.Formatter("%(name)s:%(levelname)s:%(message)s"))
+app.addHandler(app_handler)
+
+db = logging.getLogger("app.db")       # a child of "app" -- dotted name is the hierarchy
+pool = logging.getLogger("app.db.pool")  # a child of "app.db"
+
+print("db.level (own level, unset):", logging.getLevelName(db.level))
+print("db.getEffectiveLevel() (climbs to the nearest ancestor with a level):", logging.getLevelName(db.getEffectiveLevel()))
+
+db.info("a message from app.db")       # no handler on db itself -- propagates up to app's handler
+pool.warning("a message from app.db.pool")  # propagates through db, then app
+
+db.propagate = False
+print("with db.propagate = False:")
+db.info("this no longer reaches app's handler")
+`.trim();
+
+<Playground code={pg1Code} />
+
+`db.level` is `NOTSET` (a logger with no level set of its own); `db.getEffectiveLevel()` climbs the parent chain until it finds one, landing on `app`'s `INFO`. `logging.getLogger()` with **no** argument returns the root logger specifically — the one ancestor every other logger eventually reaches, and the one `basicConfig()` configures.
+
+## Levels, and the default `WARNING` threshold
+
+The built-in levels, low to high, are `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. A logger only emits a record if its *effective* level is at or below the record's level — and the root logger's default level is `WARNING`, so `debug()` and `info()` calls are silently dropped until something raises the threshold.
+
+## `basicConfig` only at the entry point, and why calling it twice does nothing
+
+`logging.basicConfig(...)` configures the root logger — but only the **first** time anything actually attaches a handler to it. This has a sharp edge: the module-level convenience functions (`logging.info(...)`, `logging.warning(...)`, ...) each silently call `basicConfig()` themselves *before checking the level*, the moment the root logger has no handler yet — even for a call whose message ends up dropped by the level. That means a single stray `logging.info(...)` anywhere in an imported module, executed before your application's own `basicConfig()` call, permanently locks in the default config and turns your later call into a no-op.
+
+export const pg2Code = `
+import logging
+import sys
+
+# Playgrounds in this course share one Python session, so start every logging
+# demo from a known-clean root logger. Handlers write to stdout explicitly so
+# every line below is visible in this course's output panel.
+logging.root.handlers.clear()
+logging.root.setLevel(logging.WARNING)
+
+print("root effective level:", logging.getLevelName(logging.getLogger().getEffectiveLevel()))
+
+logging.info("dropped -- WARNING is the default threshold, and no handler exists yet")
+print("root handlers after that logging.info() call:", logging.root.handlers)
+# The call above STILL silently attached a default handler (to stderr), even
+# though the message itself was dropped by level -- logging.<level>() always
+# runs "if not root.handlers: basicConfig()" before even checking whether the
+# level qualifies. This is the trap: any such call anywhere before your own
+# entry point runs pre-empts your real configuration below.
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s", stream=sys.stdout)
+print("root handlers after basicConfig():", logging.root.handlers)
+logging.info("still dropped -- basicConfig() above was a no-op, root already had a handler")
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s", stream=sys.stdout, force=True)
+print("root handlers after basicConfig(force=True):", logging.root.handlers)
+logging.info("this one shows -- force=True replaced the existing handler")
+`.trim();
+
+<Playground code={pg2Code} />
+
+Verified above: the root's handler list stays `[<StreamHandler <stderr> ...>]` across the first `basicConfig()` call — it was already non-empty by the time that call ran, so `basicConfig()` did nothing at all (not even applying the new `format=`). Only `force=True` (which removes existing handlers first) actually reconfigures, landing a `<stdout>` handler and finally letting `logging.info(...)` print. The rule this proves: call `basicConfig()` (or `dictConfig`, see below) exactly once, at the application's real entry point, and never at module import time in a library — and audit for any stray top-level `logging.<level>(...)` call in library code that could trigger the implicit version first.
+
+## Lazy `%s` arguments vs f-strings
+
+`logger.debug("value is %s", x)` and `logger.debug(f"value is {x}")` look interchangeable, but they are not: the `%s` form only formats `x` (calling `str()` on it) if the record actually gets emitted; the f-string builds the full string *immediately*, as part of evaluating the function call's arguments, regardless of whether the logger will use it.
+
+export const pg3Code = `
+import logging
+import sys
+
+logging.root.handlers.clear()
+logging.basicConfig(level=logging.WARNING, stream=sys.stdout, force=True)
+
+logger = logging.getLogger("demo.lazy")
+logger.setLevel(logging.WARNING)  # DEBUG messages below are disabled
+
+
+class Expensive:
+    """Simulates an expensive computation whose __str__ does real work."""
+    def __str__(self) -> str:
+        print("  -- __str__ called: this expensive computation actually ran --")
+        return "expensive-result"
+
+
+print("f-string version (eager -- always formats, even if the log call is disabled):")
+logger.debug(f"value is {Expensive()}")   # f-string builds the string NOW, unconditionally
+
+print("lazy %s version (formats only if DEBUG is actually enabled):")
+logger.debug("value is %s", Expensive())  # arguments are only stringified if the record is emitted
+`.trim();
+
+<Playground code={pg3Code} />
+
+Verified: the `-- __str__ called --` marker prints exactly once, under the f-string version. `logger` is set to `WARNING`, so both `debug()` calls are disabled — but the f-string already ran `str(Expensive())` while Python was building the message *before* `debug()` was even called, so the "expensive" work happened anyway and was thrown away. The `%s` version never calls `str()` at all, because `Logger.debug` checks `isEnabledFor(DEBUG)` first and returns immediately without ever touching the arguments. This is the entire reason `logging`'s lazy `%`-style API exists — an f-string defeats it completely, even though it looks more "modern."
+
+## `logger.exception` keeps the traceback; `logger.error(e)` does not
+
+Inside an `except` block, `logger.exception(msg)` is exactly `logger.error(msg, exc_info=True)` — it attaches the *current* exception's full traceback to the log record. `logger.error(e)` (or `logger.error(str(e))`) logs only the exception's message, with no traceback at all.
+
+export const pg4Code = `
+import logging
+import sys
+
+logging.root.handlers.clear()
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(message)s", stream=sys.stdout, force=True)
+logger = logging.getLogger("demo.exc")
+
+
+def divide(a: int, b: int) -> float:
+    return a / b
+
+
+print("--- logger.error(e): loses the traceback ---")
+try:
+    divide(1, 0)
+except ZeroDivisionError as e:
+    logger.error(e)
+
+print()
+print("--- logger.exception(...): keeps the traceback ---")
+try:
+    divide(1, 0)
+except ZeroDivisionError:
+    logger.exception("division failed")
+`.trim();
+
+<Playground code={pg4Code} />
+
+The first block prints a single line, `ERROR:division by zero` — the *only* information saved is the exception's string form. The second prints `ERROR:division failed` followed by a full `Traceback (most recent call last): ...` block pointing at the exact `a / b` line that raised. When debugging a production incident weeks later, the first version tells you an exception happened; the second tells you exactly where.
+
+## Handlers and formatters
+
+A `Logger` decides *whether* a record is worth emitting; a `Handler` decides *where* it goes; a `Formatter` decides *what it looks like*. `StreamHandler` (seen above, targeting `stdout`/`stderr`) is the simplest. `FileHandler` writes to a file; `RotatingFileHandler` (from `logging.handlers`) does the same but caps the file size and keeps a fixed number of rotated backups, so a long-running process's logs don't grow forever:
+
+```python
+import logging
+from logging.handlers import RotatingFileHandler
+
+logger = logging.getLogger("app")
+logger.setLevel(logging.INFO)
+
+console = logging.StreamHandler()
+console.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
+
+file_handler = RotatingFileHandler("app.log", maxBytes=1_000_000, backupCount=3)
+file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s:%(message)s"))
+
+logger.addHandler(console)
+logger.addHandler(file_handler)
+
+logger.info("written to both the console and app.log")
+```
+
+> This writes a real file on disk — run it locally. Each handler can have its own formatter and its own level filter, independent of the logger's level and of every other handler attached to it.
+
+## `dictConfig`, structured (JSON) logging, and `extra=`
+
+`logging.config.dictConfig` configures loggers, handlers, and formatters all at once from a plain dictionary — the shape most frameworks and deployment tooling actually use, instead of chained `basicConfig()`/`addHandler()` calls. A custom `Formatter` subclass can emit structured (e.g. JSON) output instead of a plain string — essential once logs are shipped to a system that parses them rather than a human reading a terminal. `extra=` attaches arbitrary additional fields to a single log record, readable from a custom formatter via `record.<field_name>`.
+
+export const pg5Code = `
+import json
+import logging
+import logging.config
+import sys
+
+# --- dictConfig: configure everything from a plain dict, no basicConfig() ---
+CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "simple": {"format": "%(levelname)s:%(name)s:%(message)s"},
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+            "stream": "ext://sys.stdout",
+            "level": "INFO",
+        },
+    },
+    "loggers": {
+        "app": {"handlers": ["console"], "level": "INFO", "propagate": False},
+    },
+}
+logging.config.dictConfig(CONFIG)
+app_logger = logging.getLogger("app")
+app_logger.info("configured entirely from a dict")
+app_logger.debug("dropped -- app logger's own level is INFO")
+
+
+# --- structured/JSON logging with a small custom Formatter, plus extra= ---
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {"level": record.levelname, "logger": record.name, "message": record.getMessage()}
+        if hasattr(record, "request_id"):
+            payload["request_id"] = record.request_id
+        return json.dumps(payload, sort_keys=True)
+
+
+json_handler = logging.StreamHandler(sys.stdout)
+json_handler.setFormatter(JsonFormatter())
+json_logger = logging.getLogger("app.json")
+json_logger.handlers.clear()
+json_logger.addHandler(json_handler)
+json_logger.setLevel(logging.INFO)
+json_logger.propagate = False
+
+json_logger.info("plain message, no extra fields")
+json_logger.info("tagged with a request id", extra={"request_id": "req-42"})
+
+
+# --- LoggerAdapter: inject context (a request id) into every message ---
+class RequestAdapter(logging.LoggerAdapter):
+    def process(self, msg, kwargs):
+        return f"[request_id={self.extra['request_id']}] {msg}", kwargs
+
+
+base_logger = logging.getLogger("app.request")
+base_logger.handlers.clear()
+base_logger.addHandler(logging.StreamHandler(sys.stdout))
+base_logger.setLevel(logging.INFO)
+base_logger.propagate = False
+
+request_log = RequestAdapter(base_logger, {"request_id": "abc-123"})
+request_log.info("handling request")
+`.trim();
+
+<Playground code={pg5Code} />
+
+Three ways of attaching context to a log line, all verified above: `extra={"request_id": "req-42"}` attaches it to one specific call, and a formatter that checks `hasattr(record, "request_id")` picks it up when present, absent otherwise. `LoggerAdapter` (or, for `asyncio` code, a `contextvars.ContextVar` read inside a custom `Filter`) attaches it to *every* call made through the adapter, without repeating `extra=` at every call site — the right choice for something like a request id that's constant for the whole lifetime of a request handler.
+
+## The `warnings` module
+
+`warnings.warn(message, category)` is for a different audience than `logging`: it targets the *developer* calling your code ("you're using a deprecated API"), not an operator watching logs. `DeprecationWarning` is shown by default only when the `warnings.warn` call happens directly in `__main__` — the same call from inside an imported library is silent by default, precisely so that end users who can't fix a dependency's deprecated usage aren't spammed by it, while your own top-level scripts still see their own.
+
+export const pg6Code = `
+import logging
+import sys
+import warnings
+
+
+def old_api() -> int:
+    warnings.warn("old_api() is deprecated, use new_api()", DeprecationWarning, stacklevel=2)
+    return 42
+
+
+print("default filters (called at module level, i.e. __main__ -- Python shows it here):")
+print(old_api())
+
+print()
+print("simulating the same call from inside an imported library (ignored there by default):")
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    print(old_api())  # silent -- this is what happens for the identical call inside a real dependency
+
+print()
+print("logging.captureWarnings(True): route warnings.warn() through logging instead of stderr")
+logging.root.handlers.clear()
+logging.basicConfig(level=logging.WARNING, format="%(levelname)s:%(name)s:%(message)s", stream=sys.stdout, force=True)
+logging.captureWarnings(True)
+with warnings.catch_warnings():
+    warnings.simplefilter("always")
+    warnings.warn("captured as a log record now", UserWarning)
+`.trim();
+
+<Playground code={pg6Code} />
+
+`logging.captureWarnings(True)` redirects everything `warnings.warn()` produces through a logger named `"py.warnings"` instead of straight to stderr — useful once an application has already centralised all its output through `logging`'s handlers and doesn't want a second, separate channel. In CI, `python -W error::DeprecationWarning` turns exactly the kind of warning that's silent by default into a hard failure with a real traceback and a nonzero exit code — the same mechanism this course's `index` lesson uses for `-W error::DeprecationWarning` against `datetime.utcnow()`:
+
+```text
+$ python3.14 -W error::DeprecationWarning old_api_demo.py
+Traceback (most recent call last):
+  File "old_api_demo.py", line 10, in <module>
+    print(old_api())
+          ~~~~~~~^^
+  File "old_api_demo.py", line 5, in old_api
+    warnings.warn("old_api() is deprecated, use new_api()", DeprecationWarning, stacklevel=2)
+DeprecationWarning: old_api() is deprecated, use new_api()
+```
+
+> This `-W` transcript needs the real CLI flag, which a Playground can't pass to itself — run it locally. Verified real exit code: `1`.
+
+## Logging smells in AI-generated code
+
+- `logging.basicConfig(...)` called at module level inside a library — locks in the whole process's root config the moment that module is imported, silently pre-empting whatever the application's real entry point tries to configure later.
+- `except Exception as e: logger.error(f"...{e}")` (or `logger.error(str(e))`) — throws away the traceback exactly where it matters most; `logger.exception(...)` (or `exc_info=True`) is almost always what was meant.
+- `print(...)` used for anything in library code, especially errors — no level, no destination control, and no way for a caller to silence or redirect it.
+- `logger.debug(f"...{expensive_call()}...")` — the f-string runs `expensive_call()` unconditionally even when `DEBUG` is disabled; the lazy `%s` form is the fix.
+- `logging.getLogger()` (no name — the root logger) used throughout application code instead of `logging.getLogger(__name__)` per module — flattens the hierarchy and makes per-module level/handler control impossible.
+- A `dictConfig`/`basicConfig` call duplicated in multiple places "just in case" — the second call is either a silent no-op (without `force=True`) or an unexpected full reconfiguration (with it), neither of which is obviously intentional to the next reader.
+
+## Reading AI-generated code
+
+Before trusting generated logging setup, check for:
+
+- `logging.basicConfig(...)` anywhere in a module that isn't the application's actual entry point (`if __name__ == "__main__":` or a dedicated setup function called once at startup).
+- `logger.error(f"{e}")` or `logger.error(str(e))` inside an `except` block — a traceback silently lost.
+- `print` standing in for `logging` in anything that isn't a one-off script.
+- An f-string built from a function call passed to `logger.debug(...)`/`logger.info(...)` — the call always runs, even if that level is disabled.
+
+<SpotTheBug code={`import logging
+
+# BUG 1: a library module calling basicConfig() at import time locks in this
+# config for the whole process -- the application's own basicConfig() later
+# becomes a silent no-op.
+logging.basicConfig(level=logging.WARNING, format="%(message)s")
+
+logger = logging.getLogger(__name__)
+
+
+def fetch_user(user_id: int) -> dict:
+    try:
+        return {"id": user_id}[user_id]  # deliberately wrong key -- raises KeyError
+    except KeyError as e:
+        # BUG 2: f-string loses the traceback -- only str(e) survives
+        logger.error(f"fetch_user failed: {e}")
+        raise
+
+
+try:
+    fetch_user(1)
+except KeyError:
+    pass`} lang="python">
+Two bugs. First, `logging.basicConfig(...)` sits at module level in what looks like a reusable module (it defines `fetch_user`, not a `__main__` guard) -- importing this module anywhere silently configures the whole process's root logger, and the real application's own `basicConfig()` call later becomes a no-op (verified in this lesson's `basicConfig` demo above). Second, `logger.error(f"fetch_user failed: {e}")` only keeps `str(e)` (here, literally `"1"`, the missing key) -- verified: running this prints `fetch_user failed: 1` with no traceback at all, even though a real `KeyError` with a full call stack just happened. Fix: move the `basicConfig()` call into the application's actual entry point, and change the `except` block to `logger.exception("fetch_user failed")`.
+</SpotTheBug>
+
+<Callout title="Configure once at the entry point, log lazily, and never lose a traceback">
+`basicConfig`/`dictConfig` belongs at the application's entry point exactly once — never inside a library module, where even a dropped `logging.info(...)` call can silently pre-empt it. Use the lazy `%s` form (or a guard) for anything expensive, and always reach for `logger.exception(...)` inside an `except` block instead of stringifying the exception yourself.
+</Callout>
+
+## Mental Model
+
+Every `Logger` call goes through the same pipeline: is this level enabled (checked against the logger's *effective* level, climbing ancestors if needed) → build a `LogRecord` → hand it to every attached `Handler`, and (unless `propagate = False`) to every ancestor's handlers too → each `Handler` applies its own level filter, then its `Formatter`, then writes to its destination. `basicConfig()`/`dictConfig()` are just convenient ways to wire up that pipeline's first few pieces (a level and one or more handlers) on the root logger in one call — they configure *state*, once, and every subsequent call that finds the state already set becomes a no-op unless you explicitly force it.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| `logging` over `print` | Levels, handlers, and destinations the caller controls; silenceable | More setup than a bare `print(...)` for a one-off script |
+| `logging.getLogger(__name__)` per module | Per-module level/handler control; names mirror the package layout | The root logger is easy to reach for by accident (`getLogger()` with no name) and flattens all of that |
+| `basicConfig`/`dictConfig` once, at the entry point | Predictable, centralised configuration | A stray `logging.<level>(...)` call anywhere earlier silently locks in the defaults first |
+| Lazy `%s` args over f-strings | Zero cost when the level is disabled | Slightly less readable than an f-string; easy to forget and revert to f-strings out of habit |
+| `logger.exception(...)` in `except` blocks | Full traceback preserved for later debugging | Slightly more output per log line (a multi-line traceback) than a single message string |
+| Structured (JSON) logging | Machine-parseable, ships cleanly to a log aggregator | Not human-skimmable in a raw terminal without a formatter/pretty-printer |
+
+## Common Misconceptions
+
+- **"Calling `basicConfig()` again with new arguments updates the configuration."** It's a no-op the moment the root logger already has a handler — verified above: only `force=True` actually reconfigures.
+- **"An f-string in a log call is just a modern, equivalent spelling of the `%s` form."** It is not: the f-string is built eagerly, every time, even if the log call turns out to be disabled by level — verified above with a `__str__` that visibly runs under the f-string and never runs under the lazy `%s` form.
+- **"`logger.error(e)` and `logger.exception(...)` are interchangeable ways to log an exception."** Only `logger.exception(...)` (or `exc_info=True`) attaches the traceback — `logger.error(e)` keeps only the exception's message, verified above with a real `ZeroDivisionError`.
+- **"`DeprecationWarning`s are hidden by default, full stop."** They're hidden by default only when triggered from code that isn't `__main__` — the exact same `warnings.warn(..., DeprecationWarning)` call is shown by default when it happens directly in your entry-point script, verified above.
+- **"`logging.getLogger()` and `logging.getLogger(__name__)` are basically the same thing."** The first always returns the *root* logger, shared process-wide; the second returns a distinct logger per module, positioned in the hierarchy by its dotted name — mixing them up means losing all per-module control.
+
+export const quizLogging = [
+    {
+        q: "Why does a library module calling `logging.getLogger(__name__)` and logging through it, instead of using `print`, matter to the application that imports it?",
+        options: [
+            "It doesn't -- print and logging produce identical behavior",
+            "logging lets the importing application decide the level, destination, and formatting at its own entry point, without the library needing to know or care",
+            "logging is always faster than print",
+            "print cannot be used inside a function, only logging can"
+        ],
+        answer: 1,
+        explain: "print writes unconditionally with no way for a caller to silence, redirect, or filter it by severity. A library that only calls logger.info/.warning/etc. lets the application configure everything (handlers, levels, formatters) centrally at its own entry point.",
+    },
+    {
+        q: "```python\nimport logging\nlogging.root.handlers.clear()\nlogging.info(\"dropped -- WARNING is the default threshold\")\nprint(logging.root.handlers)\n```\nWhat does the printed handlers list show, given that the message above was dropped?",
+        options: [
+            "An empty list -- nothing happened since the message was dropped",
+            "A list containing one StreamHandler -- logging.info() calls basicConfig() internally the moment root has no handlers, before even checking the level",
+            "A ValueError is raised because logging.info was called before basicConfig",
+            "The list contains one FileHandler by default"
+        ],
+        answer: 1,
+        explain: "Every module-level convenience function (logging.debug/info/warning/...) runs 'if not root.handlers: basicConfig()' unconditionally before checking whether the level even qualifies. So even a call whose message is dropped by level still attaches a default handler -- verified in this lesson's basicConfig demo.",
+    },
+    {
+        q: "Given the pipeline above, what happens when `logging.basicConfig(level=logging.INFO, ...)` is called a second time, after the root logger already has a handler from an earlier `logging.info(...)` call?",
+        options: [
+            "It raises an exception since basicConfig can only be called once",
+            "It silently does nothing -- basicConfig only configures the root logger the first time it has no handlers, unless force=True is passed",
+            "It appends a second handler, so log lines are duplicated",
+            "It replaces the level but keeps the old handler's format"
+        ],
+        answer: 1,
+        explain: "Verified above: the root's handler list is unchanged after a plain basicConfig() call once a handler already exists -- not even the new format= is applied. Only basicConfig(..., force=True) removes the existing handlers first and truly reconfigures.",
+    },
+    {
+        q: "```python\nclass Expensive:\n    def __str__(self):\n        print(\"ran\")\n        return \"x\"\n\nlogger.setLevel(logging.WARNING)\nlogger.debug(f\"value is {Expensive()}\")\nlogger.debug(\"value is %s\", Expensive())\n```\nHow many times does \"ran\" print, and why?",
+        options: [
+            "Zero times -- both calls are disabled at DEBUG level so neither ever touches Expensive()",
+            "Once -- the f-string builds its string eagerly as part of evaluating the debug() call's arguments, before logging even checks the level; the %s form only stringifies if the record is actually emitted",
+            "Twice -- both forms always call str() on their arguments",
+            "It depends on the Python version"
+        ],
+        answer: 1,
+        explain: "Verified above: the f-string version prints the marker because f\"...{Expensive()}\" calls str(Expensive()) immediately while Python builds the message string, unconditionally -- logger.debug never even gets a chance to check the level first. The %s form passes the Expensive() object itself as an argument; Logger.debug checks isEnabledFor(DEBUG) first and returns immediately without ever formatting it, so __str__ is never called.",
+    },
+    {
+        q: "Inside `except ZeroDivisionError: logger.exception(\"division failed\")`, what does `logger.exception` do differently from `logger.error(\"division failed\")`?",
+        options: [
+            "Nothing -- they produce identical output",
+            "logger.exception additionally attaches the current exception's full traceback to the log record (it's error() with exc_info=True baked in)",
+            "logger.exception raises the exception again after logging it",
+            "logger.exception only works outside of an except block"
+        ],
+        answer: 1,
+        explain: "logger.exception(msg) is exactly logger.error(msg, exc_info=True) -- verified above: it printed a full 'Traceback (most recent call last): ...' block pointing at the exact failing line, while a plain logger.error(e) elsewhere in the same demo printed only the exception's string form with no traceback at all.",
+    },
+    {
+        q: "Why is a `DeprecationWarning` from `warnings.warn(msg, DeprecationWarning)` visible by default when triggered directly in a script run as `__main__`, but silent by default when the identical call happens inside an imported library module?",
+        options: [
+            "It's a bug in Python that will eventually be fixed",
+            "Python's default warning filters have a special rule: DeprecationWarning is shown when the triggering code's module is __main__, and ignored otherwise -- so a dependency's own deprecated usage doesn't spam end users who can't fix it",
+            "DeprecationWarning is always shown, regardless of which module triggers it",
+            "It depends on whether the warning was raised inside a try/except block"
+        ],
+        answer: 1,
+        explain: "Verified above: the exact same old_api() call prints its DeprecationWarning when run as the top-level script, but produces nothing when the same call is wrapped in warnings.simplefilter('ignore', DeprecationWarning) -- simulating what happens by default for the identical call inside a real dependency.",
+    },
+    {
+        q: "What does `logging.captureWarnings(True)` change about `warnings.warn(...)`?",
+        options: [
+            "It suppresses all warnings permanently",
+            "It routes everything warnings.warn() produces through a logger named 'py.warnings' instead of writing straight to stderr, so it flows through the same handlers as the rest of the application's logging",
+            "It converts every warning into a raised exception, like -W error",
+            "It has no effect unless combined with basicConfig()"
+        ],
+        answer: 1,
+        explain: "Verified above: after logging.captureWarnings(True), a warnings.warn(...) call produced a line through the configured StreamHandler formatted as 'WARNING:py.warnings:...', not the usual raw stderr warning format -- useful once an application has already centralised its output through logging's own handlers.",
+    },
+    {
+        q: "What is the practical difference between `logging.getLogger()` and `logging.getLogger(__name__)`?",
+        options: [
+            "There is no difference -- both return the same object",
+            "getLogger() with no argument always returns the shared root logger; getLogger(__name__) returns a distinct logger positioned in the hierarchy by the calling module's dotted name",
+            "getLogger(__name__) is deprecated in favor of getLogger()",
+            "getLogger() only works inside __main__"
+        ],
+        answer: 1,
+        explain: "getLogger() (no name) is specifically the root logger, the one basicConfig() configures and every other logger eventually propagates to. getLogger(__name__) returns a logger named after the calling module, giving each module its own place in the hierarchy for independent level/handler control -- verified in this lesson's hierarchy demo, where app/app.db/app.db.pool are three distinct logger objects.",
+    },
+];
+
+<Quiz client:visible id="stdlib-testing-tooling/logging" questions={quizLogging} />
+
+<ProgressTracker client:visible id="stdlib-testing-tooling/logging" />
