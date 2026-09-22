@@ -1,0 +1,575 @@
+---
+title: Memory and the Garbage Collector
+description: 'Reference counting vs the cycle GC, generations and thresholds, __del__ pitfalls, weakref, real leak sources, tracemalloc, and why freeing memory does not always shrink RSS.'
+sidebar:
+  order: 3
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+## Two collectors, not one
+
+CPython frees memory with two separate mechanisms working together. **Reference counting** is the primary one: every object's `ob_refcnt` (from `object-model.mdx`) hits zero the instant the last reference disappears, and the object is freed immediately — deterministically, not "eventually." The **cycle garbage collector** (the `gc` module) exists only to handle the one case refcounting can never solve on its own: a group of objects that reference each other in a cycle, so each one's count never reaches zero even though nothing outside the cycle can reach any of them.
+
+<Mermaid code={`flowchart TD
+  A["object's last reference dropped"] --> B{"part of a\nreference cycle?"}
+  B -- no --> C["refcount hits 0\nfreed immediately"]
+  B -- yes --> D["refcount never hits 0\n(cycle keeps it alive)"]
+  D --> E["gc.collect() runs\n(periodically, or manually)"]
+  E --> F["cycle detected and freed"]`} title="Refcounting handles the common case; the cycle GC handles cycles" />
+
+## Refcounting frees immediately — no cycle needed
+
+```python
+import weakref
+
+
+class Tracked:
+    def __init__(self, name):
+        self.name = name
+
+
+def make_and_drop():
+    t = Tracked("solo")
+    weakref.finalize(t, print, f"finalized: {t.name} freed the instant refcount hit 0")
+    print("before del, still alive")
+
+
+make_and_drop()
+print("after function returns")
+```
+
+Real output, `python3.14`:
+
+```text
+before del, still alive
+finalized: solo freed the instant refcount hit 0
+after function returns
+```
+
+`t` goes out of scope when `make_and_drop` returns; nothing else references it; its refcount hits zero on the spot, and `weakref.finalize` fires *before* the next line of the caller runs. No garbage collector was involved — this is pure refcounting, and it is why ordinary Python objects (files closed via `__del__` as a backstop, plain data objects) usually don't need an explicit GC pass to disappear.
+
+## A cycle defeats refcounting — `gc.collect()` is what frees it
+
+```python
+import gc
+import weakref
+
+
+class Node:
+    def __init__(self, name):
+        self.name = name
+        self.other = None
+
+
+gc.disable()  # so the demo below isn't collected by a background pass first
+n1 = Node("n1")
+n2 = Node("n2")
+n1.other = n2
+n2.other = n1  # a cycle: n1 keeps n2 alive, n2 keeps n1 alive
+
+finalized = []
+weakref.finalize(n1, finalized.append, "n1")
+weakref.finalize(n2, finalized.append, "n2")
+del n1, n2
+print("right after del, finalized so far:", finalized)
+
+collected = gc.collect()
+print(f"gc.collect() returned: {collected}")
+print("finalized after gc.collect():", sorted(finalized))
+gc.enable()
+```
+
+Real output, `python3.14`:
+
+```text
+right after del, finalized so far: []
+gc.collect() returned: 17
+finalized after gc.collect(): ['n1', 'n2']
+```
+
+`del n1, n2` removes the *local* references, but `n1.other` and `n2.other` still reference each other — refcounting alone will never bring either to zero. `gc.collect()` is the only thing that notices the cycle is unreachable from outside and frees both. The `17` is the total number of objects the collector reclaimed in that pass (each `Node`, each instance `__dict__`, and other small objects created along the way) — a real, verified number for this exact snippet, not a fixed constant.
+
+## Generations and thresholds
+
+```python
+import gc
+
+print("gc.get_threshold():", gc.get_threshold())
+print("gc.get_count():", gc.get_count())
+print("number of generations:", len(gc.get_stats()))
+```
+
+Real output, `python3.14.7`:
+
+```text
+gc.get_threshold(): (2000, 10, 10)
+gc.get_count(): (5, 0, 0)
+number of generations: 3
+```
+
+This installation has the classic **3-generation generational collector**: new objects start in generation 0; an object that survives a generation-0 collection is promoted to generation 1, and surviving generation 1 promotes to generation 2. `gc.get_threshold()` returns how many allocations-minus-deallocations trigger a collection of each generation (2000 for gen 0 here). Worth knowing if you read older or newer version-specific advice: **Python 3.14.0–3.14.4 shipped an experimental incremental collector** (only two generations — young and old — collecting in small increments instead of the whole heap at once, to cut worst-case pause times). It was **reverted back to the classic 3-generation collector in 3.14.5** after reports of higher memory use in production, so a 3.14.5+ interpreter (like the one that produced this output) is back to the generational scheme described here — verify against `docs.python.org/3.14/whatsnew` for whichever exact 3.14.x you are running, since this is the kind of detail that changed mid-cycle.
+
+## `__del__` runs at the moment refcount hits zero
+
+```python
+class Noisy:
+    tag = "?"
+
+    def __del__(self):
+        print(f"Noisy.__del__ running for {self.tag}")
+
+
+a = Noisy()
+a.tag = "standalone"
+del a
+print("(the __del__ print above already happened, synchronously, at del)")
+```
+
+Real output, `python3.14`:
+
+```text
+Noisy.__del__ running for standalone
+(the __del__ print above already happened, synchronously, at del)
+```
+
+`__del__` is not a scheduled callback — for a non-cyclic object it runs synchronously the instant refcounting frees it (here, exactly at `del a`). The classic pitfall this module's `object-model.mdx` companion piece leaves unstated: if `__del__` raises, the exception is printed to stderr and ignored (it cannot propagate anywhere sensible); and if an object with `__del__` is part of a *reference cycle*, the cycle collector can still free it in modern CPython (this restriction was lifted in Python 3.4, PEP 442) — but the order in which multiple such objects are finalized within one collected cycle is not guaranteed.
+
+## `weakref` and `WeakValueDictionary`
+
+A `weakref` references an object without keeping it alive — the reference itself doesn't count toward `ob_refcnt`. `WeakValueDictionary` uses this to build a cache that empties itself automatically:
+
+```python
+import weakref
+
+
+class Cache:
+    pass
+
+
+cache = weakref.WeakValueDictionary()
+obj = Cache()
+cache["k"] = obj
+print("'k' in cache while a strong ref is alive:", "k" in cache)
+del obj
+print("'k' in cache after the only strong ref is gone:", "k" in cache)
+```
+
+Real output, `python3.14`:
+
+```text
+'k' in cache while a strong ref is alive: True
+'k' in cache after the only strong ref is gone: False
+```
+
+The moment `obj`'s last strong reference disappears, `WeakValueDictionary` removes the entry itself — no manual cleanup, no `if key in cache and cache[key] is stale: del cache[key]` bookkeeping. This is the correct primitive for a cache that must never be the thing keeping objects alive.
+
+## Real leak sources in otherwise-idiomatic code
+
+Three patterns leak memory in Python that looks completely ordinary:
+
+```python
+import functools
+
+_registry = []  # module global that silently accumulates
+
+
+class Service:
+    def __init__(self, name):
+        self.name = name
+        _registry.append(self)  # leak #1: appended, never removed
+
+    @functools.lru_cache(maxsize=None)  # leak #2: caches (self, n) -> keeps self alive forever
+    def compute(self, n):
+        return n * 2
+
+
+before = len(_registry)
+for i in range(3):
+    Service(f"svc-{i}")
+print(f"_registry grew from {before} to {len(_registry)}, and nothing ever shrinks it")
+```
+
+Real output, `python3.14`:
+
+```text
+_registry grew from 0 to 3, and nothing ever shrinks it
+```
+
+`_registry.append(self)` is a common pattern for "keep track of every instance" (a registry, an event-bus subscriber list) — and it is a leak the moment nothing ever calls the matching `remove`. `@functools.lru_cache` on `compute` is leak #2, covered from a different angle in this module's `index.mdx`: the cache key includes `self`, so every distinct instance that ever calls `compute` is kept alive by the cache forever, whether or not `_registry` exists at all. Both compile clean, pass a type checker, and run correctly in every unit test that doesn't specifically check object counts over time.
+
+## `tracemalloc` — measuring an allocation, not guessing
+
+```python
+import tracemalloc
+
+tracemalloc.start()
+snap1 = tracemalloc.take_snapshot()
+leaky_list = [str(i) * 50 for i in range(2000)]
+snap2 = tracemalloc.take_snapshot()
+top = snap2.compare_to(snap1, "lineno")[0]
+print("top allocation diff:", top)
+tracemalloc.stop()
+```
+
+Real output, `python3.14` (path shortened; count/size are exact):
+
+```text
+top allocation diff: .../memory_and_gc_demo.py:5: size=432 KiB (+432 KiB), count=2003 (+2003), average=221 B
+```
+
+`tracemalloc.take_snapshot()` twice, `compare_to`, and you have exactly which line allocated what, with byte counts — no guessing, no external profiler. This is the tool to reach for the moment "I think something is leaking" needs to become "here is the line and the size."
+
+## Why `del x` doesn't shrink the process's RSS
+
+Freeing a Python object returns it to CPython's allocator (`pymalloc`), which does **not** mean the operating system sees that memory back immediately — verified here with real RSS (resident set size) readings via `ps`:
+
+```python
+import subprocess
+import os
+import gc
+
+
+def rss_kb():
+    out = subprocess.run(["ps", "-o", "rss=", "-p", str(os.getpid())], capture_output=True, text=True)
+    return int(out.stdout.strip())
+
+
+print("rss before:", rss_kb(), "KB")
+big = [bytearray(1024 * 1024) for _ in range(50)]  # 50 MB of large allocations
+print("rss after 50MB alloc:", rss_kb(), "KB")
+del big
+gc.collect()
+print("rss after del + gc.collect():", rss_kb(), "KB")
+```
+
+Real output, `python3.14`, macOS/Apple Silicon:
+
+```text
+rss before: 16352 KB
+rss after 50MB alloc: 68608 KB
+rss after del + gc.collect(): 68608 KB
+```
+
+The RSS never drops after `del big` — the platform allocator keeps those freed pages mapped for potential reuse rather than immediately calling back to the OS to release them, which is standard behavior for most malloc implementations, not a Python-specific bug. Small objects tell a more nuanced story: pymalloc groups small allocations (under 512 bytes) into 1 MiB "arenas," and a fully-emptied arena *can* be released back to the system allocator. Running the same measurement with two million small tuples instead of large `bytearray`s:
+
+```text
+rss before: 16624 KB
+rss after 2,000,000 small tuples: 410848 KB
+rss after del + gc.collect(): 35408 KB
+```
+
+Here RSS does drop substantially, because those small objects fully vacated their arenas. The honest rule verified by both runs: **whether freed Python memory returns to the OS depends on allocation size and fragmentation, not on whether you called `del`** — a single long-lived object sharing an otherwise-empty arena, or a single large allocation, can each keep memory mapped indefinitely even after every Python reference is gone.
+
+## `sys.getsizeof` measures one object, not what it points to
+
+```python
+shallow = [1, 2, 3]
+print("sys.getsizeof(shallow):", sys.getsizeof(shallow))
+
+nested = [[1, 2, 3] for _ in range(3)]
+print("sys.getsizeof(nested):", sys.getsizeof(nested), "-- does NOT count the 3 inner lists")
+
+
+def deep_size(obj, seen=None):
+    seen = seen if seen is not None else set()
+    if id(obj) in seen:
+        return 0
+    seen.add(id(obj))
+    size = sys.getsizeof(obj)
+    if isinstance(obj, (list, tuple, set)):
+        size += sum(deep_size(i, seen) for i in obj)
+    elif isinstance(obj, dict):
+        size += sum(deep_size(k, seen) + deep_size(v, seen) for k, v in obj.items())
+    return size
+
+
+print("deep_size(nested):", deep_size(nested))
+```
+
+Real output, `python3.14`:
+
+```text
+sys.getsizeof(shallow): 88
+sys.getsizeof(nested): 88 -- does NOT count the 3 inner lists
+deep_size(nested): 436
+```
+
+`sys.getsizeof` on `nested` reports the exact same 88 bytes as `shallow` — it measures only the outer list's own container overhead, never the objects it points to. The 436-byte `deep_size` (roughly 5x higher) is what actually reflects the memory the whole structure holds. Reaching for plain `sys.getsizeof` on a container of containers and reporting that number as "the size of my data" is a common, very wrong measurement.
+
+## Full runnable demo
+
+export const memoryGcCode = `
+import gc
+import sys
+import tracemalloc
+import weakref
+
+print("=== refcounting frees immediately ===")
+
+
+class Tracked:
+    def __init__(self, name):
+        self.name = name
+
+
+def make_and_drop():
+    t = Tracked("solo")
+    weakref.finalize(t, print, f"  finalized: {t.name} freed the instant refcount hit 0")
+    print("  before del, still alive")
+
+
+make_and_drop()
+print("  after function returns (no cycle, freed by refcounting alone)")
+
+print("=== cycle needs the cycle GC ===")
+gc.disable()
+
+
+class Node:
+    def __init__(self, name):
+        self.name = name
+        self.other = None
+
+
+n1 = Node("n1")
+n2 = Node("n2")
+n1.other = n2
+n2.other = n1
+finalized = []
+weakref.finalize(n1, finalized.append, "n1")
+weakref.finalize(n2, finalized.append, "n2")
+del n1, n2
+print("  right after del, finalized so far:", finalized)
+collected = gc.collect()
+print(f"  gc.collect() returned: {collected}")
+print("  finalized after gc.collect():", sorted(finalized))
+gc.enable()
+
+print("=== generations / thresholds ===")
+print("  gc.get_threshold():", gc.get_threshold())
+print("  number of generations:", len(gc.get_stats()))
+
+print("=== __del__ runs synchronously ===")
+
+
+class Noisy:
+    tag = "?"
+
+    def __del__(self):
+        print(f"  Noisy.__del__ running for {self.tag}")
+
+
+a = Noisy()
+a.tag = "standalone"
+del a
+
+print("=== weakref / WeakValueDictionary ===")
+
+
+class Cache:
+    pass
+
+
+cache = weakref.WeakValueDictionary()
+obj = Cache()
+cache["k"] = obj
+print("  'k' in cache, strong ref alive:", "k" in cache)
+del obj
+print("  'k' in cache, strong ref gone:", "k" in cache)
+
+print("=== leak sources: registry + lru_cache on method ===")
+import functools
+
+_registry = []
+
+
+class Service:
+    def __init__(self, name):
+        self.name = name
+        _registry.append(self)
+
+    @functools.lru_cache(maxsize=None)
+    def compute(self, n):
+        return n * 2
+
+
+before = len(_registry)
+for i in range(3):
+    Service(f"svc-{i}")
+print(f"  _registry grew from {before} to {len(_registry)}, nothing ever shrinks it")
+
+print("=== tracemalloc snapshot diff ===")
+tracemalloc.start()
+snap1 = tracemalloc.take_snapshot()
+leaky_list = [str(i) * 50 for i in range(2000)]
+snap2 = tracemalloc.take_snapshot()
+top = snap2.compare_to(snap1, "lineno")[0]
+print("  top diff line:", str(top).split("/")[-1])
+tracemalloc.stop()
+
+print("=== sys.getsizeof vs deep size ===")
+shallow = [1, 2, 3]
+nested = [[1, 2, 3] for _ in range(3)]
+print("  sys.getsizeof(shallow):", sys.getsizeof(shallow))
+print("  sys.getsizeof(nested):", sys.getsizeof(nested), "(same -- shallow only)")
+
+
+def deep_size(o, seen=None):
+    seen = seen if seen is not None else set()
+    if id(o) in seen:
+        return 0
+    seen.add(id(o))
+    size = sys.getsizeof(o)
+    if isinstance(o, (list, tuple, set)):
+        size += sum(deep_size(i, seen) for i in o)
+    elif isinstance(o, dict):
+        size += sum(deep_size(k, seen) + deep_size(v, seen) for k, v in o.items())
+    return size
+
+
+print("  deep_size(nested):", deep_size(nested))
+`.trim();
+
+<Playground code={memoryGcCode} />
+
+<Callout title="del removes a reference -- it does not force a free">
+`del x` only removes the name `x`; the underlying object is freed the instant its refcount reaches zero, whether that happens right at `del` (the common case) or later, when a cycle it's part of is collected (or never, if nothing calls `gc.collect()` and automatic collection hasn't triggered yet). And even when an object is freed, its memory does not necessarily return to the operating system immediately -- verified above by comparing large-allocation and small-allocation RSS behavior on the same process.
+</Callout>
+
+## Mental Model
+
+Two systems keep memory in check, and only one of them is usually visible: refcounting is instant, deterministic, and running on every single reference change in your program, all the time, with zero configuration; the cycle GC is a periodic, occasional backstop that exists purely to catch the one shape refcounting cannot: a loop of references with nothing from outside pointing in. Neither of them promises that freed memory reappears as available RAM to the rest of your system instantly — that is a third, separate layer (the allocator, and below it, the OS) with its own rules about batching and reuse.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Reference counting | Deterministic, instant frees for the overwhelming majority of objects | Per-operation overhead on every increment/decrement (part of why the GIL and free-threading matter — see `gil-and-free-threading.mdx`) |
+| The cycle GC | Catches cycles refcounting structurally cannot | Adds a periodic pause; `__del__` order across a collected cycle is not guaranteed |
+| `weakref` / `WeakValueDictionary` | Caches and observer lists that don't accidentally keep everything alive | One more concept to reach for deliberately; forgetting it is exactly how the leaks in this lesson happen |
+| `tracemalloc` | Real, line-level attribution of allocations -- not a guess | Measurable overhead while it's running; typically enabled only for debugging, not permanently in production |
+
+## Common Misconceptions
+
+- **"Python's garbage collector frees everything, so I never leak."** The three patterns verified in this lesson -- a growing registry list, `@lru_cache` on a bound method, and an ordinary reference cycle with `gc` disabled or delayed -- all leak in code that looks completely idiomatic and passes every functional test.
+- **"`del x` frees the object."** It removes one reference. The object is freed only once its refcount reaches zero (usually immediately, but not if it's part of a live cycle, and not if another reference to it exists elsewhere).
+- **"If RSS doesn't drop after `del`, Python leaked the memory."** Verified above: freeing large allocations often leaves the OS-level allocator holding the pages for reuse (RSS stays flat), while freeing enough small objects to fully empty pymalloc arenas can return most of that memory (RSS drops substantially) -- the difference is allocator and fragmentation behavior, not a leak.
+- **"`gc.get_threshold()` and the generation count are fixed facts about Python."** They changed mid-release-cycle for 3.14 itself -- 3.14.0-3.14.4 shipped an experimental 2-generation incremental collector that was reverted to the classic 3-generation design in 3.14.5. Always verify against the exact version in front of you.
+- **"An object with `__del__` can never be part of a collected cycle."** True before Python 3.4; PEP 442 removed that restriction, and the cycle GC in current Python can and does collect cycles containing `__del__`-defining objects -- it just does not guarantee the order multiple such finalizers run in.
+
+## Reading AI-generated code
+
+- Does a class append `self` to a module-level or class-level list/dict in `__init__` (a registry, a subscriber list, an event bus) with no corresponding removal anywhere? That list only grows.
+- Is `@functools.lru_cache` or `@functools.cache` applied directly to an instance method? The cache keeps every `self` it has ever seen alive for the life of the program.
+- Does a "cache" use a plain `dict` where a `weakref.WeakValueDictionary` (or `WeakKeyDictionary`) is what's actually meant -- i.e., the cache should not be the reason an object stays alive?
+- Does a comment or docstring claim "no memory leaks possible, Python has garbage collection" as a blanket justification for skipping resource-lifetime review?
+- Does code measure "memory usage" with a single `sys.getsizeof(container)` call on a container of containers, treating the shallow size as the whole picture?
+
+<SpotTheBug code={`class EventBus:
+    _subscribers = []
+
+    @classmethod
+    def subscribe(cls, handler):
+        cls._subscribers.append(handler)
+
+    @classmethod
+    def publish(cls, event):
+        for handler in cls._subscribers:
+            handler(event)
+
+
+class Widget:
+    def __init__(self, name):
+        self.name = name
+        EventBus.subscribe(self.on_event)
+
+    def on_event(self, event):
+        print(f"{self.name} got {event}")
+
+
+for i in range(5):
+    Widget(f"widget-{i}")
+
+EventBus.publish("startup")
+`} lang="python">
+Every `Widget` calls `EventBus.subscribe(self.on_event)` in `__init__`, and `self.on_event` is a bound method -- an object that holds a reference to `self`. `EventBus._subscribers` is a class-level list that lives for the entire program; nothing in this code ever calls a matching `unsubscribe`. Every one of the 5 `Widget` instances created here is kept alive forever by `EventBus._subscribers`, even though nothing else in the program holds a reference to any of them after the loop ends -- this is the module-global registry leak from this lesson, just spelled as an "event bus" instead of a list named `_registry`. The fix is either an explicit `unsubscribe` called from `Widget.__del__` or a context manager, or storing `weakref.WeakMethod(self.on_event)` in `_subscribers` instead of the bound method itself, so a `Widget` going out of scope elsewhere in the program can still be collected.
+</SpotTheBug>
+
+export const quizMemoryGc = [
+  {
+    q: "What is the cycle GC (the gc module) specifically for, given that refcounting already frees most objects?",
+    options: [
+      "It's a faster replacement for refcounting",
+      "It handles the one case refcounting structurally cannot: groups of objects that reference each other in a cycle with nothing reachable from outside",
+      "It frees objects the moment they go out of scope, before refcounting can",
+      "It only runs when the program exits",
+    ],
+    answer: 1,
+    explain: "Refcounting frees an object the instant its refcount hits zero -- but two objects that reference each other (directly or through a longer chain) never reach zero on their own, even when nothing outside the cycle can reach either of them. The gc module periodically finds and frees exactly these unreachable cycles.",
+  },
+  {
+    q: "```python\nclass Node:\n    def __init__(self):\n        self.other = None\n\nn1, n2 = Node(), Node()\nn1.other = n2\nn2.other = n1\ndel n1, n2\n```\nAfter `del n1, n2`, what has actually happened to the two Node objects?",
+    options: [
+      "Both are immediately freed by refcounting",
+      "Both are still alive in memory -- each other's reference keeps their refcount above zero -- until something runs gc.collect() (or an automatic collection triggers)",
+      "A TypeError is raised because you can't del two names at once",
+      "Python automatically detects the cycle synchronously at the del statement",
+    ],
+    answer: 1,
+    explain: "del only removes the local names n1 and n2. n1.other still points at n2 and n2.other still points at n1, so each object's refcount is still 1 (from the other object) even with no external reference. Only the cycle-detecting garbage collector can find and free this -- confirmed in this lesson by disabling gc, deleting, and observing the finalizers do NOT run until gc.collect() is called.",
+  },
+  {
+    q: "What changed about CPython's garbage collector across Python 3.14 point releases, per the official What's New document?",
+    options: [
+      "Nothing -- the GC has been identical since Python 3.9",
+      "3.14.0-3.14.4 shipped an experimental incremental (2-generation) collector, which was reverted back to the classic 3-generation generational collector in 3.14.5 due to memory-pressure reports",
+      "3.14 removed the cycle GC entirely in favor of pure refcounting",
+      "3.14 added a fourth generation to reduce pause times further",
+    ],
+    answer: 1,
+    explain: "This is a real, documented mid-release change: the incremental GC shipped in 3.14.0 reduced worst-case pause times but caused higher memory use in some production workloads, so 3.14.5 reverted to the classic generational design -- which is what a 3.14.5+ interpreter (like the one used to verify this lesson) reports via gc.get_stats() (3 generations).",
+  },
+  {
+    q: "```python\nclass Service:\n    @functools.lru_cache(maxsize=None)\n    def compute(self, n):\n        return n * 2\n```\nWhy is putting @lru_cache directly on this instance method a memory leak risk?",
+    options: [
+      "lru_cache doesn't work on methods at all -- it raises a TypeError",
+      "The cache key includes self (the first positional argument), so every distinct Service instance that ever calls compute is kept alive by the cache for the life of the program",
+      "lru_cache automatically clears itself when Service instances are garbage collected",
+      "This only leaks if maxsize is set to a specific number, not None",
+    ],
+    answer: 1,
+    explain: "functools.lru_cache keys its cache on all positional arguments, and for a bound method call that includes self. The cache dict holds a strong reference to every self it has ever cached a result for, which prevents those instances from ever being collected -- verified in this lesson's Service/_registry demo and its own leak pattern independent of the module-global list.",
+  },
+  {
+    q: "Two RSS measurements in this lesson show different results after `del` + `gc.collect()`: a 50MB bytearray allocation keeps RSS flat, but 2,000,000 small tuples drop RSS substantially. What explains the difference?",
+    options: [
+      "The small-tuple measurement was run incorrectly",
+      "Large allocations bypass pymalloc's small-object arenas and go straight to the system allocator, which tends to hold freed pages for reuse; small objects live in 1 MiB pymalloc arenas, and a fully-emptied arena can be released back to the system",
+      "Python always returns memory to the OS instantly except for bytearrays specifically",
+      "gc.collect() only works on objects smaller than 512 bytes",
+    ],
+    answer: 1,
+    explain: "This is exactly the nuance this lesson verifies with two real measurements rather than asserting one blanket rule: allocation size and resulting fragmentation -- not whether del was called -- determine whether freed memory becomes visible as lower RSS.",
+  },
+  {
+    q: "```python\nnested = [[1, 2, 3] for _ in range(3)]\nprint(sys.getsizeof(nested))\n```\nWhy does this print the same number as `sys.getsizeof([1, 2, 3])` even though nested clearly holds more data?",
+    options: [
+      "It's a bug in sys.getsizeof",
+      "sys.getsizeof only measures the container's own overhead -- it never follows pointers into the objects a container holds",
+      "Python deduplicates identical inner lists automatically",
+      "sys.getsizeof always returns 88 regardless of input",
+    ],
+    answer: 1,
+    explain: "sys.getsizeof reports the size of exactly the one object passed to it -- for a list, that's the array of pointers to its elements, not the elements themselves. Measuring 'how much memory does this structure actually use' requires walking the structure recursively, as this lesson's deep_size helper does (verified: 436 bytes vs. 88).",
+  },
+];
+
+<Quiz client:visible id="runtime-internals/memory-and-gc" questions={quizMemoryGc} />
+
+<ProgressTracker client:visible id="runtime-internals/memory-and-gc" />

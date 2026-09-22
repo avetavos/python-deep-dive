@@ -1,0 +1,514 @@
+---
+title: The Object Model
+description: 'PyObject, refcounts, id/is, sys.getrefcount, the small-int cache, string interning, __dict__ vs __slots__, attribute lookup order, and type as a metaclass.'
+sidebar:
+  order: 2
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+## Every Python object is a `PyObject`
+
+Every value you have ever touched in Python — an `int`, a `list`, a function, a module, a class itself — is a heap-allocated C struct that starts with the same two fields: a **reference count** and a **pointer to its type**. CPython's C source calls this header `PyObject`. Everything else about the object (its actual data — the digits of an int, the elements of a list) comes after that shared header.
+
+<Mermaid code={`flowchart TD
+  PO["PyObject header"] --> RC["ob_refcnt\n(reference count)"]
+  PO --> TP["ob_type\n(pointer to the type object)"]
+  PO --> DATA["...type-specific data\n(int digits, list items, __dict__, ...)"]
+  TP -.-> TYPEOBJ["type object\n(itself a PyObject, type == type(type))"]`} title="The PyObject header every Python object starts with" />
+
+This one fact explains three things you already use constantly: `id(x)` is (conceptually) the address of this struct; `type(x)` reads `ob_type`; and `sys.getrefcount(x)` reads `ob_refcnt`.
+
+## `id` and `is`
+
+`id(x)` returns a unique integer identifying an object for its lifetime — in CPython this is the object's memory address. `x is y` compares `id(x) == id(y)`: it asks "are these the *same object*," not "do they compare equal."
+
+```python
+a = [1, 2, 3]
+b = a          # b names the SAME object as a
+c = [1, 2, 3]  # c is a DIFFERENT object with equal contents
+
+print(a is b, a == b)  # True True  -- same object, and equal
+print(a is c, a == c)  # False True -- different objects, equal contents
+```
+
+## `sys.getrefcount` — and why it's +1 (or +2)
+
+`sys.getrefcount(x)` reads the object's `ob_refcnt` directly. Passing `x` to `getrefcount` itself creates one more temporary reference — the argument binding inside the call — so the number you see is always at least one higher than the "real" reference count you were trying to measure:
+
+```python
+import sys
+
+x = object()
+print(sys.getrefcount(x))  # 2: the `x` name, + the argument to getrefcount itself
+y = x
+print(sys.getrefcount(x))  # 3: `x`, `y`, + the argument to getrefcount
+del y
+print(sys.getrefcount(x))  # back to 2
+```
+
+Real output, `python3.14`:
+
+```text
+2
+3
+2
+```
+
+That "+1 for the call" rule holds for an ordinary object. It does **not** hold for `None`, `True`, `False`, or small cached integers — those are **immortal** as of Python 3.12 (PEP 683): their refcount field is set to a fixed sentinel value and CPython's `Py_INCREF`/`Py_DECREF` skip touching it entirely, because they can never be collected anyway.
+
+```python
+import sys
+
+print(sys.getrefcount(None))  # a huge, fixed number -- not "how many places reference None"
+print(sys.getrefcount(42))    # 42 is in the small-int cache -- also immortal
+print(hex(sys.getrefcount(42)))
+```
+
+Real output, `python3.14`:
+
+```text
+3221225472
+3221225472
+0xc0000000
+```
+
+`0xc0000000` is the immortal-object sentinel bit pattern (PEP 683's `_Py_IMMORTAL_REFCNT`), not "how many references exist." A plain `object()` instance, or an `int` outside the small-int cache, gives an ordinary, meaningful count instead — verified above and again below.
+
+## The small-int cache
+
+CPython pre-creates and caches every `int` from -5 to 256 at startup. `is`-comparing two of these always gives `True`, because every reference to, say, `100`, points at the same cached object. Outside that range, ordinary `int` literals with the same compile-time constant *may* also share an object (constant folding), but `int`s constructed at runtime from separate operations are not guaranteed to, and usually don't:
+
+```python
+for n in (-6, -5, 0, 256, 257):
+    p = n
+    q = int(str(n))  # force a genuinely separate int object built at runtime
+    print(f"n={n:>4}  p is q: {p is q}")
+```
+
+Real output, `python3.14`:
+
+```text
+n=  -6  p is q: False
+n=  -5  p is q: True
+n=   0  p is q: True
+n= 256  p is q: True
+n= 257  p is q: False
+```
+
+`-5` and `256` are the exact boundaries: `-6` and `257` are one step outside the cache and `is` immediately returns `False` for a freshly-built copy. **Never rely on `is` to compare integers** — it happens to work by accident inside the cached range and silently breaks the moment a value crosses `256`, which is exactly the kind of bug that survives a quick manual test and fails in production.
+
+## String interning
+
+CPython automatically interns string literals that look like identifiers (letters, digits, underscores) at compile time, so two occurrences of the same identifier-like literal are usually the same object. Strings built at runtime (`.join`, slicing, concatenation) are not automatically interned — `sys.intern` forces it explicitly:
+
+```python
+import sys
+
+s1 = "hello"
+s2 = "hello"
+print("identifier-like literal:", s1 is s2)
+
+s3 = "".join(["hel", "lo"])
+print("runtime-built 'hello' is s1:", s3 is s1)
+
+s4 = sys.intern("".join(["hel", "lo", " ", "world"]))
+s5 = sys.intern("hello world")
+print("sys.intern unifies both:", s4 is s5)
+```
+
+Real output, `python3.14`:
+
+```text
+identifier-like literal: True
+runtime-built 'hello' is s1: False
+sys.intern unifies both: True
+```
+
+The same warning applies as for small ints: `==` is always correct for comparing string contents; `is` only happens to work for interned literals, and a dict lookup or a network response builds a string object the interning rules never touch.
+
+## `__dict__` vs `__slots__`
+
+By default, every instance carries its own `__dict__` — a real dict, allocated separately from the instance itself, mapping attribute names to values. `__slots__` tells CPython to skip that dict entirely and store the named attributes in fixed C-level slots on the instance struct instead:
+
+```python
+import sys
+
+
+class Plain:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+
+class Slotted:
+    __slots__ = ("x", "y")
+
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+
+p = Plain(1, 2)
+sl = Slotted(1, 2)
+print("Plain instance:", sys.getsizeof(p), "+ its __dict__:", sys.getsizeof(p.__dict__))
+print("Slotted instance:", sys.getsizeof(sl), "(no separate __dict__ exists at all)")
+
+try:
+    sl.z = 3
+except AttributeError as e:
+    print("Slotted instance rejects a new attribute:", e)
+```
+
+Real output, `python3.14`:
+
+```text
+Plain instance: 48 + its __dict__: 296
+Slotted instance: 48 (no separate __dict__ exists at all)
+Slotted instance rejects a new attribute: 'Slotted' object has no attribute 'z' and no __dict__ for setting new attributes
+```
+
+The instance struct itself is the same 48 bytes either way here, but `Plain` also drags along a 296-byte dict per instance — real memory that `__slots__` eliminates entirely, at the cost of never being able to add an attribute (`z`) that wasn't declared up front. For a class with millions of instances (rows of parsed data, nodes in a tree), this difference is exactly where `__slots__` earns its place; for a handful of long-lived objects it rarely matters.
+
+## Attribute lookup order
+
+`obj.attr` does not simply check the instance `__dict__`. CPython's actual order is: **data descriptors on the type (checked first, via the MRO) → the instance `__dict__` → non-data descriptors and plain class attributes on the type (via the MRO)**. A *data descriptor* is any object defining both `__get__` and `__set__` (or `__delete__`); it wins even over a value already sitting in the instance's own `__dict__`:
+
+```python
+class LoudDescriptor:
+    def __get__(self, obj, objtype=None):
+        return "from descriptor"
+
+    def __set__(self, obj, value):
+        raise AttributeError("read-only data descriptor")
+
+
+class WithDescriptor:
+    attr = LoudDescriptor()
+
+
+w = WithDescriptor()
+w.__dict__["attr"] = "from instance dict"  # written directly, bypassing __set__
+print("instance __dict__ actually holds:", w.__dict__["attr"])
+print("but w.attr resolves to:", w.attr)
+```
+
+Real output, `python3.14`:
+
+```text
+instance __dict__ actually holds: from instance dict
+but w.attr resolves to: from descriptor
+```
+
+This is exactly the mechanism behind `property` (properties are data descriptors) — `self.x = 5` on a class with `x` defined as a `@property` never touches `self.__dict__["x"]` in a way that could shadow the property, because the descriptor is checked first, unconditionally.
+
+## `type` is a metaclass
+
+`type` is not just "the thing `type(x)` returns" — it is itself a class, and it is the class every ordinary class is an instance of. Calling `type(name, bases, namespace)` with three arguments *creates* a new class at runtime, which is exactly what the `class` statement compiles down to:
+
+```python
+print("type(type):", type(type))
+print("type(int):", type(int))
+
+
+class Ordinary:
+    pass
+
+
+print("type(Ordinary):", type(Ordinary))
+
+Dynamic = type("Dynamic", (), {"greet": lambda self: "hi"})
+d = Dynamic()
+print("dynamically created class works:", d.greet())
+```
+
+Real output, `python3.14`:
+
+```text
+type(type): <class 'type'>
+type(int): <class 'type'>
+type(Ordinary): <class 'type'>
+dynamically created class works: hi
+```
+
+`type(type)` is `type` itself — the recursion bottoms out there by design. This is also the actual mechanism behind every metaclass you will encounter in a framework (ORMs, ABCs, `enum`): a metaclass is simply a subclass of `type`, used as the third argument's producer instead of plain `type`.
+
+## `__class__` can be reassigned
+
+Because `ob_type` is just a pointer, and (for compatible layouts) nothing stops you from repointing it after the fact — assigning to `obj.__class__` swaps an existing instance's type in place, changing which methods it resolves to without creating a new object:
+
+```python
+class A:
+    def who(self):
+        return "A"
+
+
+class B:
+    def who(self):
+        return "B"
+
+
+obj = A()
+print("before:", obj.who())
+obj.__class__ = B
+print("after: ", obj.who())
+```
+
+Real output, `python3.14`:
+
+```text
+before: A
+after:  B
+```
+
+`obj` is the same object (`id(obj)` never changes) throughout — only what `ob_type` points at changes. This only works between classes with compatible instance layouts (same `__slots__`/`__dict__` shape); CPython raises `TypeError` if the layouts are incompatible.
+
+## Full runnable demo
+
+export const objectModelCode = `
+import sys
+
+# --- id / is ---
+print("=== id and is ===")
+a = [1, 2, 3]
+b = a
+c = [1, 2, 3]
+print(f"a is b: {a is b}, a == b: {a == b}")
+print(f"a is c: {a is c}, a == c: {a == c}")
+
+# --- getrefcount +1 ---
+print("=== sys.getrefcount ===")
+x = object()
+print(f"just x: {sys.getrefcount(x)}")
+y = x
+print(f"x and y: {sys.getrefcount(x)}")
+del y
+print(f"back to just x: {sys.getrefcount(x)}")
+
+# --- small int cache ---
+print("=== small int cache boundaries ===")
+for n in (-6, -5, 0, 256, 257):
+    p = n
+    q = int(str(n))
+    print(f"  n={n:>4}  p is q: {p is q}")
+
+# --- string interning ---
+print("=== string interning ===")
+s1 = "hello"
+s2 = "hello"
+print(f"  identifier-like literal: {s1 is s2}")
+s3 = "".join(["hel", "lo"])
+print(f"  runtime-built same text: {s3 is s1}")
+s4 = sys.intern("".join(["hel", "lo", " ", "world"]))
+s5 = sys.intern("hello world")
+print(f"  sys.intern unifies: {s4 is s5}")
+
+# --- __dict__ vs __slots__ ---
+print("=== __dict__ vs __slots__ ===")
+
+
+class Plain:
+    def __init__(self, px, py):
+        self.px = px
+        self.py = py
+
+
+class Slotted:
+    __slots__ = ("px", "py")
+
+    def __init__(self, px, py):
+        self.px = px
+        self.py = py
+
+
+p = Plain(1, 2)
+sl = Slotted(1, 2)
+print(f"  Plain instance: {sys.getsizeof(p)} + dict: {sys.getsizeof(p.__dict__)}")
+print(f"  Slotted instance: {sys.getsizeof(sl)} (no dict at all)")
+try:
+    sl.extra = 3
+except AttributeError as e:
+    print(f"  Slotted rejects new attr: {e}")
+
+# --- attribute lookup order: data descriptor beats instance dict ---
+print("=== attribute lookup order ===")
+
+
+class LoudDescriptor:
+    def __get__(self, obj, objtype=None):
+        return "from descriptor"
+
+    def __set__(self, obj, value):
+        raise AttributeError("read-only")
+
+
+class WithDescriptor:
+    attr = LoudDescriptor()
+
+
+w = WithDescriptor()
+w.__dict__["attr"] = "from instance dict"
+print(f"  instance dict holds: {w.__dict__['attr']}")
+print(f"  w.attr resolves to: {w.attr}")
+
+# --- type is a metaclass ---
+print("=== type as a metaclass ===")
+print(f"  type(type): {type(type)}")
+Dynamic = type("Dynamic", (), {"greet": lambda self: "hi"})
+print(f"  dynamic class instance: {Dynamic().greet()}")
+
+# --- __class__ swap ---
+print("=== __class__ swap ===")
+
+
+class A:
+    def who(self):
+        return "A"
+
+
+class B:
+    def who(self):
+        return "B"
+
+
+obj = A()
+before_id = id(obj)
+print(f"  before: {obj.who()}")
+obj.__class__ = B
+print(f"  after: {obj.who()}, same object: {id(obj) == before_id}")
+`.trim();
+
+<Playground code={objectModelCode} />
+
+<Callout title="is checks identity, not equality">
+`a is b` is true only when `a` and `b` are the exact same object in memory (`id(a) == id(b)`). It happens to also be true for small cached ints (-5 to 256) and interned string literals compared to themselves — that is a CPython implementation detail, not a language guarantee. Always use `==` to compare values; reserve `is` for identity checks that are actually meant (`x is None`, `x is Ellipsis`, `x is SENTINEL`).
+</Callout>
+
+## Mental Model
+
+Every name in your program is a label pointing at a `PyObject` on the heap — never a box that holds a copy of a value. `x = y` copies the *pointer*, not the object; `x is y` asks whether two labels point at the same struct; `id(x)` is (conceptually) that struct's address. Attribute access on an instance is not "look in a dict" — it is a fixed search order (data descriptor on the type, then the instance dict, then everything else on the type) that exists specifically so that `property`, `__slots__`, and ordinary attributes can all coexist predictably. And `type` sits at the bottom of that search as both "the thing every class is an instance of" and "a class you can call directly" — there is no separate "class-creation subsystem"; `class Foo: ...` and `type("Foo", (), {...})` are the same operation.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| `is` for identity checks | O(1) pointer comparison, exactly right for `x is None`/singleton checks | Easy to misuse for value comparison — works by accident for small ints/interned strings, breaks silently outside those ranges |
+| `__slots__` | Real memory savings (no per-instance dict) at scale; typo'd attribute names raise immediately | No dynamic attributes, no default multiple inheritance with other `__slots__` classes without care, `weakref` needs an explicit slot |
+| Data descriptors (`property` and friends) | Attribute access can run code, validate, or compute lazily, transparently | One more step in an already non-obvious lookup order; overusing them makes a class harder to reason about than plain attributes |
+| `type(name, bases, ns)` dynamic class creation | Frameworks (ORMs, dataclasses-like tools) can generate classes programmatically | Debugging a dynamically-created class is harder — no source line to point at |
+
+## Common Misconceptions
+
+- **"`is` is just a faster `==`."** It answers a different question entirely (same object vs. equal value) and only coincides with `==` reliably for identity-appropriate comparisons like `x is None`. Using it on ints or strings works by luck inside CPython's caching ranges and fails outside them.
+- **"`sys.getrefcount(x)` tells you exactly how many references exist."** For an ordinary object it is off by (at least) one because the call itself adds a reference; for `None`, booleans, and small cached ints it returns a fixed immortal-object sentinel (`0xc0000000` since Python 3.12's PEP 683) that has nothing to do with reference count at all.
+- **"`__slots__` makes attribute access faster."** Its real, verified benefit here is memory (48 bytes vs. 48 + 296 bytes for two attributes) — CPython's own benchmarks show a modest access-speed difference, but memory density on large object counts is the reason to reach for it.
+- **"An instance's own `__dict__` is always checked first."** A data descriptor defined on the class (including every `property`) is checked *before* the instance `__dict__`, unconditionally — verified above by writing directly into `w.__dict__` and seeing the descriptor still win.
+- **"Metaclasses are an advanced, separate feature from normal classes."** `type` is both the metaclass of every ordinary class and something you can call directly with three arguments to build a class at runtime — the `class` statement is sugar over exactly that call.
+
+## Reading AI-generated code
+
+- Does the code use `is` (or `is not`) to compare two `int`s, `str`s, or other value types instead of `==`? It may pass every test the author tried and still break the moment a value leaves the small-int cache or an interned range.
+- Does a class define `__eq__` but rely on `is` anywhere nearby for the "same object" case, without commenting on which is intended? The two are easy to swap by accident.
+- Does a class use `__slots__` and also define a mutable class-level default, or forget `__weakref__` in the slots tuple when something elsewhere holds a `weakref` to instances? Both are common `__slots__` mistakes.
+- Does generated code assume `sys.getrefcount(x) == 1` means "safe to mutate" or "no other owner," without accounting for the call's own +1, or for immortal objects?
+
+<SpotTheBug code={`def get_status_code(value):
+    if value is 200:
+        return "OK"
+    if value is 404:
+        return "Not Found"
+    return "Unknown"
+
+print(get_status_code(int(input())))
+`} lang="python">
+`200` falls inside CPython's small-int cache (-5 to 256), so `value is 200` happens to work when `value` is the literal `200` from source code or another small-int-cached reference — but `int(input())` builds a brand-new `int` object from parsed text, and for values that size CPython does not guarantee it reuses the cached object (and for `404`, which is *outside* the cache entirely, it never does). Typing `404` at the prompt returns `"Unknown"` here, not `"Not Found"`, because `is` compares identity and the freshly-parsed `404` is not the same object as any cached `404`. The fix is `value == 200` / `value == 404` — `==` compares the actual integer value regardless of which object holds it, which is what this function actually needs.
+</SpotTheBug>
+
+export const quizObjectModel = [
+  {
+    q: "What does every Python object share, according to the PyObject header?",
+    options: [
+      "A __dict__ and a __slots__ tuple",
+      "A reference count (ob_refcnt) and a pointer to its type (ob_type)",
+      "A unique name and a docstring",
+      "A weak reference list and a finalizer",
+    ],
+    answer: 1,
+    explain: "Every heap-allocated Python object starts with the same PyObject header: a reference count field and a pointer to the object's type. Everything type-specific (list items, int digits, an instance's own __dict__) comes after that shared header.",
+  },
+  {
+    q: "```python\nimport sys\nx = object()\nprint(sys.getrefcount(x))\ny = x\nprint(sys.getrefcount(x))\n```\nWhat does the first print show, and why?",
+    options: [
+      "1 -- only the name x references it",
+      "2 -- the name x, plus the temporary reference from passing x into getrefcount itself",
+      "0 -- getrefcount doesn't count the caller's own reference",
+      "It raises an exception -- objects have no refcount until assigned twice",
+    ],
+    answer: 1,
+    explain: "sys.getrefcount(x) always reports at least one more than the references you'd count by hand, because passing x as an argument to getrefcount creates one more temporary reference for the duration of the call.",
+  },
+  {
+    q: "```python\nfor n in (-6, -5, 256, 257):\n    p = n\n    q = int(str(n))\n    print(n, p is q)\n```\nBased on CPython's small-int cache, which n values print True?",
+    options: [
+      "All four",
+      "None of them",
+      "-5 and 256 only -- the cache covers exactly -5 through 256",
+      "-6 and 257 only",
+    ],
+    answer: 2,
+    explain: "CPython pre-creates and caches every int from -5 to 256 inclusive. -5 and 256 are inside that range so p is q is True; -6 and 257 are one step outside it, so int(str(n)) builds a genuinely separate object and p is q is False.",
+  },
+  {
+    q: "A class defines `attr` as a data descriptor (both __get__ and __set__). An instance also has `attr` written directly into its own __dict__. Which one does `instance.attr` return?",
+    options: [
+      "The instance __dict__ value -- instance attributes always win",
+      "The data descriptor's __get__ result -- data descriptors are checked before the instance __dict__",
+      "A TypeError, since this is ambiguous",
+      "Whichever was set most recently",
+    ],
+    answer: 1,
+    explain: "CPython's attribute lookup checks data descriptors on the type before the instance __dict__. This is why property works correctly even if something manages to write into an instance's __dict__ under the same name -- verified in this lesson by writing directly into w.__dict__ and seeing the descriptor still answer w.attr.",
+  },
+  {
+    q: "What does `type(\"Widget\", (), {\"greet\": lambda self: \"hi\"})` do?",
+    options: [
+      "Raises a TypeError -- type() with three arguments is invalid",
+      "Returns the string 'Widget'",
+      "Creates and returns a new class named Widget with a greet method, at runtime",
+      "Only works inside a metaclass __new__",
+    ],
+    answer: 2,
+    explain: "type called with three arguments (name, bases tuple, namespace dict) creates a new class object -- exactly what the `class` statement compiles down to internally. This is the actual mechanism frameworks use to generate classes dynamically.",
+  },
+  {
+    q: "```python\ndef get_status_code(value):\n    if value is 200:\n        return \"OK\"\n    return \"Unknown\"\n\nprint(get_status_code(int(input())))\n```\nWhy can this print \"Unknown\" even when the user types exactly `200`?",
+    options: [
+      "int(input()) always returns a string, so the comparison never matches",
+      "200 typed at a prompt is parsed into a new int object at runtime, and is compares identity -- CPython does not guarantee that a freshly-parsed int reuses the small-int cache object",
+      "is always returns False for integers",
+      "This code never prints Unknown -- the bug is elsewhere",
+    ],
+    answer: 1,
+    explain: "200 IS within CPython's small-int cache range, so in practice this specific value usually does work by luck -- the real, guaranteed-broken case is a value like 404 (outside the -5..256 cache), where a freshly parsed int is never the cached object. Either way, is on int values is not something correct code should ever rely on; == is the fix.",
+  },
+  {
+    q: "Why does assigning `obj.__class__ = B` change which methods `obj` resolves to, without creating a new object?",
+    options: [
+      "Python secretly copies obj's data into a new B instance behind the scenes",
+      "ob_type is just a pointer inside obj's PyObject header, and reassigning __class__ repoints it -- id(obj) never changes",
+      "This is not actually possible in real Python",
+      "It only works for built-in types, never for user-defined classes",
+    ],
+    answer: 1,
+    explain: "The type pointer (ob_type) is part of every object's PyObject header, and __class__ assignment overwrites it directly on the existing struct. The object's identity (id(obj)) is unchanged throughout -- only which type its attribute/method lookups resolve against changes. CPython requires the two classes to have compatible instance layouts.",
+  },
+];
+
+<Quiz client:visible id="runtime-internals/object-model" questions={quizObjectModel} />
+
+<ProgressTracker client:visible id="runtime-internals/object-model" />

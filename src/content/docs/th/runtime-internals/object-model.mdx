@@ -1,0 +1,514 @@
+---
+title: The Object Model
+description: 'PyObject, refcount, id/is, sys.getrefcount, small-int cache, string interning, __dict__ กับ __slots__, ลำดับ attribute lookup และ type ในฐานะ metaclass'
+sidebar:
+  order: 2
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+## Python object ทุกตัวคือ `PyObject`
+
+ทุกค่าที่คุณเคยแตะใน Python — `int`, `list`, ฟังก์ชัน, module, หรือแม้แต่ class เอง — คือ C struct ที่ถูก allocate บน heap ซึ่งขึ้นต้นด้วยฟิลด์เดียวกันสองตัว: **reference count** และ **pointer ไปยัง type ของมัน** C source ของ CPython เรียก header นี้ว่า `PyObject` ส่วนที่เหลือของ object (ข้อมูลจริงเฉพาะ type — หลักเลขของ int, element ของ list) มาต่อจาก header ที่ใช้ร่วมกันนี้
+
+<Mermaid code={`flowchart TD
+  PO["PyObject header"] --> RC["ob_refcnt\n(reference count)"]
+  PO --> TP["ob_type\n(pointer to the type object)"]
+  PO --> DATA["...type-specific data\n(int digits, list items, __dict__, ...)"]
+  TP -.-> TYPEOBJ["type object\n(itself a PyObject, type == type(type))"]`} title="PyObject header ที่ Python object ทุกตัวขึ้นต้นด้วย" />
+
+ข้อเท็จจริงข้อเดียวนี้อธิบายสามอย่างที่คุณใช้อยู่ตลอดเวลา: `id(x)` (ในเชิงแนวคิด) คือ address ของ struct นี้ `type(x)` อ่าน `ob_type` และ `sys.getrefcount(x)` อ่าน `ob_refcnt`
+
+## `id` และ `is`
+
+`id(x)` คืนจำนวนเต็มที่ระบุ object ตัวหนึ่งได้ไม่ซ้ำกันตลอดอายุของมัน — ใน CPython คือ memory address ของ object นั้น `x is y` เทียบ `id(x) == id(y)`: มันถามว่า "นี่คือ *object เดียวกัน* หรือเปล่า" ไม่ใช่ "มีค่าเท่ากันหรือเปล่า"
+
+```python
+a = [1, 2, 3]
+b = a          # b names the SAME object as a
+c = [1, 2, 3]  # c is a DIFFERENT object with equal contents
+
+print(a is b, a == b)  # True True  -- same object, and equal
+print(a is c, a == c)  # False True -- different objects, equal contents
+```
+
+## `sys.getrefcount` — และทำไมมันถึง +1 (หรือ +2)
+
+`sys.getrefcount(x)` อ่าน `ob_refcnt` ของ object ตรง ๆ การส่ง `x` เข้าไปใน `getrefcount` เองก็สร้าง reference ชั่วคราวเพิ่มอีกหนึ่งตัว — การผูก argument ภายในตัวเรียก — ตัวเลขที่คุณเห็นเลยสูงกว่า reference count "จริง" ที่คุณพยายามวัดอยู่เสมออย่างน้อยหนึ่ง:
+
+```python
+import sys
+
+x = object()
+print(sys.getrefcount(x))  # 2: the `x` name, + the argument to getrefcount itself
+y = x
+print(sys.getrefcount(x))  # 3: `x`, `y`, + the argument to getrefcount
+del y
+print(sys.getrefcount(x))  # back to 2
+```
+
+Output จริง จาก `python3.14`:
+
+```text
+2
+3
+2
+```
+
+กฎ "+1 สำหรับการเรียก" นี้ใช้ได้กับ object ธรรมดา แต่ใช้ **ไม่ได้** กับ `None`, `True`, `False`, หรือ integer ขนาดเล็กที่ถูก cache ไว้ — สิ่งเหล่านั้น **immortal** ตั้งแต่ Python 3.12 (PEP 683): ฟิลด์ refcount ของมันถูกตั้งเป็นค่า sentinel คงที่ และ `Py_INCREF`/`Py_DECREF` ของ CPython ข้ามการแตะมันไปเลย เพราะยังไงก็ไม่มีวันถูกเก็บขยะอยู่แล้ว
+
+```python
+import sys
+
+print(sys.getrefcount(None))  # a huge, fixed number -- not "how many places reference None"
+print(sys.getrefcount(42))    # 42 is in the small-int cache -- also immortal
+print(hex(sys.getrefcount(42)))
+```
+
+Output จริง จาก `python3.14`:
+
+```text
+3221225472
+3221225472
+0xc0000000
+```
+
+`0xc0000000` คือ bit pattern sentinel ของ immortal object (`_Py_IMMORTAL_REFCNT` ของ PEP 683) ไม่ใช่ "มี reference กี่ที่" instance ของ `object()` ธรรมดา หรือ `int` ที่อยู่นอก small-int cache จะให้ค่านับที่มีความหมายจริง ๆ แทน — ยืนยันไว้ข้างบนและอีกครั้งด้านล่าง
+
+## Small-int cache
+
+CPython สร้างและ cache `int` ทุกตัวตั้งแต่ -5 ถึง 256 ไว้ล่วงหน้าตอน startup การเทียบ `is` ระหว่างสองตัวนี้จึงให้ `True` เสมอ เพราะทุก reference ไปยัง เช่น `100` ชี้ไปที่ object ที่ cache ไว้ตัวเดียวกัน นอกช่วงนั้น `int` literal ธรรมดาที่เป็นค่าคงที่ตอน compile time เดียวกัน *อาจ* แชร์ object กันได้เช่นกัน (constant folding) แต่ `int` ที่สร้างตอนรันจริงจากการดำเนินการแยกกันไม่ได้การันตีว่าจะแชร์ และปกติแล้วไม่แชร์:
+
+```python
+for n in (-6, -5, 0, 256, 257):
+    p = n
+    q = int(str(n))  # force a genuinely separate int object built at runtime
+    print(f"n={n:>4}  p is q: {p is q}")
+```
+
+Output จริง จาก `python3.14`:
+
+```text
+n=  -6  p is q: False
+n=  -5  p is q: True
+n=   0  p is q: True
+n= 256  p is q: True
+n= 257  p is q: False
+```
+
+`-5` และ `256` คือขอบเขตพอดี: `-6` และ `257` อยู่นอก cache แค่ก้าวเดียว `is` ก็คืน `False` ทันทีสำหรับสำเนาที่สร้างใหม่ **ห้ามพึ่งพา `is` เพื่อเทียบ integer เด็ดขาด** — มันบังเอิญทำงานถูกต้องภายในช่วงที่ cache ไว้ แล้วพังแบบเงียบ ๆ ทันทีที่ค่าข้าม `256` ไป ซึ่งเป็น bug แบบที่รอดจากการทดสอบด้วยมือแบบเร็ว ๆ แล้วไปพังตอน production
+
+## String interning
+
+CPython interne string literal ที่หน้าตาเหมือน identifier (ตัวอักษร ตัวเลข underscore) ให้อัตโนมัติตอน compile time ดังนั้น literal ที่เหมือนกันสองครั้งมักจะเป็น object เดียวกัน string ที่สร้างตอนรันจริง (`.join`, slicing, concatenation) ไม่ถูก intern ให้อัตโนมัติ — `sys.intern` บังคับให้ intern ได้ตรง ๆ:
+
+```python
+import sys
+
+s1 = "hello"
+s2 = "hello"
+print("identifier-like literal:", s1 is s2)
+
+s3 = "".join(["hel", "lo"])
+print("runtime-built 'hello' is s1:", s3 is s1)
+
+s4 = sys.intern("".join(["hel", "lo", " ", "world"]))
+s5 = sys.intern("hello world")
+print("sys.intern unifies both:", s4 is s5)
+```
+
+Output จริง จาก `python3.14`:
+
+```text
+identifier-like literal: True
+runtime-built 'hello' is s1: False
+sys.intern unifies both: True
+```
+
+คำเตือนเดียวกันกับ small int ใช้ได้ที่นี่: `==` ถูกต้องเสมอสำหรับเทียบเนื้อหา string `is` แค่บังเอิญทำงานได้กับ literal ที่ intern ไว้ ส่วนผลจาก dict lookup หรือ network response สร้าง string object ที่กฎการ intern ไม่เคยแตะถึง
+
+## `__dict__` เทียบกับ `__slots__`
+
+โดยดีฟอลต์ instance ทุกตัวมี `__dict__` ของตัวเอง — dict จริงที่ allocate แยกจาก instance เอง แมป attribute name ไปยังค่า `__slots__` บอก CPython ให้ข้าม dict นั้นไปเลย แล้วเก็บ attribute ที่ระบุไว้ใน C-level slot ที่ตายตัวบน instance struct แทน:
+
+```python
+import sys
+
+
+class Plain:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+
+class Slotted:
+    __slots__ = ("x", "y")
+
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+
+p = Plain(1, 2)
+sl = Slotted(1, 2)
+print("Plain instance:", sys.getsizeof(p), "+ its __dict__:", sys.getsizeof(p.__dict__))
+print("Slotted instance:", sys.getsizeof(sl), "(no separate __dict__ exists at all)")
+
+try:
+    sl.z = 3
+except AttributeError as e:
+    print("Slotted instance rejects a new attribute:", e)
+```
+
+Output จริง จาก `python3.14`:
+
+```text
+Plain instance: 48 + its __dict__: 296
+Slotted instance: 48 (no separate __dict__ exists at all)
+Slotted instance rejects a new attribute: 'Slotted' object has no attribute 'z' and no __dict__ for setting new attributes
+```
+
+instance struct เองมีขนาด 48 byte เท่ากันทั้งคู่ที่นี่ แต่ `Plain` ยังลาก dict ขนาด 296 byte ต่อ instance ไปด้วย — memory จริงที่ `__slots__` กำจัดได้ทั้งหมด แลกกับการไม่สามารถเพิ่ม attribute (`z`) ที่ไม่ได้ประกาศไว้ล่วงหน้าได้เลย สำหรับ class ที่มี instance เป็นล้าน (แถวข้อมูลที่ parse แล้ว, node ใน tree) ความต่างนี้คือจุดที่ `__slots__` คุ้มค่าจริง ๆ ส่วนสำหรับ object อายุยาวไม่กี่ตัว มันแทบไม่มีผล
+
+## ลำดับการทำ attribute lookup
+
+`obj.attr` ไม่ได้แค่เช็ค instance `__dict__` เฉย ๆ ลำดับจริงของ CPython คือ: **data descriptor บน type (เช็คก่อน ผ่าน MRO) → instance `__dict__` → non-data descriptor และ class attribute ธรรมดาบน type (ผ่าน MRO)** *data descriptor* คือ object ใด ๆ ที่ประกาศทั้ง `__get__` และ `__set__` (หรือ `__delete__`) มันชนะแม้แต่ค่าที่นั่งอยู่ใน instance `__dict__` ของตัวเองแล้ว:
+
+```python
+class LoudDescriptor:
+    def __get__(self, obj, objtype=None):
+        return "from descriptor"
+
+    def __set__(self, obj, value):
+        raise AttributeError("read-only data descriptor")
+
+
+class WithDescriptor:
+    attr = LoudDescriptor()
+
+
+w = WithDescriptor()
+w.__dict__["attr"] = "from instance dict"  # written directly, bypassing __set__
+print("instance __dict__ actually holds:", w.__dict__["attr"])
+print("but w.attr resolves to:", w.attr)
+```
+
+Output จริง จาก `python3.14`:
+
+```text
+instance __dict__ actually holds: from instance dict
+but w.attr resolves to: from descriptor
+```
+
+นี่คือกลไกเบื้องหลัง `property` เป๊ะ ๆ (property เป็น data descriptor) — `self.x = 5` บน class ที่ `x` ถูกประกาศเป็น `@property` ไม่มีทางแตะ `self.__dict__["x"]` ในทางที่จะบัง property ได้เลย เพราะ descriptor ถูกเช็คก่อนโดยไม่มีเงื่อนไข
+
+## `type` คือ metaclass
+
+`type` ไม่ใช่แค่ "สิ่งที่ `type(x)` คืนมา" — มันเป็น class ในตัวมันเอง และเป็น class ที่ class ธรรมดาทุกตัวเป็น instance ของมัน การเรียก `type(name, bases, namespace)` ด้วยสามอาร์กิวเมนต์จะ *สร้าง* class ใหม่ขึ้นมาตอนรันจริง ซึ่งเป็นสิ่งที่ statement `class` คอมไพล์ลงไปเป๊ะ ๆ:
+
+```python
+print("type(type):", type(type))
+print("type(int):", type(int))
+
+
+class Ordinary:
+    pass
+
+
+print("type(Ordinary):", type(Ordinary))
+
+Dynamic = type("Dynamic", (), {"greet": lambda self: "hi"})
+d = Dynamic()
+print("dynamically created class works:", d.greet())
+```
+
+Output จริง จาก `python3.14`:
+
+```text
+type(type): <class 'type'>
+type(int): <class 'type'>
+type(Ordinary): <class 'type'>
+dynamically created class works: hi
+```
+
+`type(type)` คือ `type` เอง — การ recursion จบตรงนั้นโดยการออกแบบ นี่ยังเป็นกลไกจริงเบื้องหลัง metaclass ทุกตัวที่คุณจะเจอในเฟรมเวิร์ก (ORM, ABC, `enum`): metaclass ก็แค่ subclass ของ `type` ที่ถูกใช้เป็นตัวผลิตแทนอาร์กิวเมนต์ที่สามแทนที่จะเป็น `type` เฉย ๆ
+
+## `__class__` reassign ได้
+
+เพราะ `ob_type` เป็นแค่ pointer และ (สำหรับ layout ที่เข้ากันได้) ไม่มีอะไรห้ามการชี้ใหม่หลังจากสร้างแล้ว การ assign ให้ `obj.__class__` จะสลับ type ของ instance ที่มีอยู่แล้วในที่เดิม เปลี่ยน method ที่มัน resolve ไปหาโดยไม่ต้องสร้าง object ใหม่:
+
+```python
+class A:
+    def who(self):
+        return "A"
+
+
+class B:
+    def who(self):
+        return "B"
+
+
+obj = A()
+print("before:", obj.who())
+obj.__class__ = B
+print("after: ", obj.who())
+```
+
+Output จริง จาก `python3.14`:
+
+```text
+before: A
+after:  B
+```
+
+`obj` เป็น object เดียวกัน (`id(obj)` ไม่เปลี่ยนเลย) ตลอดทั้งกระบวนการ — มีแค่สิ่งที่ `ob_type` ชี้ไปเท่านั้นที่เปลี่ยน วิธีนี้ใช้ได้เฉพาะระหว่าง class ที่มี instance layout เข้ากันได้ (รูปแบบ `__slots__`/`__dict__` เดียวกัน) เท่านั้น CPython จะ raise `TypeError` ถ้า layout เข้ากันไม่ได้
+
+## Demo ที่รันได้เต็มรูปแบบ
+
+export const objectModelCode = `
+import sys
+
+# --- id / is ---
+print("=== id and is ===")
+a = [1, 2, 3]
+b = a
+c = [1, 2, 3]
+print(f"a is b: {a is b}, a == b: {a == b}")
+print(f"a is c: {a is c}, a == c: {a == c}")
+
+# --- getrefcount +1 ---
+print("=== sys.getrefcount ===")
+x = object()
+print(f"just x: {sys.getrefcount(x)}")
+y = x
+print(f"x and y: {sys.getrefcount(x)}")
+del y
+print(f"back to just x: {sys.getrefcount(x)}")
+
+# --- small int cache ---
+print("=== small int cache boundaries ===")
+for n in (-6, -5, 0, 256, 257):
+    p = n
+    q = int(str(n))
+    print(f"  n={n:>4}  p is q: {p is q}")
+
+# --- string interning ---
+print("=== string interning ===")
+s1 = "hello"
+s2 = "hello"
+print(f"  identifier-like literal: {s1 is s2}")
+s3 = "".join(["hel", "lo"])
+print(f"  runtime-built same text: {s3 is s1}")
+s4 = sys.intern("".join(["hel", "lo", " ", "world"]))
+s5 = sys.intern("hello world")
+print(f"  sys.intern unifies: {s4 is s5}")
+
+# --- __dict__ vs __slots__ ---
+print("=== __dict__ vs __slots__ ===")
+
+
+class Plain:
+    def __init__(self, px, py):
+        self.px = px
+        self.py = py
+
+
+class Slotted:
+    __slots__ = ("px", "py")
+
+    def __init__(self, px, py):
+        self.px = px
+        self.py = py
+
+
+p = Plain(1, 2)
+sl = Slotted(1, 2)
+print(f"  Plain instance: {sys.getsizeof(p)} + dict: {sys.getsizeof(p.__dict__)}")
+print(f"  Slotted instance: {sys.getsizeof(sl)} (no dict at all)")
+try:
+    sl.extra = 3
+except AttributeError as e:
+    print(f"  Slotted rejects new attr: {e}")
+
+# --- attribute lookup order: data descriptor beats instance dict ---
+print("=== attribute lookup order ===")
+
+
+class LoudDescriptor:
+    def __get__(self, obj, objtype=None):
+        return "from descriptor"
+
+    def __set__(self, obj, value):
+        raise AttributeError("read-only")
+
+
+class WithDescriptor:
+    attr = LoudDescriptor()
+
+
+w = WithDescriptor()
+w.__dict__["attr"] = "from instance dict"
+print(f"  instance dict holds: {w.__dict__['attr']}")
+print(f"  w.attr resolves to: {w.attr}")
+
+# --- type is a metaclass ---
+print("=== type as a metaclass ===")
+print(f"  type(type): {type(type)}")
+Dynamic = type("Dynamic", (), {"greet": lambda self: "hi"})
+print(f"  dynamic class instance: {Dynamic().greet()}")
+
+# --- __class__ swap ---
+print("=== __class__ swap ===")
+
+
+class A:
+    def who(self):
+        return "A"
+
+
+class B:
+    def who(self):
+        return "B"
+
+
+obj = A()
+before_id = id(obj)
+print(f"  before: {obj.who()}")
+obj.__class__ = B
+print(f"  after: {obj.who()}, same object: {id(obj) == before_id}")
+`.trim();
+
+<Playground code={objectModelCode} />
+
+<Callout title="is เช็ค identity ไม่ใช่ equality">
+`a is b` เป็นจริงก็ต่อเมื่อ `a` กับ `b` เป็น object เดียวกันเป๊ะในหน่วยความจำ (`id(a) == id(b)`) มันบังเอิญเป็นจริงด้วยสำหรับ int ขนาดเล็กที่ cache ไว้ (-5 ถึง 256) และ string literal ที่ intern ไว้เทียบกับตัวเอง — นั่นเป็นรายละเอียด implementation ของ CPython ไม่ใช่การรับประกันของภาษา ใช้ `==` เทียบค่าเสมอ เก็บ `is` ไว้สำหรับการเช็ค identity ที่ตั้งใจจริง ๆ (`x is None`, `x is Ellipsis`, `x is SENTINEL`)
+</Callout>
+
+## Mental Model
+
+ทุกชื่อในโปรแกรมของคุณคือป้ายที่ชี้ไปยัง `PyObject` บน heap — ไม่ใช่กล่องที่เก็บสำเนาของค่าเลย `x = y` copy *pointer* ไม่ใช่ copy object; `x is y` ถามว่าป้ายสองอันชี้ไปที่ struct เดียวกันหรือเปล่า; `id(x)` (ในเชิงแนวคิด) คือ address ของ struct นั้น การเข้าถึง attribute บน instance ไม่ใช่ "หาใน dict" — มันคือลำดับการค้นหาที่ตายตัว (data descriptor บน type ก่อน แล้วค่อย instance dict แล้วค่อยที่เหลือบน type) ที่มีอยู่เพื่อให้ `property`, `__slots__`, และ attribute ธรรมดาอยู่ร่วมกันได้อย่างคาดเดาได้ และ `type` นั่งอยู่ที่ก้นบึ้งของการค้นหานั้นทั้งในฐานะ "สิ่งที่ class ทุกตัวเป็น instance ของ" และ "class ที่คุณเรียกตรง ๆ ได้" — ไม่มี "ระบบสร้าง class" แยกต่างหาก; `class Foo: ...` กับ `type("Foo", (), {...})` คือ operation เดียวกัน
+
+## ข้อแลกเปลี่ยน
+
+| สิ่งที่ได้ | ประโยชน์ | ต้นทุน |
+|---|---|---|
+| `is` สำหรับเช็ค identity | เทียบ pointer แบบ O(1) ถูกต้องเป๊ะสำหรับเช็ค `x is None`/singleton | ใช้ผิดง่ายสำหรับเทียบค่า — ทำงานโดยบังเอิญกับ int เล็ก/string ที่ intern แล้วพังแบบเงียบ ๆ นอกช่วงนั้น |
+| `__slots__` | ประหยัด memory จริง (ไม่มี dict ต่อ instance) เมื่อมีจำนวนมาก, พิมพ์ attribute name ผิด raise ทันที | ไม่มี dynamic attribute, multiple inheritance กับ `__slots__` class อื่นต้องระวัง, `weakref` ต้องมี slot ระบุไว้ตรง ๆ |
+| Data descriptor (`property` และพวกเดียวกัน) | attribute access รันโค้ด validate หรือคำนวณแบบ lazy ได้อย่างโปร่งใส | เพิ่มอีกขั้นในลำดับการค้นหาที่ไม่ตรงไปตรงมาอยู่แล้ว ใช้มากเกินไปทำให้ class อ่านยากกว่า attribute ธรรมดา |
+| `type(name, bases, ns)` สร้าง class แบบ dynamic | เฟรมเวิร์ก (ORM, เครื่องมือแบบ dataclass) สร้าง class แบบเขียนโปรแกรมได้ | debug class ที่สร้างแบบ dynamic ยากกว่า — ไม่มีบรรทัด source ให้ชี้ |
+
+## ความเข้าใจผิดที่พบบ่อย
+
+- **"`is` ก็แค่ `==` ที่เร็วกว่า"** มันตอบคำถามคนละอย่างเลย (object เดียวกันหรือเปล่า เทียบกับ ค่าเท่ากันหรือเปล่า) และตรงกับ `==` ได้แน่นอนเฉพาะการเทียบที่เหมาะกับ identity อย่าง `x is None` ใช้กับ int หรือ string ทำงานได้เพราะโชคดีอยู่ในช่วง cache ของ CPython แล้วพังนอกช่วงนั้น
+- **"`sys.getrefcount(x)` บอกจำนวน reference ที่มีอยู่จริงเป๊ะ ๆ"** สำหรับ object ธรรมดามันเกินมา (อย่างน้อย) หนึ่ง เพราะตัวการเรียกเองก็เพิ่ม reference; สำหรับ `None`, boolean, และ int เล็กที่ cache ไว้ มันคืนค่า sentinel ของ immortal object ที่ตายตัว (`0xc0000000` ตั้งแต่ PEP 683 ใน Python 3.12) ที่ไม่เกี่ยวกับ reference count เลย
+- **"`__slots__` ทำให้ attribute access เร็วขึ้น"** ประโยชน์จริงที่ยืนยันได้ที่นี่คือ memory (48 byte เทียบกับ 48 + 296 byte สำหรับสอง attribute) — benchmark ของ CPython เองแสดงความต่างของความเร็วในการ access แค่เล็กน้อย แต่ความหนาแน่นของ memory เมื่อมี object จำนวนมากคือเหตุผลที่ควรใช้มัน
+- **"instance dict ของตัวเองถูกเช็คก่อนเสมอ"** data descriptor ที่ประกาศบน class (รวมถึง `property` ทุกตัว) ถูกเช็ค *ก่อน* instance `__dict__` โดยไม่มีเงื่อนไข — ยืนยันข้างบนด้วยการเขียนตรง ๆ ลงใน `w.__dict__` แล้วเห็น descriptor ยังชนะอยู่ดี
+- **"metaclass เป็นฟีเจอร์ขั้นสูงที่แยกจาก class ปกติ"** `type` เป็นทั้ง metaclass ของ class ธรรมดาทุกตัว และเป็นสิ่งที่คุณเรียกตรง ๆ ด้วยสามอาร์กิวเมนต์เพื่อสร้าง class ตอนรันจริงได้ — statement `class` คือ syntax sugar ของการเรียกแบบนั้นเป๊ะ ๆ
+
+## อ่านโค้ดที่ AI เขียน
+
+- โค้ดใช้ `is` (หรือ `is not`) เทียบ `int`, `str`, หรือ value type อื่นแทน `==` หรือเปล่า? มันอาจผ่านทุก test ที่ผู้เขียนลองแล้วยังพังทันทีที่ค่าหลุดจาก small-int cache หรือช่วงที่ intern ไว้
+- class ประกาศ `__eq__` แต่พึ่งพา `is` ที่ไหนใกล้ ๆ สำหรับกรณี "object เดียวกัน" โดยไม่ comment ว่าตั้งใจอันไหนหรือเปล่า? สองอย่างนี้สลับกันโดยไม่ตั้งใจได้ง่าย
+- class ใช้ `__slots__` และยังประกาศ mutable class-level default หรือลืม `__weakref__` ใน slots tuple ทั้งที่มีที่อื่นถือ `weakref` ไปยัง instance หรือเปล่า? ทั้งสองเป็น mistake ของ `__slots__` ที่พบบ่อย
+- โค้ดที่ AI สร้างสมมติว่า `sys.getrefcount(x) == 1` แปลว่า "แก้ไขได้อย่างปลอดภัย" หรือ "ไม่มีเจ้าของอื่น" โดยไม่คิดถึง +1 ของตัวการเรียกเอง หรือเรื่อง immortal object หรือเปล่า?
+
+<SpotTheBug code={`def get_status_code(value):
+    if value is 200:
+        return "OK"
+    if value is 404:
+        return "Not Found"
+    return "Unknown"
+
+print(get_status_code(int(input())))
+`} lang="python">
+`200` อยู่ในช่วง small-int cache ของ CPython (-5 ถึง 256) ดังนั้น `value is 200` บังเอิญทำงานได้เมื่อ `value` เป็น literal `200` จาก source code หรือ reference ที่ cache ไว้อีกตัว — แต่ `int(input())` สร้าง `int` object ใหม่เอี่ยมจากข้อความที่ parse มา และสำหรับค่าขนาดนั้น CPython ไม่ได้การันตีว่ามันจะ reuse object ที่ cache ไว้ (และสำหรับ `404` ซึ่งอยู่ *นอก* cache เลย มันไม่มีวัน reuse) พิมพ์ `404` ที่ prompt แล้วจะได้ `"Unknown"` ที่นี่ ไม่ใช่ `"Not Found"` เพราะ `is` เทียบ identity และ `404` ที่เพิ่ง parse ใหม่ไม่ใช่ object เดียวกับ `404` ที่ cache ไว้ตัวไหนเลย วิธีแก้คือ `value == 200` / `value == 404` — `==` เทียบค่า integer จริง ๆ ไม่ว่า object ไหนจะถืออยู่ ซึ่งเป็นสิ่งที่ฟังก์ชันนี้ต้องการจริง ๆ
+</SpotTheBug>
+
+export const quizObjectModel = [
+  {
+    q: "ตาม PyObject header แล้ว Python object ทุกตัวมีอะไรร่วมกัน?",
+    options: [
+      "A __dict__ and a __slots__ tuple",
+      "A reference count (ob_refcnt) and a pointer to its type (ob_type)",
+      "A unique name and a docstring",
+      "A weak reference list and a finalizer",
+    ],
+    answer: 1,
+    explain: "Python object ทุกตัวที่ allocate บน heap ขึ้นต้นด้วย PyObject header เดียวกัน: ฟิลด์ reference count กับ pointer ไปยัง type ของ object นั้น ส่วนที่เฉพาะแต่ละ type (element ของ list, หลักเลขของ int, __dict__ ของ instance เอง) มาต่อจาก header ที่ใช้ร่วมกันนี้",
+  },
+  {
+    q: "```python\nimport sys\nx = object()\nprint(sys.getrefcount(x))\ny = x\nprint(sys.getrefcount(x))\n```\nการ print ครั้งแรกแสดงอะไร และเพราะอะไร?",
+    options: [
+      "1 -- only the name x references it",
+      "2 -- the name x, plus the temporary reference from passing x into getrefcount itself",
+      "0 -- getrefcount doesn't count the caller's own reference",
+      "It raises an exception -- objects have no refcount until assigned twice",
+    ],
+    answer: 1,
+    explain: "sys.getrefcount(x) รายงานค่ามากกว่าจำนวน reference ที่นับด้วยมือเสมออย่างน้อยหนึ่ง เพราะการส่ง x เป็น argument เข้าไปใน getrefcount เองก็สร้าง reference ชั่วคราวเพิ่มอีกหนึ่งตัวตลอดช่วงที่ call กำลังทำงาน",
+  },
+  {
+    q: "```python\nfor n in (-6, -5, 256, 257):\n    p = n\n    q = int(str(n))\n    print(n, p is q)\n```\nอิงจาก small-int cache ของ CPython ค่า n ไหนที่ print True?",
+    options: [
+      "All four",
+      "None of them",
+      "-5 and 256 only -- the cache covers exactly -5 through 256",
+      "-6 and 257 only",
+    ],
+    answer: 2,
+    explain: "CPython สร้างและ cache int ทุกตัวตั้งแต่ -5 ถึง 256 ไว้ล่วงหน้า -5 กับ 256 อยู่ในช่วงนั้นพอดี p is q จึงเป็น True ส่วน -6 กับ 257 อยู่นอกช่วงแค่ก้าวเดียว int(str(n)) จึงสร้าง object แยกต่างหากจริง ๆ p is q จึงเป็น False",
+  },
+  {
+    q: "class หนึ่งประกาศ `attr` เป็น data descriptor (มีทั้ง __get__ และ __set__) instance หนึ่งก็มี `attr` ที่เขียนตรง ๆ ลงใน __dict__ ของตัวเองด้วย `instance.attr` จะคืนอันไหน?",
+    options: [
+      "The instance __dict__ value -- instance attributes always win",
+      "The data descriptor's __get__ result -- data descriptors are checked before the instance __dict__",
+      "A TypeError, since this is ambiguous",
+      "Whichever was set most recently",
+    ],
+    answer: 1,
+    explain: "การทำ attribute lookup ของ CPython เช็ค data descriptor บน type ก่อน instance __dict__ นี่คือเหตุผลที่ property ทำงานถูกต้องแม้จะมีอะไรบางอย่างเขียนลงใน instance __dict__ ภายใต้ชื่อเดียวกันสำเร็จ — ยืนยันในบทนี้ด้วยการเขียนตรง ๆ ลงใน w.__dict__ แล้วเห็น descriptor ยังตอบ w.attr อยู่ดี",
+  },
+  {
+    q: "`type(\"Widget\", (), {\"greet\": lambda self: \"hi\"})` ทำอะไร?",
+    options: [
+      "Raises a TypeError -- type() with three arguments is invalid",
+      "Returns the string 'Widget'",
+      "Creates and returns a new class named Widget with a greet method, at runtime",
+      "Only works inside a metaclass __new__",
+    ],
+    answer: 2,
+    explain: "type ที่เรียกด้วยสามอาร์กิวเมนต์ (name, bases tuple, namespace dict) สร้าง class object ใหม่ — สิ่งที่ statement class คอมไพล์ลงไปข้างในเป๊ะ ๆ นี่คือกลไกจริงที่เฟรมเวิร์กใช้สร้าง class แบบ dynamic",
+  },
+  {
+    q: "```python\ndef get_status_code(value):\n    if value is 200:\n        return \"OK\"\n    return \"Unknown\"\n\nprint(get_status_code(int(input())))\n```\nทำไมโค้ดนี้ถึง print \"Unknown\" ได้ แม้ผู้ใช้จะพิมพ์ `200` เป๊ะ ๆ?",
+    options: [
+      "int(input()) always returns a string, so the comparison never matches",
+      "200 typed at a prompt is parsed into a new int object at runtime, and is compares identity -- CPython does not guarantee that a freshly-parsed int reuses the small-int cache object",
+      "is always returns False for integers",
+      "This code never prints Unknown -- the bug is elsewhere",
+    ],
+    answer: 1,
+    explain: "200 อยู่ในช่วง small-int cache ของ CPython จริง ๆ ดังนั้นในทางปฏิบัติค่านี้เจาะจงมักทำงานได้เพราะโชคดี — กรณีที่พังแน่นอนคือค่าอย่าง 404 (อยู่นอกช่วง -5..256) ที่ int ซึ่งเพิ่ง parse ใหม่ไม่มีวันเป็น object ที่ cache ไว้เลย ไม่ว่าจะกรณีไหน is บนค่า int ก็ไม่ใช่สิ่งที่โค้ดที่ถูกต้องควรพึ่งพา == คือทางแก้",
+  },
+  {
+    q: "ทำไมการ assign `obj.__class__ = B` ถึงเปลี่ยน method ที่ `obj` resolve ไปหาได้ โดยไม่ต้องสร้าง object ใหม่?",
+    options: [
+      "Python secretly copies obj's data into a new B instance behind the scenes",
+      "ob_type is just a pointer inside obj's PyObject header, and reassigning __class__ repoints it -- id(obj) never changes",
+      "This is not actually possible in real Python",
+      "It only works for built-in types, never for user-defined classes",
+    ],
+    answer: 1,
+    explain: "type pointer (ob_type) เป็นส่วนหนึ่งของ PyObject header ของ object ทุกตัว และการ assign __class__ เขียนทับมันตรง ๆ บน struct เดิม identity ของ object (id(obj)) ไม่เปลี่ยนตลอดกระบวนการ — มีแค่ type ที่ attribute/method lookup ของมันไป resolve ด้วยเท่านั้นที่เปลี่ยน CPython ต้องการให้สอง class มี instance layout เข้ากันได้",
+  },
+];
+
+<Quiz client:visible id="runtime-internals/object-model" questions={quizObjectModel} />
+
+<ProgressTracker client:visible id="runtime-internals/object-model" />

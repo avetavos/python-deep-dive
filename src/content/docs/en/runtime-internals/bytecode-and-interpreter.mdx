@@ -1,0 +1,402 @@
+---
+title: Bytecode and the Interpreter
+description: 'Code objects, dis, frames and the value stack, LEGB in bytecode, the specializing adaptive interpreter, the 3.14 experimental JIT, .pyc caching, and the import system.'
+sidebar:
+  order: 4
+---
+
+import Playground from '../../../../components/Playground.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+import Mermaid from '../../../../components/Mermaid.astro';
+import SpotTheBug from '../../../../components/SpotTheBug.astro';
+
+## From source to a code object
+
+`compile(source, filename, mode)` turns Python source text into a **code object** — not something that runs yet, just a description of what to run: a sequence of bytecode instructions plus the tables those instructions reference (`co_consts` for literal constants, `co_names` for global/attribute names, `co_varnames` for local variable names).
+
+```python
+src = "x = 1\ny = x + 2\nprint(y)\n"
+code = compile(src, "<demo>", "exec")
+print("co_consts:", code.co_consts)
+print("co_names:", code.co_names)
+
+
+def scoped(a, b):
+    total = a + b
+    return total
+
+
+print("function co_varnames:", scoped.__code__.co_varnames)
+print("function co_consts:", scoped.__code__.co_consts)
+```
+
+Real output, `python3.14`:
+
+```text
+co_consts: (1, None)
+co_names: ('x', 'y', 'print')
+function co_varnames: ('a', 'b', 'total')
+function co_consts: (None,)
+```
+
+At module level, names (`x`, `y`, `print`) live in `co_names` because they're looked up in a dict (globals). Inside a function, `a`, `b`, and `total` live in `co_varnames` instead — fixed-index slots in the frame, not dict lookups, which is a large part of why local variable access is faster than global access.
+
+## `dis.dis` — reading the bytecode
+
+```python
+def add(a, b):
+    return a + b
+
+
+import dis
+dis.dis(add)
+```
+
+Real output, `python3.14`:
+
+```text
+  1           RESUME                   0
+
+  2           LOAD_FAST_BORROW_LOAD_FAST_BORROW 1 (a, b)
+              BINARY_OP                0 (+)
+              RETURN_VALUE
+```
+
+Two things to notice if you last looked at `dis` output on an older Python: `RESUME` (added in 3.11, a no-op used for tracing/signal-checking at function entry) and `LOAD_FAST_BORROW_LOAD_FAST_BORROW` — a single **superinstruction** that loads both `a` and `b` in one opcode instead of two separate `LOAD_FAST`s. "Borrow" here means the interpreter uses the reference without incrementing its refcount for the duration of the operation, avoiding refcounting overhead entirely for a value it knows will still be alive — a 3.12+ optimization. `dis` output like this is not part of any stable API; opcode names, and even how many opcodes a given line compiles to, change across minor versions. Use `dis` to understand, never to pattern-match against in production code.
+
+## Frames, the value stack, and LEGB in bytecode
+
+Every function call gets a **frame** — a resizable value stack (where operands are pushed before an operation and popped as its result) plus its own space for local variables. LEGB (Local, Enclosing, Global, Built-in) name resolution is not a runtime search through nested scopes — the compiler decides, per name, which opcode to emit:
+
+```python
+g = 10
+
+
+def legb_demo():
+    local = 1
+
+    def inner():
+        nonlocal_target = local  # LOAD_DEREF: a closure variable from an enclosing scope
+        return nonlocal_target + g  # LOAD_GLOBAL: a module global
+
+    return inner()
+
+
+import dis
+dis.dis(legb_demo.__code__.co_consts[1])  # disassemble inner() specifically
+```
+
+Real output, `python3.14` (the inner function's disassembly):
+
+```text
+  --           COPY_FREE_VARS           1
+
+  7            RESUME                   0
+
+  8            LOAD_DEREF               1 (local)
+               STORE_FAST               0 (nonlocal_target)
+
+  9            LOAD_FAST_BORROW         0 (nonlocal_target)
+               LOAD_GLOBAL              0 (g)
+               BINARY_OP                0 (+)
+               RETURN_VALUE
+```
+
+`LOAD_DEREF` fetches `local` from a **cell object** shared with the enclosing frame (this is what makes closures work — `outer`'s frame is gone, but the cell it created lives on as long as `inner` references it). `LOAD_GLOBAL` looks `g` up in the module's global namespace, not the local frame. `COPY_FREE_VARS` at function entry copies the closure's cells into the new frame. This is LEGB made concrete: the compiler already knows, from static analysis of the source, exactly which of these three lookup strategies each name needs — there is no generic "search local, then enclosing, then global" loop at runtime.
+
+## The specializing adaptive interpreter (PEP 659)
+
+Since Python 3.11, the interpreter rewrites a function's bytecode in place after it's been called enough times, replacing generic opcodes with specialized ones tuned to the actual types seen at that call site:
+
+```python
+def hot(a, b):
+    return a + b
+
+
+import dis
+print("--- cold ---")
+dis.dis(hot, adaptive=True)
+for _ in range(200):
+    hot(1, 2)
+print("--- warm, after 200 calls ---")
+dis.dis(hot, adaptive=True)
+```
+
+Real output, `python3.14`:
+
+```text
+--- cold ---
+ 50           RESUME                   0
+
+ 51           LOAD_FAST_BORROW_LOAD_FAST_BORROW 1 (a, b)
+              BINARY_OP                0 (+)
+              RETURN_VALUE
+--- warm, after 200 calls ---
+ 50           RESUME_CHECK             0
+
+ 51           LOAD_FAST_BORROW_LOAD_FAST_BORROW 1 (a, b)
+              BINARY_OP_ADD_INT        0 (+)
+              RETURN_VALUE
+```
+
+After 200 calls with two `int` arguments, the generic `BINARY_OP` specializes to `BINARY_OP_ADD_INT` — a version that skips the generic dispatch (check both operand types, look up `__add__`, check for `NotImplemented`, maybe try `__radd__`) and jumps straight to integer addition, falling back to the generic path automatically if a call ever shows up with non-`int` arguments. `RESUME` similarly becomes `RESUME_CHECK`. None of this changes what the function returns — it is purely an internal optimization, invisible unless you look with `dis(..., adaptive=True)`.
+
+## The experimental JIT — status in this build
+
+Python 3.13 introduced an experimental just-in-time compiler; 3.14's official binary releases for Windows and macOS ship it built in, but it is **opt-in, not enabled by default**:
+
+```python
+import sys
+
+print("JIT support compiled in:", sys._jit.is_available())
+print("JIT enabled for this process:", sys._jit.is_enabled())
+```
+
+Real output, `python3.14.7` (Homebrew build, Apple Silicon):
+
+```text
+JIT support compiled in: True
+JIT enabled for this process: False
+```
+
+`sys._jit.is_available()` reports whether *this specific interpreter build* was compiled with JIT support at all — `True` here. `sys._jit.is_enabled()` reports whether it is actually turned on for the running process — `False` by default, verified above, and setting `PYTHON_JIT=1` in the environment before starting this particular Homebrew-built interpreter did **not** change that result when tested directly. Do not take "JIT support compiled in" as "my code is being JIT-compiled" — check `is_enabled()` (and `sys._jit.is_active()` inside a hot frame) on your own interpreter before making any performance claim that depends on it.
+
+## `.pyc` files, `__pycache__`, and `PYTHONDONTWRITEBYTECODE`
+
+Importing a module compiles its source to bytecode and caches that compiled form on disk, so the next import can skip recompilation:
+
+```python
+# mymod.py contains: VALUE = 1
+import mymod
+```
+
+```text
+$ python3.14 -c "import mymod" && ls __pycache__
+mymod.cpython-314.pyc
+
+$ rm -rf __pycache__ && PYTHONDONTWRITEBYTECODE=1 python3.14 -c "import mymod" && ls __pycache__
+ls: __pycache__: No such file or directory
+```
+
+The cache filename encodes the interpreter version (`cpython-314`) because bytecode is not portable across major/minor versions. `PYTHONDONTWRITEBYTECODE=1` (or `python3.14 -B`) suppresses writing the cache entirely — useful for read-only filesystems or containers where you don't want stray `.pyc` files, at the cost of recompiling from source on every run.
+
+## The import system: `sys.modules`, `sys.path`, and a real circular import
+
+`import` first checks `sys.modules` (a cache of every module already imported in this process); if absent, it searches `sys.path` for the source, executes the module's top-level code exactly once, and *registers the module object in `sys.modules` before that execution finishes* — which is exactly what makes circular imports fail in a specific, reproducible way:
+
+```python
+# cir_a.py
+from cir_b import b_func  # cir_b is imported before a_func exists below
+
+def a_func():
+    return "a"
+```
+
+```python
+# cir_b.py
+from cir_a import a_func  # cir_a is only half-executed at this point
+
+def b_func():
+    return a_func()
+```
+
+```text
+$ python3.14 -c "import cir_a"
+ImportError: cannot import name 'a_func' from 'cir_a' (consider renaming '/path/to/cir_a.py' if it has the same name as a library you intended to import)
+```
+
+The sequence: importing `cir_a` starts executing it and hits `from cir_b import b_func`; that starts executing `cir_b`, which hits `from cir_a import a_func` — but `cir_a` is already in `sys.modules` (registered the moment its execution began, before `a_func` was defined), so Python does not re-run it; it just looks for `a_func` on the partially-executed module object and doesn't find it. The fix is almost always to move the import inside the function that needs it (deferring it past both modules' top-level execution), or to restructure so one module doesn't need a name from the other at import time.
+
+`importlib.reload` re-executes a module's top-level code against its *existing* module object, picking up source changes without restarting the interpreter:
+
+```python
+import importlib
+import time
+import mymod2  # mymod2.py currently has: VALUE = 1
+
+print("before:", mymod2.VALUE)
+time.sleep(0.3)
+with open("mymod2.py", "w") as f:
+    f.write("VALUE = 99\n")
+importlib.reload(mymod2)
+print("after: ", mymod2.VALUE)
+```
+
+Real output, `python3.14`:
+
+```text
+before: 1
+after:  99
+```
+
+## Full runnable demo
+
+export const bytecodeCode = `
+import dis
+
+print("=== compile -> code object ===")
+src = "x = 1\\ny = x + 2\\nprint(y)\\n"
+code = compile(src, "<demo>", "exec")
+print("co_consts:", code.co_consts)
+print("co_names:", code.co_names)
+
+
+def scoped(a, b):
+    total = a + b
+    return total
+
+
+print("function co_varnames:", scoped.__code__.co_varnames)
+
+print("=== dis.dis of a simple function ===")
+
+
+def add(a, b):
+    return a + b
+
+
+dis.dis(add)
+
+print("=== LEGB in bytecode ===")
+g = 10
+
+
+def legb_demo():
+    local = 1
+
+    def inner():
+        nonlocal_target = local
+        return nonlocal_target + g
+
+    return inner()
+
+
+print("legb_demo() ->", legb_demo())
+dis.dis(legb_demo.__code__.co_consts[1])
+
+print("=== specializing adaptive interpreter ===")
+
+
+def hot(a, b):
+    return a + b
+
+
+print("--- cold ---")
+dis.dis(hot, adaptive=True)
+for _ in range(200):
+    hot(1, 2)
+print("--- warm, after 200 calls ---")
+dis.dis(hot, adaptive=True)
+
+print("=== import system: sys.modules and sys.path ===")
+import sys
+
+print("'sys' already in sys.modules:", "sys" in sys.modules)
+print("'dis' already in sys.modules:", "dis" in sys.modules)
+`.trim();
+
+<Playground code={bytecodeCode} />
+
+<Callout title="dis is a debugging window, not an API">
+CPython bytecode has changed every single minor release for years (superinstructions and RESUME in 3.11, LOAD_FAST_BORROW and RESUME_CHECK in 3.12+, opcode names shown in this lesson that did not exist a few versions ago). Use `dis.dis` to answer "what is this line actually doing," never to write code (or tooling) that depends on a specific opcode sequence remaining stable across Python versions.
+</Callout>
+
+## Mental Model
+
+A `.py` file becomes a tree of **code objects** (one per module, function, and class body) at compile time, each one just data: a flat list of bytecode instructions plus lookup tables (`co_consts`, `co_names`, `co_varnames`). Running the program means the eval loop takes one code object, creates a **frame** for it (a value stack plus local-variable slots), and walks the instructions one at a time, pushing and popping the stack, until `RETURN_VALUE` or an unhandled exception ends the frame. The interpreter is not static, though — it watches which opcodes actually run with which types, and rewrites hot code paths in place to skip generic dispatch (`BINARY_OP` → `BINARY_OP_ADD_INT`). None of this analysis requires reading a single line of C — `dis`, `compile`, and the code object's own attributes expose all of it directly from Python.
+
+## Trade-offs
+
+| What you get | Benefit | Cost |
+|---|---|---|
+| Compiling to a code object first | The same code object can be run millions of times without re-parsing; introspectable via `co_consts`/`co_names`/etc. | An extra stage between source and execution; syntax errors surface at compile time, not always where you'd expect for late-bound code (`exec`, `eval`) |
+| The specializing adaptive interpreter | Real speedups for monomorphic hot loops, with zero code changes required | Warm-up cost before specialization kicks in; `dis` output differs before/after warm-up, which surprises anyone comparing "the bytecode" without noting whether the function has run yet |
+| The experimental JIT | Potential further speedup on top of specialization, opt-in | Off by default even on builds that support it; still young enough that "my Python has a JIT" is often simply false for a given interpreter |
+| `.pyc` caching | Skips recompilation on every run | Stale caches after moving files across environments are a real (if rare) source of confusion; suppressible via `PYTHONDONTWRITEBYTECODE` when unwanted |
+
+## Common Misconceptions
+
+- **"Comprehensions are faster because they run in C, not bytecode."** They run through the exact same eval loop as everything else — the real reasons are `LIST_APPEND` used directly instead of a `.append` attribute lookup plus call, and (since 3.12, PEP 709) comprehensions being inlined into the enclosing frame instead of creating a separate function call.
+- **"`dis` output is a stable Python API I can depend on in a script."** It changes every minor version, sometimes dramatically (see `LOAD_FAST_BORROW_LOAD_FAST_BORROW`, which did not exist before 3.12-era superinstruction work) — use it for investigation, not as a dependency.
+- **"My Python 3.14 has a JIT, so my code is being JIT-compiled."** `sys._jit.is_available()` (compiled in) and `sys._jit.is_enabled()` (actually turned on for this process) are different questions, verified above to give different answers on a real, current build.
+- **"A circular import always crashes with a vague, unhelpful error."** The real, reproduced `ImportError` here names the exact missing attribute and even suggests checking for a name collision with a third-party package — genuinely actionable, once you know a partially-initialized module in `sys.modules` is the mechanism behind it.
+- **"`importlib.reload` restarts the module from scratch, releasing all its old state."** It re-executes the module's top-level code against the *same* module object — old module-level names not reassigned by the new code are left untouched, and any other module that already did `from mymod import VALUE` keeps its own old copy of `VALUE`, unaffected by the reload.
+
+## Reading AI-generated code
+
+- Does a script or library depend on a specific `dis` opcode being present (e.g., checking generated bytecode for a particular instruction as part of a "safety check")? That check can silently stop working, or start failing, on the very next Python patch release.
+- Does an import at the top of a module actually create a circular dependency with another module in the same package? A generated module structure often "happens to work" until someone adds one more cross-import, at which point it fails with the `ImportError` shown in this lesson.
+- Does a benchmark or performance claim in a comment assume JIT compilation ("this is fast because of the JIT") without ever calling `sys._jit.is_enabled()` to confirm it applies to the interpreter actually running the code?
+- Is `importlib.reload` used to "pick up config changes" in a way that assumes all state resets, when in fact old references elsewhere in the program keep their stale values?
+
+<SpotTheBug code={`# settings.py
+from app import get_config  # app.py imports settings at module level too
+
+DEFAULT_TIMEOUT = get_config("timeout", 30)
+`} lang="python">
+If `app.py` contains `import settings` (or `from settings import DEFAULT_TIMEOUT`) at its own top level, this is a circular import: whichever module is imported first registers itself in `sys.modules` before finishing its own top-level execution, so the *other* module's `from ... import name` line runs against a half-built module object. Depending on which file happens to be imported first by the entry point, this either works by accident (if the needed name was already defined above the circular import line) or raises `ImportError: cannot import name ... from partially initialized module`, exactly as reproduced in this lesson with `cir_a`/`cir_b`. The fix is to break the cycle: move one of the two imports inside the function that actually needs it, or extract the shared piece (here, `get_config`) into a third module that neither `settings.py` nor `app.py` needs to import from the other for.
+</SpotTheBug>
+
+export const quizBytecode = [
+  {
+    q: "```python\ndef f():\n    x = 1\n    return x\n```\nWhere does the name `x` live in the compiled code object, and why does that matter for speed?",
+    options: [
+      "In co_names, looked up via a dict, same as a global",
+      "In co_varnames, as a fixed-index slot in the function's frame -- no dict lookup needed",
+      "Nowhere -- x is optimized away entirely",
+      "In co_consts, alongside literal values",
+    ],
+    answer: 1,
+    explain: "Local variables inside a function live in co_varnames and are accessed by fixed integer index in the frame (LOAD_FAST/STORE_FAST), not by dict lookup. Module-level and global names live in co_names and require an actual dict lookup (LOAD_GLOBAL/LOAD_NAME) -- this is a real part of why local variable access is consistently faster than global access.",
+  },
+  {
+    q: "What does `RESUME_CHECK` appearing in place of `RESUME` after a function has been called many times indicate?",
+    options: [
+      "The function has a bug and needs to be re-checked",
+      "The specializing adaptive interpreter has specialized this function's bytecode based on observed call patterns",
+      "The function is now running in a JIT-compiled state",
+      "RESUME_CHECK means the function raised an exception previously",
+    ],
+    answer: 1,
+    explain: "This lesson's real dis output shows RESUME becoming RESUME_CHECK, and BINARY_OP becoming BINARY_OP_ADD_INT, after 200 warm-up calls with int arguments -- both are examples of PEP 659's specializing adaptive interpreter rewriting bytecode in place based on the actual types seen at runtime. This is unrelated to the separate, opt-in JIT feature.",
+  },
+  {
+    q: "On a Python 3.14 build where `sys._jit.is_available()` returns True, what does `sys._jit.is_enabled()` returning False actually mean?",
+    options: [
+      "The interpreter was not compiled with JIT support at all",
+      "JIT support is compiled into this interpreter binary, but it is not turned on for the currently running process",
+      "The JIT crashed and disabled itself",
+      "is_enabled() always returns False and is not a real check",
+    ],
+    answer: 1,
+    explain: "is_available() answers 'does this interpreter build support JIT at all' and is_enabled() answers 'is it actually active for this process' -- they are independently verifiable and, as shown in this lesson's real output, can disagree. Never assume JIT compilation is happening just because a Python build theoretically supports it.",
+  },
+  {
+    q: "```python\n# cir_a.py\nfrom cir_b import b_func\ndef a_func():\n    return \"a\"\n\n# cir_b.py\nfrom cir_a import a_func\ndef b_func():\n    return a_func()\n```\nWhy does `import cir_a` raise `ImportError: cannot import name 'a_func' from 'cir_a'`?",
+    options: [
+      "Python does not support any form of circular import, ever",
+      "cir_a is registered in sys.modules the moment its execution starts (before a_func is defined), so when cir_b tries `from cir_a import a_func` it finds a partially-initialized module object missing that name",
+      "cir_b.py has a syntax error",
+      "This is a naming collision with the standard library, unrelated to circularity",
+    ],
+    answer: 1,
+    explain: "A module is added to sys.modules before its top-level code finishes running, specifically so re-entrant imports don't infinite-loop. That means a module imported partway through its own execution (as cir_a is here, from inside cir_b) is missing every name defined after the import line that triggered the cycle -- exactly a_func in this case, reproduced verbatim in this lesson.",
+  },
+  {
+    q: "```python\nimport mymod2  # VALUE = 1\nprint(mymod2.VALUE)\nwith open('mymod2.py', 'w') as f:\n    f.write('VALUE = 99')\nimportlib.reload(mymod2)\nprint(mymod2.VALUE)\n```\nWhat does this print, and why?",
+    options: [
+      "1 then 1 -- reload only works before a module has been imported once",
+      "1 then 99 -- reload re-executes the module's top-level code against the same module object, picking up the new source",
+      "99 then 99 -- Python always reads the latest file content on every attribute access",
+      "This raises an exception -- you cannot rewrite a file that's already imported",
+    ],
+    answer: 1,
+    explain: "This lesson reproduces exactly this sequence with real output: 1, then 99. importlib.reload re-runs the module's source against its existing module object, so VALUE is reassigned to the new value -- but this does not retroactively update any other module that already did `from mymod2 import VALUE`, since that created an independent binding to the old int object.",
+  },
+];
+
+<Quiz client:visible id="runtime-internals/bytecode-and-interpreter" questions={quizBytecode} />
+
+<ProgressTracker client:visible id="runtime-internals/bytecode-and-interpreter" />

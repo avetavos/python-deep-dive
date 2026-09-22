@@ -37,13 +37,15 @@ src/content/docs/
     typing-errors/
     async-concurrency/
     stdlib-testing-tooling/
+    runtime-internals/
+    reading-python/
     index.mdx               # EN landing (splash)
   th/                       # Thai — served at /th/...
     (same module directories)
     index.mdx               # TH landing (splash)
 ```
 
-### The 7 Modules
+### The 9 Modules
 
 | Directory | Module |
 | --------- | ------ |
@@ -54,6 +56,8 @@ src/content/docs/
 | `typing-errors` | Typing & Errors |
 | `async-concurrency` | Async & Concurrency |
 | `stdlib-testing-tooling` | Stdlib, Testing & Tooling |
+| `runtime-internals` | Runtime Internals (object model, memory & GC, bytecode & interpreter, GIL & free-threading) |
+| `reading-python` | Reading & Reviewing Python (AI bug catalog, review checklist, verification tools) |
 
 ### Lesson Template
 
