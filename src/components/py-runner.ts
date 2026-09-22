@@ -35,6 +35,21 @@ export function loadRuntime(): Promise<void> {
   return loadPromise;
 }
 
+/**
+ * Pyodide already runs inside the browser's event loop, so `asyncio.run(...)`
+ * raises "asyncio.run() cannot be called from a running event loop". Lessons
+ * keep the canonical CPython form; here we rewrite the final top-level call
+ * (bare, or under an `if __name__ == "__main__":` guard) into a top-level
+ * `await`, which runPythonAsync supports. Anything else is left untouched.
+ */
+export function prepareForBrowser(source: string): string {
+  const guarded = /^if __name__ == ["']__main__["']:\n(?:[ \t]+asyncio\.run\((.+)\)[ \t]*\n?)$/m;
+  const bare = /^asyncio\.run\((.+)\)[ \t]*$/m;
+  if (guarded.test(source)) return source.replace(guarded, (_m, expr) => `await ${expr}\n`);
+  if (bare.test(source)) return source.replace(bare, (_m, expr) => `await ${expr}`);
+  return source;
+}
+
 export async function runPython(
   source: string,
   opts: { skipLoad?: boolean; runtime?: Runtime } = {},
@@ -54,7 +69,7 @@ export async function runPython(
   py.setStdout(sink);
   py.setStderr(sink);
   try {
-    await py.runPythonAsync(source);
+    await py.runPythonAsync(prepareForBrowser(source));
     return { output: out, errors: '' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
