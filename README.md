@@ -67,7 +67,7 @@ frontmatter (`title`, `description`, `sidebar.order`) → imports → concept in
 > - **Use 4-space indentation in `export const` Python snippets — never tab characters.** (A tab-doubling escaping codemod would corrupt indentation; do not run one.)
 > - **Python string escapes inside `export const` template literals must be doubled**: write `\\n` / `\\t`. f-strings use single braces (`f"{x}"`) which are fine inside the backtick string.
 > - **Never put a bare `{...}` or f-string in prose or headings** — MDX parses `{...}` as JS. Keep dict/set literals and f-strings in backtick code spans or fenced ```python blocks.
-> - **Internal links must include the base path**, e.g. `/python-deep-dive/en/functions-deep/`.
+> - **Internal links must include the base path**, e.g. `/python/en/functions-deep/`.
 
 ### Pyodide notes
 
