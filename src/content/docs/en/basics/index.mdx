@@ -10,6 +10,7 @@ import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 import SpotTheBug from '../../../../components/SpotTheBug.astro';
+import Mermaid from '../../../../components/Mermaid.astro';
 
 ## Python's design philosophy
 
@@ -126,12 +127,11 @@ print(isinstance(fido, Animal)) # True -- respects subclassing
 
 ## Mental Model
 
-```text
-name "x"  ---->  object (id, type, value)
-name "describe"  ---->  function object (also has id, type, value)
-name "int"  ---->  class object, itself an instance of type
-name "type"  ---->  the class of every class, an instance of itself
-```
+<Mermaid code={`flowchart LR
+  X["name: x"] --> ObjX["object (id, type, value)"]
+  Describe["name: describe"] --> ObjDescribe["function object (also has id, type, value)"]
+  Int["name: int"] --> ObjInt["class object, itself an instance of type"]
+  Type["name: type"] --> ObjType["the class of every class, an instance of itself"]`} title="Every name binds to an object with an id, type, and value -- including functions and classes" />
 
 Every box on the right side is the same kind of thing — an object with an identity and a type — no matter whether the name on the left refers to what you'd casually call "data" or "code." Reading Python fluently means asking, for any name, "what object does this refer to right now," rather than sorting names into separate mental categories of primitive vs. object.
 

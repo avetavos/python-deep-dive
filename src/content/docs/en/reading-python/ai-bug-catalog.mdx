@@ -10,6 +10,7 @@ import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 import SpotTheBug from '../../../../components/SpotTheBug.astro';
+import Mermaid from '../../../../components/Mermaid.astro';
 
 Every pattern below was written to look exactly like the Python an AI assistant actually produces, then run on `python3.14 -X dev -W error::RuntimeWarning`, checked with `ruff`/`mypy --strict`/`pyright`/`bandit` where relevant, and quoted verbatim from those runs — not reconstructed from memory. Each entry ends with **Caught by**, naming the one tool that actually flags it, or stating plainly that nothing does.
 
@@ -1083,25 +1084,16 @@ See **[Logging](/python/en/stdlib-testing-tooling/index/)**.
 
 ## Mental Model
 
-```text
-24 patterns, sorted by who actually catches them:
-
-ruff (default rule sets)  → 1 (B006), 2 (B023), 7 (TRY201), 8 (S101), 10 (RUF006),
-                             11 (ASYNC251), 14 (PLW1641), 15 (RUF012), 16 (ANN401/PGH003),
-                             19 (DTZ003), 20 (SIM115), 21 (S602), 24 (T201)
-ruff, partially            → 5 (F632 -- literal form only), 6 (E722/S110 sync;
-                             BLE001 async -- two different rules for two shapes of
-                             the same mistake)
-bandit                     → 8 (B101), 21 (B602/B404) -- overlaps ruff's S-rules
-mypy --strict + pyright    → 17 (union-attr / reportOptionalMemberAccess),
-                             18 (arg-type / reportArgumentType) -- both agree
-mypy --strict, silent      → 16 -- Any + blanket ignore defeats strict mode entirely
-pyright, silent            → 16 -- same file, same silence
-python -X dev (runtime)    → 9 (RuntimeWarning), 19 (DeprecationWarning)
-pip-audit / uv audit       → 23, but only the pinned-and-vulnerable half of it
-Nothing                    → 3, 4, 12, 13, 22, and the unpinned/sudo half of 23 --
-                             a full third of the catalog
-```
+<Mermaid code={`flowchart LR
+  T1["ruff (default rule sets)"] --> P1["1 (B006), 2 (B023), 7 (TRY201), 8 (S101), 10 (RUF006), 11 (ASYNC251), 14 (PLW1641), 15 (RUF012), 16 (ANN401/PGH003), 19 (DTZ003), 20 (SIM115), 21 (S602), 24 (T201)"]
+  T2["ruff, partially"] --> P2["5 (F632, literal form only), 6 (E722/S110 sync; BLE001 async, two different rules for two shapes of the same mistake)"]
+  T3["bandit"] --> P3["8 (B101), 21 (B602/B404), overlaps ruff's S-rules"]
+  T4["mypy --strict + pyright"] --> P4["17 (union-attr / reportOptionalMemberAccess), 18 (arg-type / reportArgumentType), both agree"]
+  T5["mypy --strict, silent"] --> P5["16, Any + blanket ignore defeats strict mode entirely"]
+  T6["pyright, silent"] --> P6["16, same file, same silence"]
+  T7["python -X dev (runtime)"] --> P7["9 (RuntimeWarning), 19 (DeprecationWarning)"]
+  T8["pip-audit / uv audit"] --> P8["23, but only the pinned-and-vulnerable half of it"]
+  T9["Nothing"] --> P9["3, 4, 12, 13, 22, and the unpinned/sudo half of 23, a full third of the catalog"]`} title="24 patterns, sorted by who actually catches them" />
 
 <Callout title="A third of this catalog has no automated safety net">
 Eight of the twenty-four patterns above are caught by no tool this course covers, run with any configuration. That is the actual argument for this module: tooling narrows what you have to read for by eye, it never replaces reading. Run every tool in **[Verification Tools](/python/en/reading-python/verification-tools/)** on every diff — and still read the diff.

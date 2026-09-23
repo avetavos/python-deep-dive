@@ -9,6 +9,7 @@ import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 import SpotTheBug from '../../../../components/SpotTheBug.astro';
+import Mermaid from '../../../../components/Mermaid.astro';
 
 Every output below is real, captured by running each tool against patterns from the **[AI Bug Catalog](/python/en/reading-python/ai-bug-catalog/)**. None of these tools overlap perfectly, and none of them is close to complete — the point of this lesson is to know exactly where each one's coverage ends, so you know what is still on you.
 
@@ -200,35 +201,19 @@ Found 1 error in 1 file (checked 1 source file)
 
 ## Mental Model
 
-```text
-                     Static (source only)              Dynamic (must run)
-                   ┌────────────────────────┐        ┌────────────────────────┐
-Mutability/errors/ │ ruff (B006, B023,      │        │                        │
-style bugs         │ TRY201, S101, RUF006,  │        │                        │
-                    │ ASYNC251, PLW1641,     │        │                        │
-                    │ RUF012, DTZ003, SIM115,│        │                        │
-                    │ S602, T201, F632*)     │        │                        │
-                    ├────────────────────────┤        ├────────────────────────┤
-Security-specific   │ bandit (overlaps ruff  │        │                        │
-                    │ S-rules independently) │        │                        │
-                    ├────────────────────────┤        ├────────────────────────┤
-Type mismatches     │ mypy --strict          │        │                        │
-                    │ pyright                │        │                        │
-                    │ (usually agree; can    │        │                        │
-                    │  disagree; both silent │        │                        │
-                    │  on bare Any)          │        │                        │
-                    ├────────────────────────┤        ├────────────────────────┤
-Runtime-only        │                        │        │ python -X dev / -W     │
-warnings            │                        │        │ error (never-awaited,  │
-                    │                        │        │ deprecated calls)      │
-                    ├────────────────────────┤        ├────────────────────────┤
-Known CVEs in       │ pip-audit / uv audit   │        │                        │
-pinned dependencies │                        │        │                        │
-                    ├────────────────────────┤        ├────────────────────────┤
-What ran vs. didn't │                        │        │ pytest --cov           │
-                    └────────────────────────┘        └────────────────────────┘
-* F632 only catches the direct-literal is-comparison shape, not variable-vs-variable.
-```
+<Mermaid code={`flowchart TB
+  subgraph Static["Static (source only)"]
+    direction TB
+    S1["Mutability/errors/style bugs: ruff (B006, B023, TRY201, S101, RUF006, ASYNC251, PLW1641, RUF012, DTZ003, SIM115, S602, T201, F632*)"]
+    S2["Security-specific: bandit (overlaps ruff S-rules independently)"]
+    S3["Type mismatches: mypy --strict, pyright (usually agree; can disagree; both silent on bare Any)"]
+    S4["Known CVEs in pinned dependencies: pip-audit / uv audit"]
+  end
+  subgraph Dynamic["Dynamic (must run)"]
+    direction TB
+    D1["Runtime-only warnings: python -X dev / -W error (never-awaited, deprecated calls)"]
+    D2["What ran vs. didn't: pytest --cov"]
+  end`} title="Static tools check source without running it; dynamic tools require execution. * F632 only catches the direct-literal is-comparison shape, not variable-vs-variable." />
 
 <Callout title="Every tool here is a filter, not a verdict">
 A clean run across this entire page still leaves roughly a third of the **[AI Bug Catalog](/python/en/reading-python/ai-bug-catalog/)** unaddressed — aliasing, shared `[[...]]*n` rows, races across `await`, unguarded `Pool()` calls, wrong `mock.patch` targets, and more. Run every tool, then still work through the **[Review Checklist](/python/en/reading-python/review-checklist/)** by eye.

@@ -9,6 +9,7 @@ import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 import SpotTheBug from '../../../../components/SpotTheBug.astro';
+import Mermaid from '../../../../components/Mermaid.astro';
 
 output ทุกอันด้านล่างเป็นของจริง จับมาจากการรันแต่ละเครื่องมือกับ pattern จาก **[AI Bug Catalog](/python/th/reading-python/ai-bug-catalog/)** ไม่มีเครื่องมือไหนครอบคลุมซ้อนกันสมบูรณ์ และไม่มีตัวไหนใกล้เคียงกับความสมบูรณ์เลย — ประเด็นของบทนี้คือรู้ให้ชัดว่าแต่ละตัว coverage สิ้นสุดตรงไหน เพื่อให้รู้ว่าอะไรยังเป็นหน้าที่ของคุณอยู่
 
@@ -200,35 +201,19 @@ Found 1 error in 1 file (checked 1 source file)
 
 ## Mental Model
 
-```text
-                     Static (source only)              Dynamic (must run)
-                   ┌────────────────────────┐        ┌────────────────────────┐
-Mutability/errors/ │ ruff (B006, B023,      │        │                        │
-style bugs         │ TRY201, S101, RUF006,  │        │                        │
-                    │ ASYNC251, PLW1641,     │        │                        │
-                    │ RUF012, DTZ003, SIM115,│        │                        │
-                    │ S602, T201, F632*)     │        │                        │
-                    ├────────────────────────┤        ├────────────────────────┤
-Security-specific   │ bandit (overlaps ruff  │        │                        │
-                    │ S-rules independently) │        │                        │
-                    ├────────────────────────┤        ├────────────────────────┤
-Type mismatches     │ mypy --strict          │        │                        │
-                    │ pyright                │        │                        │
-                    │ (usually agree; can    │        │                        │
-                    │  disagree; both silent │        │                        │
-                    │  on bare Any)          │        │                        │
-                    ├────────────────────────┤        ├────────────────────────┤
-Runtime-only        │                        │        │ python -X dev / -W     │
-warnings            │                        │        │ error (never-awaited,  │
-                    │                        │        │ deprecated calls)      │
-                    ├────────────────────────┤        ├────────────────────────┤
-Known CVEs in       │ pip-audit / uv audit   │        │                        │
-pinned dependencies │                        │        │                        │
-                    ├────────────────────────┤        ├────────────────────────┤
-What ran vs. didn't │                        │        │ pytest --cov           │
-                    └────────────────────────┘        └────────────────────────┘
-* F632 only catches the direct-literal is-comparison shape, not variable-vs-variable.
-```
+<Mermaid code={`flowchart TB
+  subgraph Static["Static (source only)"]
+    direction TB
+    S1["Mutability/errors/style bugs: ruff (B006, B023, TRY201, S101, RUF006, ASYNC251, PLW1641, RUF012, DTZ003, SIM115, S602, T201, F632*)"]
+    S2["Security-specific: bandit (overlaps ruff S-rules independently)"]
+    S3["Type mismatches: mypy --strict, pyright (usually agree; can disagree; both silent on bare Any)"]
+    S4["Known CVEs in pinned dependencies: pip-audit / uv audit"]
+  end
+  subgraph Dynamic["Dynamic (must run)"]
+    direction TB
+    D1["Runtime-only warnings: python -X dev / -W error (never-awaited, deprecated calls)"]
+    D2["What ran vs. didn't: pytest --cov"]
+  end`} title="เครื่องมือ static ตรวจ source code โดยไม่ต้องรัน ส่วนเครื่องมือ dynamic ต้องรันโค้ดจริง * F632 จับได้เฉพาะรูปแบบ is-comparison กับ literal ตรงๆ ไม่ใช่ variable เทียบ variable" />
 
 <Callout title="ทุกเครื่องมือที่นี่เป็นตัวกรอง ไม่ใช่คำตัดสิน">
 การรันสะอาดทั้งหน้านี้ยังเหลือประมาณหนึ่งในสามของ **[AI Bug Catalog](/python/th/reading-python/ai-bug-catalog/)** ที่ไม่ถูกแตะ — aliasing, แถว `[[...]]*n` ที่แชร์กัน, race ข้าม `await`, `Pool()` ที่ไม่มี guard, `mock.patch` target ผิด และอื่น ๆ รันทุกเครื่องมือ แล้วยังต้องไล่ **[Review Checklist](/python/th/reading-python/review-checklist/)** ด้วยตาอยู่ดี
