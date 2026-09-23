@@ -131,7 +131,7 @@ print(connect(*args, **kwargs))
 
 ## The forwarding pattern: `def wrapper(*a, **kw)`
 
-Combining "gather" (in the signature) with "spread" (in the body) lets a wrapper function accept absolutely any call shape and forward it unchanged to another function — this is exactly how every decorator's `wrapper` in the [Decorators lesson](/en/functions-deep/decorators/) stays compatible with whatever function it wraps:
+Combining "gather" (in the signature) with "spread" (in the body) lets a wrapper function accept absolutely any call shape and forward it unchanged to another function — this is exactly how every decorator's `wrapper` in the [Decorators lesson](/python/en/functions-deep/decorators/) stays compatible with whatever function it wraps:
 
 ```python
 def base(a, b, *, c=10):
@@ -284,7 +284,7 @@ export const argsKwargsMentalModel = `flowchart LR
 |---|---|---|
 | Positional-only (`/`) | Frees the author to rename the parameter later without breaking callers | Callers cannot self-document a call with `divide(numerator=10, denominator=4)` |
 | Keyword-only (`*`) | Callers must name the argument — self-documenting, order-mistake-proof | An extra `*` in the signature to remember; positional-only callers get `TypeError` |
-| `*args`/`**kwargs` forwarding | A wrapper works with any signature the wrapped function has | `inspect.signature` on the wrapper alone shows `(*args, **kwargs)`, hiding the real parameters (see [Decorators](/en/functions-deep/decorators/) for the `functools.wraps` fix) |
+| `*args`/`**kwargs` forwarding | A wrapper works with any signature the wrapped function has | `inspect.signature` on the wrapper alone shows `(*args, **kwargs)`, hiding the real parameters (see [Decorators](/python/en/functions-deep/decorators/) for the `functools.wraps` fix) |
 | Unpacking (`*`/`**`) at a call site | Build the argument list/dict dynamically, e.g. from config or another function's return value | A mismatch between the unpacked structure and the signature only fails at call time, not at definition time |
 | Mutable default (`items=[]`) / `datetime.now()` default | Looks like "a fresh empty/current value every call" | Evaluated once at definition time — every call that does not override it shares (or freezes) the same object |
 

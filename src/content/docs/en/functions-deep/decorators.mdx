@@ -189,7 +189,7 @@ print(square(5))   # 25
 print(cube(2))     # 8
 ```
 
-`partial` is a plain object (not a function wrapped by decoration) — it exposes `.func` and `.keywords` so you can introspect what was fixed. It is also the standard fix for [late-binding closures in a loop](/en/functions-deep/closures/): `partial(f, i=i)` freezes the current value of `i` the same way a default argument does.
+`partial` is a plain object (not a function wrapped by decoration) — it exposes `.func` and `.keywords` so you can introspect what was fixed. It is also the standard fix for [late-binding closures in a loop](/python/en/functions-deep/closures/): `partial(f, i=i)` freezes the current value of `i` the same way a default argument does.
 
 ## Class decorators
 

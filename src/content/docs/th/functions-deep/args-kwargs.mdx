@@ -131,7 +131,7 @@ print(connect(*args, **kwargs))
 
 ## Pattern การ forward: `def wrapper(*a, **kw)`
 
-การรวม "รวบ" (ใน signature) เข้ากับ "กระจาย" (ใน body) ทำให้ wrapper function หนึ่งรับ call รูปแบบไหนก็ได้ แล้ว forward มันต่อไปยัง function อีกตัวโดยไม่เปลี่ยนแปลง — นี่คือกลไกเดียวกับที่ `wrapper` ของทุก decorator ใน[บท Decorators](/th/functions-deep/decorators/) ใช้เพื่อให้เข้ากันได้กับ function ที่มันห่ออยู่ไม่ว่าจะมี signature แบบไหน:
+การรวม "รวบ" (ใน signature) เข้ากับ "กระจาย" (ใน body) ทำให้ wrapper function หนึ่งรับ call รูปแบบไหนก็ได้ แล้ว forward มันต่อไปยัง function อีกตัวโดยไม่เปลี่ยนแปลง — นี่คือกลไกเดียวกับที่ `wrapper` ของทุก decorator ใน[บท Decorators](/python/th/functions-deep/decorators/) ใช้เพื่อให้เข้ากันได้กับ function ที่มันห่ออยู่ไม่ว่าจะมี signature แบบไหน:
 
 ```python
 def base(a, b, *, c=10):
@@ -284,7 +284,7 @@ export const argsKwargsMentalModel = `flowchart LR
 |---|---|---|
 | Positional-only (`/`) | ผู้เขียนเปลี่ยนชื่อ parameter ทีหลังได้ โดยไม่ทำให้ผู้เรียกพัง | ผู้เรียกอธิบายตัว call ด้วย `divide(numerator=10, denominator=4)` ไม่ได้ |
 | Keyword-only (`*`) | ผู้เรียกต้องระบุชื่อ argument — อธิบายตัวเองได้ในตัว กันความผิดพลาดเรื่องลำดับ | ต้องจำ `*` เพิ่มใน signature; ผู้เรียกที่ส่งแบบ positional จะได้ `TypeError` |
-| forward ด้วย `*args`/`**kwargs` | wrapper ใช้ได้กับ signature อะไรก็ได้ที่ function ที่ถูกห่อรับ | `inspect.signature` บน wrapper เพียงลำพังจะเห็นแค่ `(*args, **kwargs)` ซ่อน parameter จริง (ดู[บท Decorators](/th/functions-deep/decorators/) สำหรับทางแก้ด้วย `functools.wraps`) |
+| forward ด้วย `*args`/`**kwargs` | wrapper ใช้ได้กับ signature อะไรก็ได้ที่ function ที่ถูกห่อรับ | `inspect.signature` บน wrapper เพียงลำพังจะเห็นแค่ `(*args, **kwargs)` ซ่อน parameter จริง (ดู[บท Decorators](/python/th/functions-deep/decorators/) สำหรับทางแก้ด้วย `functools.wraps`) |
 | Unpacking (`*`/`**`) ที่ call site | สร้าง argument list/dict แบบ dynamic ได้ เช่นจาก config หรือ return value ของ function อื่น | ความไม่ตรงกันระหว่างโครงสร้างที่ unpack กับ signature จะพังแค่ตอนเรียกใช้ ไม่ใช่ตอนนิยาม |
 | Mutable default (`items=[]`) / default `datetime.now()` | ดูเหมือนจะเป็น "ค่าว่าง/ค่าปัจจุบันใหม่ทุกครั้งที่เรียก" | ถูกประเมินครั้งเดียวตอน definition time — ทุก call ที่ไม่ override จะใช้ object เดียวกันร่วมกัน (หรือค่าเดิมที่ถูกแช่แข็งไว้) |
 

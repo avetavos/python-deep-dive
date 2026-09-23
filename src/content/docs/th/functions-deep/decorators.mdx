@@ -189,7 +189,7 @@ print(square(5))   # 25
 print(cube(2))     # 8
 ```
 
-`partial` เป็น object ธรรมดา (ไม่ใช่ function ที่ถูก decorate) มันเปิด `.func` และ `.keywords` ให้เราตรวจสอบได้ว่าอะไรถูกตรึงไว้บ้าง มันยังเป็นทางแก้มาตรฐานของ [late-binding closure ในลูป](/th/functions-deep/closures/) ด้วย นั่นคือ `partial(f, i=i)` จะตรึงค่า `i` ปัจจุบันไว้ด้วยกลไกเดียวกับการใช้ default argument
+`partial` เป็น object ธรรมดา (ไม่ใช่ function ที่ถูก decorate) มันเปิด `.func` และ `.keywords` ให้เราตรวจสอบได้ว่าอะไรถูกตรึงไว้บ้าง มันยังเป็นทางแก้มาตรฐานของ [late-binding closure ในลูป](/python/th/functions-deep/closures/) ด้วย นั่นคือ `partial(f, i=i)` จะตรึงค่า `i` ปัจจุบันไว้ด้วยกลไกเดียวกับการใช้ default argument
 
 ## Class decorator
 
