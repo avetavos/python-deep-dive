@@ -9,7 +9,7 @@ interface Props {
 const { code, lang = 'python' } = Astro.props;
 ---
 
-<div class="pg" data-code={code}>
+<div class="pg not-content" data-code={code}>
   <div class="pg__bar">
     <button class="pg__run" data-run type="button">Run ▸</button>
     <a class="pg__run" data-open href="https://www.python.org/shell/" target="_blank" rel="noopener">Open in an online REPL</a>
