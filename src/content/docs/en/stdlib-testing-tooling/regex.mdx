@@ -316,7 +316,12 @@ export const quizRegex = [
         explain: "re._compile keeps a cache of up to re._MAXCACHE (512) entries keyed by the exact pattern text and flags. A second call with the identical arguments hits the cache and returns the same object -- verified with 'is' above. A different flag value is a cache miss and returns a distinct object.",
     },
     {
-        q: "```python\nimport re\nhtml = \"<b>bold</b> and <i>italic</i>\"\nprint(re.search(r\"<.*>\", html).group())\n```\nWhat does this print?",
+        q: `\`\`\`python
+import re
+html = "<b>bold</b> and <i>italic</i>"
+print(re.search(r"<.*>", html).group())
+\`\`\`
+What does this print?`,
         options: [
             "<b>",
             "<b>bold</b> and <i>italic</i>",
@@ -338,7 +343,14 @@ export const quizRegex = [
         explain: "re.M (MULTILINE) makes ^ match right after every newline and $ match right before every newline, in addition to the start/end of the whole string. re.S changes what '.' matches (adds newline); it has nothing to do with ^/$.",
     },
     {
-        q: "```python\nimport re\nuser_input = \"3.14 (pi)\"\ntext = \"value is 3.14 (pi) exactly\"\nprint(bool(re.search(user_input, text)))\nprint(bool(re.search(re.escape(user_input), text)))\n```\nWhat does this print?",
+        q: `\`\`\`python
+import re
+user_input = "3.14 (pi)"
+text = "value is 3.14 (pi) exactly"
+print(bool(re.search(user_input, text)))
+print(bool(re.search(re.escape(user_input), text)))
+\`\`\`
+What does this print?`,
         options: [
             "True then True -- the pattern matches the literal substring either way",
             "False then True -- unescaped, '.' and the parentheses change what the pattern means; escaped, it matches the literal text",

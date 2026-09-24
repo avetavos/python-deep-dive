@@ -684,7 +684,22 @@ export const quizExceptions = [
     explain: "attribute __cause__ ของ exception ใหม่ถูกตั้งเป็น original และ Python พิมพ์ traceback ทั้งสองแบบ chain ต่อกัน ใช้ from None แทนถ้าต้องการทิ้ง cause ไปทั้งหมด"
   },
   {
-    q: "```python\ndef a():\n    b()\ndef b():\n    raise ValueError(\"x\")\n\ndef reraise_bare():\n    try:\n        a()\n    except ValueError:\n        raise\n\ndef reraise_e(err):\n    raise err\n```\nเทียบกับการเรียก `reraise_bare()` จำนวน traceback frame จะเปลี่ยนไปอย่างไรถ้าจับจาก `a()` แล้วเรียก `reraise_e(caught)` แทน?",
+    q: `\`\`\`python
+def a():
+    b()
+def b():
+    raise ValueError("x")
+
+def reraise_bare():
+    try:
+        a()
+    except ValueError:
+        raise
+
+def reraise_e(err):
+    raise err
+\`\`\`
+เทียบกับการเรียก \`reraise_bare()\` จำนวน traceback frame จะเปลี่ยนไปอย่างไรถ้าจับจาก \`a()\` แล้วเรียก \`reraise_e(caught)\` แทน?`,
     options: [
       "จำนวน frame เท่ากัน -- raise กับ raise e เหมือนกัน",
       "น้อยลงหนึ่ง frame เพราะ raise e ข้าม call site เดิม",
@@ -695,7 +710,17 @@ export const quizExceptions = [
     explain: "bare raise re-raise exception ตัวเดียวกันเป๊ะพร้อม traceback เดิม ไม่เพิ่มอะไรเลย raise err (หรือ raise e) เพิ่ม frame ใหม่สำหรับบรรทัดที่มันถูกเรียก ถึงแม้ exception object จะเป็นตัวเดียวกันก็ตาม"
   },
   {
-    q: "```python\ndef risky_lookup(data, key):\n    try:\n        return data[key]\n    except:\n        pass\n    return -1\n\nprint(risky_lookup(None, \"x\"))\n```\nโค้ดนี้พิมพ์อะไร และทำไมถึงอันตราย?",
+    q: `\`\`\`python
+def risky_lookup(data, key):
+    try:
+        return data[key]
+    except:
+        pass
+    return -1
+
+print(risky_lookup(None, "x"))
+\`\`\`
+โค้ดนี้พิมพ์อะไร และทำไมถึงอันตราย?`,
     options: [
       "raise TypeError เพราะ None ไม่ subscriptable ได้",
       "-1 -- bare except: กลืน TypeError จากการ index None ด้วย ไม่ใช่แค่ key ที่หาย",

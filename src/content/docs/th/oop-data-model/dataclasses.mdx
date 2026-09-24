@@ -448,7 +448,16 @@ export const quizDataclasses = [
     explain: "repr=False เอาแค่ field นั้นออกจาก __repr__ string ที่สร้างให้ -- มันยังมีส่วนร่วมใน __init__ และ __eq__ เว้นแต่จะปิดแยกต่างหาก"
   },
   {
-    q: "```python\n@dataclass(frozen=True)\nclass Point:\n    x: float\n    y: float\n\np = Point(1.0, 2.0)\np.x = 5.0\n```\nบรรทัดสุดท้ายเกิดอะไรขึ้น?",
+    q: `\`\`\`python
+@dataclass(frozen=True)
+class Point:
+    x: float
+    y: float
+
+p = Point(1.0, 2.0)
+p.x = 5.0
+\`\`\`
+บรรทัดสุดท้ายเกิดอะไรขึ้น?`,
     options: [
       "p.x กลายเป็น 5.0 ตามปกติ",
       "FrozenInstanceError: cannot assign to field 'x'",
@@ -459,7 +468,15 @@ export const quizDataclasses = [
     explain: "frozen=True สร้าง __setattr__ ที่ raise dataclasses.FrozenInstanceError สำหรับการ assign ใดๆ หลัง construction ข้อความที่ยืนยันแล้วบน 3.14: \"cannot assign to field 'x'\""
   },
   {
-    q: "```python\n@dataclass(order=True, kw_only=True)\nclass Version:\n    major: int\n    minor: int\n\nVersion(1, 2)\n```\nเกิดอะไรขึ้น?",
+    q: `\`\`\`python
+@dataclass(order=True, kw_only=True)
+class Version:
+    major: int
+    minor: int
+
+Version(1, 2)
+\`\`\`
+เกิดอะไรขึ้น?`,
     options: [
       "สร้าง Version(major=1, minor=2) ตามปกติ",
       "TypeError -- kw_only=True ปฏิเสธ positional argument",
@@ -470,7 +487,13 @@ export const quizDataclasses = [
     explain: "kw_only=True เอา positional parameter ออกจาก __init__ ที่สร้างให้ทั้งหมด -- ทุก field ต้องส่งแบบ keyword Version(1, 2) raise TypeError: Version.__init__() takes 1 positional argument but 3 were given และทั้ง mypy --strict และ pyright ก็ปฏิเสธการเรียกนี้แบบ static ด้วย"
   },
   {
-    q: "```python\nperson = Person(\"Ada\", Address(\"London\"))\nsnapshot = asdict(person)\nsnapshot[\"address\"][\"city\"] = \"Paris\"\nprint(person.address.city)\n```\nโค้ดนี้พิมพ์อะไร?",
+    q: `\`\`\`python
+person = Person("Ada", Address("London"))
+snapshot = asdict(person)
+snapshot["address"]["city"] = "Paris"
+print(person.address.city)
+\`\`\`
+โค้ดนี้พิมพ์อะไร?`,
     options: [
       "Paris -- asdict return reference ไปยัง nested object เดิม",
       "London -- asdict deep-copy nested dataclass เป็น dict ธรรมดา",

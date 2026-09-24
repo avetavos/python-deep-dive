@@ -565,7 +565,23 @@ export const quizGilThreads = [
     explain: "GIL ถูกปล่อยขณะ blocking I/O, เป็นระยะๆ ที่ safe point ใน bytecode dispatch loop (หลักๆ คือ loop back-edge และ call) เพื่อไม่ให้เธรดใดอดตาย และถูกปล่อยอย่างชัดเจนโดย C extension อย่าง hashlib หรือ NumPy รอบ operation ที่ไม่ใช่ Python ที่ใช้เวลานาน"
   },
   {
-    q: "```python\nimport threading\n\ncounter = 0\n\ndef increment(n):\n    global counter\n    for _ in range(n):\n        counter += 1\n\nthreads = [threading.Thread(target=increment, args=(2_000_000,)) for _ in range(8)]\nfor t in threads: t.start()\nfor t in threads: t.join()\n\nprint(counter)\n```\nรันบน `python3.14` (มี GIL) แม้บีบ switch interval ของ GIL ให้ต่ำมาก วัดผลได้อะไรจริง?",
+    q: `\`\`\`python
+import threading
+
+counter = 0
+
+def increment(n):
+    global counter
+    for _ in range(n):
+        counter += 1
+
+threads = [threading.Thread(target=increment, args=(2_000_000,)) for _ in range(8)]
+for t in threads: t.start()
+for t in threads: t.join()
+
+print(counter)
+\`\`\`
+รันบน \`python3.14\` (มี GIL) แม้บีบ switch interval ของ GIL ให้ต่ำมาก วัดผลได้อะไรจริง?`,
     options: [
       "ตัวเลขที่ต่ำกว่า 16000000 อย่างเห็นได้ชัด ตามที่คาดจาก race condition แบบตำรา",
       "16000000 พอดี -- eval-breaker เช็คจุดสลับแค่ที่ loop/call boundary ไม่ใช่ระหว่างสี่ opcode ของ statement += เดียว",
@@ -576,7 +592,24 @@ export const quizGilThreads = [
     explain: "นี่คือผลที่วัดจริง ไม่ใช่การรับประกัน: checkpoint ของ eval-breaker ใน CPython เกิดที่ safe point เฉพาะ (loop back-edge, call) และ counter += 1 เปล่าๆ ใน tight loop ไม่มี checkpoint แบบนั้นระหว่างลำดับ LOAD_GLOBAL/BINARY_OP/STORE_GLOBAL การเปลี่ยน pattern ให้มีจุดหยุดจริง (เช่น time.sleep) ระหว่างการอ่านกับการเขียน จะ reproduce lost update ได้เสมอ -- การไม่มี race ในกรณี tight-loop เป็นรายละเอียด implementation ไม่ใช่การรับประกันความปลอดภัย"
   },
   {
-    q: "```python\nclass Account:\n    def __init__(self, balance):\n        self.balance = balance\n\ndef withdraw(acct, amount):\n    balance = acct.balance\n    time.sleep(0.01)\n    acct.balance = balance - amount\n\nacct = Account(balance=100)\nthreads = [threading.Thread(target=withdraw, args=(acct, 80)) for _ in range(2)]\nfor t in threads: t.start()\nfor t in threads: t.join()\n\nprint(acct.balance)\n```\nโค้ดนี้พิมพ์อะไร และเพราะอะไร -- ในเมื่อ tight loop ของ `+=` ด้านบนไม่มี update หายไปเลย?",
+    q: `\`\`\`python
+class Account:
+    def __init__(self, balance):
+        self.balance = balance
+
+def withdraw(acct, amount):
+    balance = acct.balance
+    time.sleep(0.01)
+    acct.balance = balance - amount
+
+acct = Account(balance=100)
+threads = [threading.Thread(target=withdraw, args=(acct, 80)) for _ in range(2)]
+for t in threads: t.start()
+for t in threads: t.join()
+
+print(acct.balance)
+\`\`\`
+โค้ดนี้พิมพ์อะไร และเพราะอะไร -- ในเมื่อ tight loop ของ \`+=\` ด้านบนไม่มี update หายไปเลย?`,
     options: [
       "-60 -- การถอนทั้งสองครั้งใช้ผลได้ถูกต้องตามลำดับเสมอ",
       "20 -- ทั้งสองเธรดอ่าน balance=100 ก่อนที่ตัวใดตัวหนึ่งจะเขียน เพราะ time.sleep ปล่อย GIL จริงๆ ระหว่างการอ่านกับการเขียน",

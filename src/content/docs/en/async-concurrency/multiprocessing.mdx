@@ -358,7 +358,17 @@ export const quizMultiprocessing = [
     explain: "Each worker process gets its own fully independent Python interpreter, including its own GIL. Since each GIL only limits threads within its own process, separate processes genuinely run Python bytecode in parallel on separate cores."
   },
   {
-    q: "```python\nfrom multiprocessing import Pool\n\ndef square(x):\n    return x * x\n\nwith Pool(processes=4) as pool:\n    results = pool.map(square, range(10))\nprint(results)\n```\nThis is missing the `if __name__ == '__main__':` guard. What happens when run on macOS or Windows?",
+    q: `\`\`\`python
+from multiprocessing import Pool
+
+def square(x):
+    return x * x
+
+with Pool(processes=4) as pool:
+    results = pool.map(square, range(10))
+print(results)
+\`\`\`
+This is missing the \`if __name__ == '__main__':\` guard. What happens when run on macOS or Windows?`,
     options: [
       "It is a Python style guideline with no functional effect -- the code runs fine",
       "Without it, the Pool cannot determine how many workers to create, so it raises a TypeError",
@@ -391,7 +401,18 @@ export const quizMultiprocessing = [
     explain: "shared_memory.SharedMemory exposes a raw memory block that multiple processes can map directly, avoiding the pickle/unpickle cost that Queue and Pipe both pay for every message -- the right tool specifically when the data volume makes that serialization overhead expensive."
   },
   {
-    q: "```python\nfrom concurrent.futures import ProcessPoolExecutor\n\ndef main():\n    with ProcessPoolExecutor() as pool:\n        fut = pool.submit(lambda x: x * x, 5)\n        print(fut.result())\n\nif __name__ == \"__main__\":\n    main()\n```\nWhat happens when this runs?",
+    q: `\`\`\`python
+from concurrent.futures import ProcessPoolExecutor
+
+def main():
+    with ProcessPoolExecutor() as pool:
+        fut = pool.submit(lambda x: x * x, 5)
+        print(fut.result())
+
+if __name__ == "__main__":
+    main()
+\`\`\`
+What happens when this runs?`,
     options: [
       "Prints 25 -- the guard fixes the only real issue here",
       "PicklingError -- lambdas have no importable name, so they cannot be sent to a worker process",

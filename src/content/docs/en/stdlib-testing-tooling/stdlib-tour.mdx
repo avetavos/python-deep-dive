@@ -566,7 +566,13 @@ export const quizStdlibTour = [
         explain: "strftime takes a format string (e.g. '%Y-%m-%d') for custom output. isoformat() is a real method too, but it only produces the fixed ISO 8601 shape, not arbitrary formats."
     },
     {
-        q: "```python\nimport datetime as dt\nnaive = dt.datetime(2026, 9, 22, 10, 0)\naware = dt.datetime(2026, 9, 22, 10, 0, tzinfo=dt.timezone.utc)\nnaive - aware\n```\nWhat happens?",
+        q: `\`\`\`python
+import datetime as dt
+naive = dt.datetime(2026, 9, 22, 10, 0)
+aware = dt.datetime(2026, 9, 22, 10, 0, tzinfo=dt.timezone.utc)
+naive - aware
+\`\`\`
+What happens?`,
         options: [
             "Returns a timedelta of 0",
             "TypeError -- can't subtract offset-naive and offset-aware datetimes",
@@ -577,7 +583,12 @@ export const quizStdlibTour = [
         explain: "Python refuses to guess whether a naive datetime means UTC or local time, so comparing or subtracting a naive and an aware datetime always raises TypeError. Verified message: \"can't subtract offset-naive and offset-aware datetimes\".",
     },
     {
-        q: "```python\nimport subprocess\nfilename = \"notes.txt; echo INJECTED\"\nsubprocess.run(f\"ls {filename}\", shell=True)\n```\nWhat does the real output include?",
+        q: `\`\`\`python
+import subprocess
+filename = "notes.txt; echo INJECTED"
+subprocess.run(f"ls {filename}", shell=True)
+\`\`\`
+What does the real output include?`,
         options: [
             "Only an error that notes.txt was not found",
             "A line reading INJECTED -- the shell executed the second command after the semicolon",

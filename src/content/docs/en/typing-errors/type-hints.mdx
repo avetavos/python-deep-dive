@@ -978,7 +978,15 @@ export const quizTypeHints = [
     explain: "str | None is the PEP 604 syntax; Optional[str] and Union[str, None] are equivalent older spellings."
   },
   {
-    q: "```python\ndef describe(count: int | None) -> str:\n    if count:\n        return f\"count={count}\"\n    return \"no count\"\n\nprint(describe(0))\n```\nWhat does this print, and why is it a bug?",
+    q: `\`\`\`python
+def describe(count: int | None) -> str:
+    if count:
+        return f"count={count}"
+    return "no count"
+
+print(describe(0))
+\`\`\`
+What does this print, and why is it a bug?`,
     options: [
       "'count=0' -- correct, 0 was passed",
       "'no count' -- if count: treats 0 as falsy, not just None",
@@ -1011,7 +1019,11 @@ export const quizTypeHints = [
     explain: "cast performs no runtime work at all. It exists purely to tell the checker to treat the value as a given type from that point on -- if the claim is wrong, the checker stays silent and the program can crash much later."
   },
   {
-    q: "```python\ndef is_int_guard(val: object) -> TypeGuard[int]: ...\ndef is_int_is(val: int | str) -> TypeIs[int]: ...\n```\nAfter `if is_int_is(val): ... else: ...`, what does the checker infer for `val` in the `else` branch (val was originally `int | str`)?",
+    q: `\`\`\`python
+def is_int_guard(val: object) -> TypeGuard[int]: ...
+def is_int_is(val: int | str) -> TypeIs[int]: ...
+\`\`\`
+After \`if is_int_is(val): ... else: ...\`, what does the checker infer for \`val\` in the \`else\` branch (val was originally \`int | str\`)?`,
     options: [
       "int | str -- TypeIs never narrows the else branch",
       "str -- TypeIs narrows the negative branch to exclude int",

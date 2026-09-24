@@ -377,7 +377,23 @@ export const quizProperties = [
     explain: "property เป็น class ธรรมดาใน builtins ที่ implement descriptor protocol (__get__/__set__/__delete__) Class ไหนที่ implement method เหล่านี้และเก็บเป็น class attribute จะทำงานแบบเดียวกัน -- ยืนยันด้วย hasattr(property, '__get__') ที่เป็น True"
   },
   {
-    q: "```python\nclass Report:\n    def __init__(self, rows):\n        self.rows = rows\n        self.calls = 0\n\n    @cached_property\n    def total(self):\n        self.calls += 1\n        return sum(self.rows)\n\nr = Report([1, 2, 3])\nr.total\nr.total\nprint(r.calls)\n```\nโค้ดนี้พิมพ์อะไร?",
+    q: `\`\`\`python
+class Report:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = 0
+
+    @cached_property
+    def total(self):
+        self.calls += 1
+        return sum(self.rows)
+
+r = Report([1, 2, 3])
+r.total
+r.total
+print(r.calls)
+\`\`\`
+โค้ดนี้พิมพ์อะไร?`,
     options: [
       "0",
       "1",
@@ -388,7 +404,20 @@ export const quizProperties = [
     explain: "cached_property รัน method ตอนเข้าถึงครั้งแรกแล้วเก็บผลลัพธ์ตรงๆ ลง r.__dict__['total'] r.total ครั้งที่สองเจอ entry ใน dict นั้นและไม่เรียก method อีกเลย ดังนั้น calls จึงยังเป็น 1"
   },
   {
-    q: "```python\nclass Base:\n    @classmethod\n    def make(cls) -> \"Base\":\n        return cls()\n\nclass Sub(Base):\n    def extra(self) -> str:\n        return \"hi\"\n\ns = Sub.make()\ns.extra()\n```\n`uvx mypy --strict` รายงานอะไร?",
+    q: `\`\`\`python
+class Base:
+    @classmethod
+    def make(cls) -> "Base":
+        return cls()
+
+class Sub(Base):
+    def extra(self) -> str:
+        return "hi"
+
+s = Sub.make()
+s.extra()
+\`\`\`
+\`uvx mypy --strict\` รายงานอะไร?`,
     options: [
       "ไม่มี error -- annotation ถูกต้องแล้ว",
       "\"Base\" has no attribute \"extra\" [attr-defined]",

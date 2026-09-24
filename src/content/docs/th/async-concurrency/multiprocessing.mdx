@@ -308,7 +308,17 @@ export const quizMultiprocessing = [
     explain: "worker process แต่ละตัวได้ Python interpreter ที่อิสระเต็มรูปแบบ รวมถึง GIL ของตัวเอง เนื่องจากแต่ละ GIL จำกัดแค่ threads ภายใน process ของตัวเอง process แยกกันจึงรัน Python bytecode แบบ parallel บน core แยกกันได้จริง"
   },
   {
-    q: "```python\nfrom multiprocessing import Pool\n\ndef square(x):\n    return x * x\n\nwith Pool(processes=4) as pool:\n    results = pool.map(square, range(10))\nprint(results)\n```\nโค้ดนี้ไม่มี guard `if __name__ == '__main__':` เกิดอะไรขึ้นเมื่อรันบน macOS หรือ Windows?",
+    q: `\`\`\`python
+from multiprocessing import Pool
+
+def square(x):
+    return x * x
+
+with Pool(processes=4) as pool:
+    results = pool.map(square, range(10))
+print(results)
+\`\`\`
+โค้ดนี้ไม่มี guard \`if __name__ == '__main__':\` เกิดอะไรขึ้นเมื่อรันบน macOS หรือ Windows?`,
     options: [
       "เป็น Python style guideline ที่ไม่มีผลเชิงฟังก์ชัน -- โค้ดรันได้ปกติ",
       "หากไม่มี Pool ไม่สามารถกำหนดจำนวน workers ได้ จึง raise TypeError",
@@ -341,7 +351,18 @@ export const quizMultiprocessing = [
     explain: "shared_memory.SharedMemory เปิด memory block ดิบที่หลาย process map ตรงได้ หลีกเลี่ยงต้นทุน pickle/unpickle ที่ Queue และ Pipe ต้องจ่ายทุกข้อความ -- เครื่องมือที่ถูกต้องโดยเฉพาะเมื่อปริมาณข้อมูลทำให้ serialization overhead แพง"
   },
   {
-    q: "```python\nfrom concurrent.futures import ProcessPoolExecutor\n\ndef main():\n    with ProcessPoolExecutor() as pool:\n        fut = pool.submit(lambda x: x * x, 5)\n        print(fut.result())\n\nif __name__ == \"__main__\":\n    main()\n```\nเกิดอะไรขึ้นเมื่อรันโค้ดนี้?",
+    q: `\`\`\`python
+from concurrent.futures import ProcessPoolExecutor
+
+def main():
+    with ProcessPoolExecutor() as pool:
+        fut = pool.submit(lambda x: x * x, 5)
+        print(fut.result())
+
+if __name__ == "__main__":
+    main()
+\`\`\`
+เกิดอะไรขึ้นเมื่อรันโค้ดนี้?`,
     options: [
       "พิมพ์ 25 -- guard แก้ปัญหาเดียวที่มีอยู่แล้ว",
       "PicklingError -- lambda ไม่มีชื่อที่ import ได้ จึงส่งไปยัง worker process ไม่ได้",

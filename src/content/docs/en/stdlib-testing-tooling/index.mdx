@@ -362,7 +362,12 @@ export const quizStdlibIntro = [
         explain: "pyproject.toml centralizes package metadata ([project], PEP 621), the build backend ([build-system], PEP 518), and tool configuration ([tool.*]) in one file -- the packaging lesson covers this in depth.",
     },
     {
-        q: "```python\ndef add_item(item, items=[]):\n    items.append(item)\n    return items\n```\nWhich ruff rule flags this, and why is it a real bug?",
+        q: `\`\`\`python
+def add_item(item, items=[]):
+    items.append(item)
+    return items
+\`\`\`
+Which ruff rule flags this, and why is it a real bug?`,
         options: [
             "F401 -- items is an unused import",
             "B006 -- the mutable default list is created once at function definition and shared across every call that doesn't pass its own items",
@@ -373,7 +378,15 @@ export const quizStdlibIntro = [
         explain: "B006 (mutable default argument) flags exactly this pattern. The default []  is evaluated once, when the function is defined, not on each call -- every call that relies on the default shares and mutates the same list object, accumulating items across unrelated calls.",
     },
     {
-        q: "```text\n$ uvx mypy --strict typing_demo.py\ntyping_demo.py:1: error: Missing return statement  [return]\ntyping_demo.py:13: error: ... incompatible type \"int | None\"; expected \"list[int]\"\n\n$ uvx pyright typing_demo.py\ntyping_demo.py:13:13 - error: ... cannot be assigned to parameter \"values\" of type \"list[int]\"\n```\nWhat does this real output demonstrate?",
+        q: `\`\`\`text
+$ uvx mypy --strict typing_demo.py
+typing_demo.py:1: error: Missing return statement  [return]
+typing_demo.py:13: error: ... incompatible type "int | None"; expected "list[int]"
+
+$ uvx pyright typing_demo.py
+typing_demo.py:13:13 - error: ... cannot be assigned to parameter "values" of type "list[int]"
+\`\`\`
+What does this real output demonstrate?`,
         options: [
             "pyright is strictly better than mypy --strict because it reports fewer false positives",
             "mypy --strict and pyright can disagree on the same file -- here mypy also flags an implicit-None return that pyright does not -- so CI relying on only one tool can miss a class of warnings",
@@ -384,7 +397,12 @@ export const quizStdlibIntro = [
         explain: "Both tools agree on the real bug (passing int | None where list[int] is required). They disagree on whether an implicit `None` return in a function annotated -> int | None deserves a warning -- mypy --strict flags it, pyright does not. Running only one tool in CI means missing whichever warning only the other one produces.",
     },
     {
-        q: "```python\ndef read_first_line(path: str) -> str:\n    f = open(path)  # never closed\n    return f.readline()\n```\nWhy does `python3.14 devdemo2.py` show nothing, while `python3.14 -X dev devdemo2.py` prints a ResourceWarning?",
+        q: `\`\`\`python
+def read_first_line(path: str) -> str:
+    f = open(path)  # never closed
+    return f.readline()
+\`\`\`
+Why does \`python3.14 devdemo2.py\` show nothing, while \`python3.14 -X dev devdemo2.py\` prints a ResourceWarning?`,
         options: [
             "-X dev recompiles the file with different behavior",
             "Python's default warning filters suppress ResourceWarning; -X dev (development mode) enables it along with other runtime checks, without changing the program's actual behavior",

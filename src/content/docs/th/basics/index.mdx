@@ -173,7 +173,18 @@ print(isinstance(fido, Animal)) # True -- respects subclassing
 
 export const quizBasicsIndex = [
   {
-    q: "```python\nclass Animal:\n    pass\n\nclass Dog(Animal):\n    pass\n\nfido = Dog()\nprint(type(fido) == Animal)\nprint(isinstance(fido, Animal))\n```\nโค้ดนี้พิมพ์อะไร?",
+    q: `\`\`\`python
+class Animal:
+    pass
+
+class Dog(Animal):
+    pass
+
+fido = Dog()
+print(type(fido) == Animal)
+print(isinstance(fido, Animal))
+\`\`\`
+โค้ดนี้พิมพ์อะไร?`,
     options: [
       "True\nTrue",
       "False\nTrue",
@@ -184,7 +195,11 @@ export const quizBasicsIndex = [
     explain: "type(fido) คือ Dog เป๊ะ ๆ ไม่ใช่ Animal ดังนั้น type(fido) == Animal จึงเป็น False isinstance เดินไล่ลำดับชั้น class ทั้งหมด จึง isinstance(fido, Animal) เป็น True เพราะ Dog สืบทอดจาก Animal"
   },
   {
-    q: "```python\nprint(type(int))\nprint(type(type))\n```\nโค้ดนี้พิมพ์อะไร?",
+    q: `\`\`\`python
+print(type(int))
+print(type(type))
+\`\`\`
+โค้ดนี้พิมพ์อะไร?`,
     options: [
       "<class 'int'>\n<class 'int'>",
       "<class 'type'>\n<class 'type'>",

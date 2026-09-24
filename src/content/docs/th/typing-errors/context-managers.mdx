@@ -430,7 +430,18 @@ export const quizContextManagers = [
     explain: "__exit__ ทำงานเสมอหลัง with body โดยได้รับ (None, None, None) เมื่อออกแบบปกติ หรือได้รับข้อมูล exception เมื่อมีตัวหนึ่งถูก raise"
   },
   {
-    q: "```python\nclass CM:\n    def __enter__(self):\n        return self\n    def __exit__(self, exc_type, exc, tb):\n        return True\n\nwith CM():\n    raise ValueError(\"x\")\nprint(\"after\")\n```\nโค้ดนี้พิมพ์อะไร?",
+    q: `\`\`\`python
+class CM:
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc, tb):
+        return True
+
+with CM():
+    raise ValueError("x")
+print("after")
+\`\`\`
+โค้ดนี้พิมพ์อะไร?`,
     options: [
       "raise ValueError: x โดยไม่มีใครจับ",
       "'after' -- ValueError ถูก suppress แบบเงียบ ๆ เพราะ __exit__ คืน True",
@@ -452,7 +463,12 @@ export const quizContextManagers = [
     explain: "enter_context ทั้ง enter context manager ทันทีและกำหนดตารางการ exit ของมันไว้สำหรับตอนที่ ExitStack ที่ครอบอยู่ออก โดย unwind manager ทั้งหมดที่ลงทะเบียนไว้ตามลำดับ LIFO"
   },
   {
-    q: "```python\nwith contextlib.ExitStack() as stack:\n    stack.callback(print, \"first\")\n    stack.enter_context(managed_resource(\"r\"))\n```\nเมื่อ with block ออก callback กับ cleanup ของ resource ทำงานตามลำดับไหน?",
+    q: `\`\`\`python
+with contextlib.ExitStack() as stack:
+    stack.callback(print, "first")
+    stack.enter_context(managed_resource("r"))
+\`\`\`
+เมื่อ with block ออก callback กับ cleanup ของ resource ทำงานตามลำดับไหน?`,
     options: [
       "callback ทำงานก่อน เพราะลงทะเบียนก่อน",
       "cleanup ของ resource ทำงานก่อน เพราะลงทะเบียนทีหลัง -- ExitStack unwind แบบ LIFO",

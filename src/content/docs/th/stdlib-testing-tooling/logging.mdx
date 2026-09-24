@@ -404,7 +404,13 @@ export const quizLogging = [
         explain: "print เขียนแบบไม่มีเงื่อนไข ไม่มีทางให้ผู้เรียกปิดเสียง redirect หรือกรองตามความรุนแรง library ที่เรียกแค่ logger.info/.warning/ฯลฯ ทำให้แอปพลิเคชัน config ทุกอย่าง (handler, level, formatter) รวมศูนย์ที่ entry point ของตัวเองได้"
     },
     {
-        q: "```python\nimport logging\nlogging.root.handlers.clear()\nlogging.info(\"dropped -- WARNING is the default threshold\")\nprint(logging.root.handlers)\n```\nlist handler ที่พิมพ์ออกมาแสดงอะไร ในเมื่อข้อความข้างบนถูกดรอปไปแล้ว?",
+        q: `\`\`\`python
+import logging
+logging.root.handlers.clear()
+logging.info("dropped -- WARNING is the default threshold")
+print(logging.root.handlers)
+\`\`\`
+list handler ที่พิมพ์ออกมาแสดงอะไร ในเมื่อข้อความข้างบนถูกดรอปไปแล้ว?`,
         options: [
             "An empty list -- nothing happened since the message was dropped",
             "A list containing one StreamHandler -- logging.info() calls basicConfig() internally the moment root has no handlers, before even checking the level",
@@ -426,7 +432,17 @@ export const quizLogging = [
         explain: "verified ด้านบน: handler list ของ root ไม่เปลี่ยนหลังเรียก basicConfig() เปล่า ๆ อีกครั้งเมื่อมี handler อยู่แล้ว -- ไม่แม้แต่ format= ใหม่จะถูก apply มีแค่ basicConfig(..., force=True) เท่านั้นที่ลบ handler เดิมก่อนแล้ว reconfigure จริง"
     },
     {
-        q: "```python\nclass Expensive:\n    def __str__(self):\n        print(\"ran\")\n        return \"x\"\n\nlogger.setLevel(logging.WARNING)\nlogger.debug(f\"value is {Expensive()}\")\nlogger.debug(\"value is %s\", Expensive())\n```\n\"ran\" พิมพ์ออกมากี่ครั้ง และทำไม?",
+        q: `\`\`\`python
+class Expensive:
+    def __str__(self):
+        print("ran")
+        return "x"
+
+logger.setLevel(logging.WARNING)
+logger.debug(f"value is {Expensive()}")
+logger.debug("value is %s", Expensive())
+\`\`\`
+"ran" พิมพ์ออกมากี่ครั้ง และทำไม?`,
         options: [
             "Zero times -- both calls are disabled at DEBUG level so neither ever touches Expensive()",
             "Once -- the f-string builds its string eagerly as part of evaluating the debug() call's arguments, before logging even checks the level; the %s form only stringifies if the record is actually emitted",

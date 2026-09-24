@@ -658,7 +658,23 @@ export const quizGilThreads = [
     explain: "The GIL is released during blocking I/O, periodically at safe points in the bytecode dispatch loop (mainly loop back-edges and calls) so no thread starves the others, and explicitly by C extensions like hashlib or NumPy around long non-Python operations."
   },
   {
-    q: "```python\nimport threading\n\ncounter = 0\n\ndef increment(n):\n    global counter\n    for _ in range(n):\n        counter += 1\n\nthreads = [threading.Thread(target=increment, args=(2_000_000,)) for _ in range(8)]\nfor t in threads: t.start()\nfor t in threads: t.join()\n\nprint(counter)\n```\nRun on `python3.14` (GIL enabled), even with the GIL switch interval set extremely low, what was actually measured?",
+    q: `\`\`\`python
+import threading
+
+counter = 0
+
+def increment(n):
+    global counter
+    for _ in range(n):
+        counter += 1
+
+threads = [threading.Thread(target=increment, args=(2_000_000,)) for _ in range(8)]
+for t in threads: t.start()
+for t in threads: t.join()
+
+print(counter)
+\`\`\`
+Run on \`python3.14\` (GIL enabled), even with the GIL switch interval set extremely low, what was actually measured?`,
     options: [
       "A number noticeably lower than 16000000, as expected from a textbook race condition",
       "Exactly 16000000 -- the eval-breaker only checks for a switch at loop/call boundaries, not between the four opcodes of a single += statement",
@@ -669,7 +685,24 @@ export const quizGilThreads = [
     explain: "This is a real, measured result, not a guarantee: CPython's eval-breaker checkpoint happens at specific safe points (loop back-edges, calls), and a bare counter += 1 inside a tight loop has no such checkpoint between its LOAD_GLOBAL/BINARY_OP/STORE_GLOBAL sequence. Changing the pattern to include a genuine suspension point (like time.sleep) between the read and the write reliably reproduces a lost update -- the absence of a race in the tight-loop case is an implementation detail, not a safety guarantee."
   },
   {
-    q: "```python\nclass Account:\n    def __init__(self, balance):\n        self.balance = balance\n\ndef withdraw(acct, amount):\n    balance = acct.balance\n    time.sleep(0.01)\n    acct.balance = balance - amount\n\nacct = Account(balance=100)\nthreads = [threading.Thread(target=withdraw, args=(acct, 80)) for _ in range(2)]\nfor t in threads: t.start()\nfor t in threads: t.join()\n\nprint(acct.balance)\n```\nWhat does this print, and why -- given the tight `+=` loop above showed no lost updates?",
+    q: `\`\`\`python
+class Account:
+    def __init__(self, balance):
+        self.balance = balance
+
+def withdraw(acct, amount):
+    balance = acct.balance
+    time.sleep(0.01)
+    acct.balance = balance - amount
+
+acct = Account(balance=100)
+threads = [threading.Thread(target=withdraw, args=(acct, 80)) for _ in range(2)]
+for t in threads: t.start()
+for t in threads: t.join()
+
+print(acct.balance)
+\`\`\`
+What does this print, and why -- given the tight \`+=\` loop above showed no lost updates?`,
     options: [
       "-60 -- both withdrawals always apply correctly in sequence",
       "20 -- both threads read balance=100 before either wrote, because time.sleep genuinely releases the GIL between the read and the write",

@@ -448,7 +448,19 @@ export const quizClasses = [
     explain: "super() คืน proxy ที่ส่งต่อการเรียกไปยัง class ถัดไปใน MRO — ในที่นี้คือ __init__ ของ parent — ทำให้ subclass reuse setup logic ของ parent แทนที่จะเขียนซ้ำ"
   },
   {
-    q: "```python\nclass Dog:\n    tricks: list[str] = []\n\n    def add_trick(self, t):\n        self.tricks.append(t)\n\nrex = Dog()\nfido = Dog()\nrex.add_trick(\"sit\")\nprint(fido.tricks)\n```\nโค้ดนี้พิมพ์อะไร?",
+    q: `\`\`\`python
+class Dog:
+    tricks: list[str] = []
+
+    def add_trick(self, t):
+        self.tricks.append(t)
+
+rex = Dog()
+fido = Dog()
+rex.add_trick("sit")
+print(fido.tricks)
+\`\`\`
+โค้ดนี้พิมพ์อะไร?`,
     options: [
       "[] -- fido มี list เป็นของตัวเอง",
       "['sit'] -- fido แชร์ list object เดียวกับ rex",
@@ -459,7 +471,19 @@ export const quizClasses = [
     explain: "tricks เป็น class attribute -- list เดียวที่ Dog ทุกตัวแชร์กัน rex.add_trick แก้ list ที่แชร์นั้นในที่เดิม ทำให้ fido.tricks เห็นการเปลี่ยนแปลงเดียวกัน: ['sit'] rex.tricks is fido.tricks ได้ True"
   },
   {
-    q: "```python\nclass Base:\n    def __init__(self, **kw): print(\"Base\", kw); super().__init__()\nclass Left(Base):\n    def __init__(self, **kw): print(\"Left\"); super().__init__(**kw)\nclass Right(Base):\n    def __init__(self, **kw): print(\"Right\"); super().__init__(**kw)\nclass Diamond(Left, Right):\n    def __init__(self, **kw): print(\"Diamond\"); super().__init__(**kw)\n\nDiamond(value=1)\n```\nลำดับการพิมพ์คืออะไร?",
+    q: `\`\`\`python
+class Base:
+    def __init__(self, **kw): print("Base", kw); super().__init__()
+class Left(Base):
+    def __init__(self, **kw): print("Left"); super().__init__(**kw)
+class Right(Base):
+    def __init__(self, **kw): print("Right"); super().__init__(**kw)
+class Diamond(Left, Right):
+    def __init__(self, **kw): print("Diamond"); super().__init__(**kw)
+
+Diamond(value=1)
+\`\`\`
+ลำดับการพิมพ์คืออะไร?`,
     options: [
       "Diamond, Left, Base, Right",
       "Diamond, Left, Right, Base",

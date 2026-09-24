@@ -25,7 +25,7 @@
 //      EN options aren't all short code/output tokens.
 //   5. every `export const ...Code = \`...\`` and `<SpotTheBug code={\`...\`}>`
 //      literal is byte-identical between EN and TH
-//   6. no Thai characters leak into a fenced ```python code block or a code
+//   6. no Thai characters leak into a fenced ```js code block or a code
 //      literal in the TH file (```text fences are excluded on purpose: this
 //      course uses them for ASCII diagrams that intentionally carry Thai
 //      captions, mirroring the house rule that Mermaid diagram titles/
@@ -52,11 +52,14 @@ function countHeadings(src) {
   return (stripFrontmatter(src).match(/^## .*/gm) || []).length;
 }
 
-// Fenced code blocks tagged ```python — the only fence language this course
+// Every fence except text/mermaid/markdown counts as code and must be byte-identical EN/TH.
+// Untagged fences count as code too — tag prose-like listings ```text explicitly.
+// (historical note:) Fenced code blocks tagged ```js — the only fence language this course
 // guarantees stays English (```text fences are used for Thai-captioned
 // ASCII diagrams and are intentionally not checked here).
-function fencedPythonBlocks(src) {
-  return [...src.matchAll(/```python\n([\s\S]*?)```/g)].map((m) => m[1]);
+const NON_CODE = new Set(['text', 'txt', 'plain', 'mermaid', 'md', 'markdown']);
+function fencedJsBlocks(src) {
+  return [...src.matchAll(/```(\w*)[^\n]*\n([\s\S]*?)```/g)].filter((m) => !NON_CODE.has(m[1])).map((m) => m[2]);
 }
 
 // Parse a quoted string literal (', ", or `) starting at index i.
@@ -316,25 +319,29 @@ for (const enPath of files) {
     });
   }
 
-  // 6. no Thai characters inside a fenced ```python block or code literal in TH file
-  //    (a block byte-identical to its EN counterpart is exempt: Thai string
-  //    data such as a UTF-8 demo is legitimate when EN carries the same bytes)
+  // 7. every fenced code block is byte-identical EN vs TH (fences ARE the
+  //    code in this course; TS Playground/verify-fences run the EN copy only)
   {
-    const enF = fencedPythonBlocks(enSrc), thF = fencedPythonBlocks(thSrc);
-    thF.forEach((block, i) => {
-      if (THAI_RE.test(block) && block !== enF[i]) {
-        report(`${thPath}: Thai characters inside fenced \`\`\`python block #${i}`);
-      }
-    });
-    // 7. every fenced ```python block is byte-identical EN vs TH
+    const enF = fencedJsBlocks(enSrc), thF = fencedJsBlocks(thSrc);
     if (enF.length !== thF.length) {
-      report(`${enPath}: python fence count EN=${enF.length} TH=${thF.length}`);
+      report(`${enPath}: code fence count EN=${enF.length} TH=${thF.length}`);
     } else {
-      enF.forEach((b, i) => { if (b !== thF[i]) report(`${enPath}: python fence #${i} differs EN vs TH`); });
+      enF.forEach((b, i) => { if (b !== thF[i]) report(`${enPath}: code fence #${i} differs EN vs TH`); });
     }
   }
+
+  // 6. no Thai characters inside a fenced code block or code literal in TH file
+  {
+    const enFences = fencedJsBlocks(enSrc);
+    fencedJsBlocks(thSrc).forEach((block, i) => {
+      if (THAI_RE.test(block) && block !== enFences[i]) {
+        report(`${thPath}: Thai characters inside fenced code block #${i}`);
+      }
+    });
+  }
+  // (a literal byte-identical to EN is exempt: Thai string data is legitimate when EN carries the same bytes)
   for (const [name, code] of Object.entries(thCode)) {
-    if (THAI_RE.test(code)) {
+    if (THAI_RE.test(code) && code !== enCode[name]) {
       report(`${thPath}: Thai characters inside ${name} playground literal`);
     }
   }

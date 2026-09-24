@@ -341,7 +341,12 @@ If `app.py` contains `import settings` (or `from settings import DEFAULT_TIMEOUT
 
 export const quizBytecode = [
   {
-    q: "```python\ndef f():\n    x = 1\n    return x\n```\nWhere does the name `x` live in the compiled code object, and why does that matter for speed?",
+    q: `\`\`\`python
+def f():
+    x = 1
+    return x
+\`\`\`
+Where does the name \`x\` live in the compiled code object, and why does that matter for speed?`,
     options: [
       "In co_names, looked up via a dict, same as a global",
       "In co_varnames, as a fixed-index slot in the function's frame -- no dict lookup needed",
@@ -374,7 +379,18 @@ export const quizBytecode = [
     explain: "is_available() answers 'does this interpreter build support JIT at all' and is_enabled() answers 'is it actually active for this process' -- they are independently verifiable and, as shown in this lesson's real output, can disagree. Never assume JIT compilation is happening just because a Python build theoretically supports it.",
   },
   {
-    q: "```python\n# cir_a.py\nfrom cir_b import b_func\ndef a_func():\n    return \"a\"\n\n# cir_b.py\nfrom cir_a import a_func\ndef b_func():\n    return a_func()\n```\nWhy does `import cir_a` raise `ImportError: cannot import name 'a_func' from 'cir_a'`?",
+    q: `\`\`\`python
+# cir_a.py
+from cir_b import b_func
+def a_func():
+    return "a"
+
+# cir_b.py
+from cir_a import a_func
+def b_func():
+    return a_func()
+\`\`\`
+Why does \`import cir_a\` raise \`ImportError: cannot import name 'a_func' from 'cir_a'\`?`,
     options: [
       "Python does not support any form of circular import, ever",
       "cir_a is registered in sys.modules the moment its execution starts (before a_func is defined), so when cir_b tries `from cir_a import a_func` it finds a partially-initialized module object missing that name",
@@ -385,7 +401,15 @@ export const quizBytecode = [
     explain: "A module is added to sys.modules before its top-level code finishes running, specifically so re-entrant imports don't infinite-loop. That means a module imported partway through its own execution (as cir_a is here, from inside cir_b) is missing every name defined after the import line that triggered the cycle -- exactly a_func in this case, reproduced verbatim in this lesson.",
   },
   {
-    q: "```python\nimport mymod2  # VALUE = 1\nprint(mymod2.VALUE)\nwith open('mymod2.py', 'w') as f:\n    f.write('VALUE = 99')\nimportlib.reload(mymod2)\nprint(mymod2.VALUE)\n```\nWhat does this print, and why?",
+    q: `\`\`\`python
+import mymod2  # VALUE = 1
+print(mymod2.VALUE)
+with open('mymod2.py', 'w') as f:
+    f.write('VALUE = 99')
+importlib.reload(mymod2)
+print(mymod2.VALUE)
+\`\`\`
+What does this print, and why?`,
     options: [
       "1 then 1 -- reload only works before a module has been imported once",
       "1 then 99 -- reload re-executes the module's top-level code against the same module object, picking up the new source",

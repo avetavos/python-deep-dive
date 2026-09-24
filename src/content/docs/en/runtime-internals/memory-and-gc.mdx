@@ -514,7 +514,17 @@ export const quizMemoryGc = [
     explain: "Refcounting frees an object the instant its refcount hits zero -- but two objects that reference each other (directly or through a longer chain) never reach zero on their own, even when nothing outside the cycle can reach either of them. The gc module periodically finds and frees exactly these unreachable cycles.",
   },
   {
-    q: "```python\nclass Node:\n    def __init__(self):\n        self.other = None\n\nn1, n2 = Node(), Node()\nn1.other = n2\nn2.other = n1\ndel n1, n2\n```\nAfter `del n1, n2`, what has actually happened to the two Node objects?",
+    q: `\`\`\`python
+class Node:
+    def __init__(self):
+        self.other = None
+
+n1, n2 = Node(), Node()
+n1.other = n2
+n2.other = n1
+del n1, n2
+\`\`\`
+After \`del n1, n2\`, what has actually happened to the two Node objects?`,
     options: [
       "Both are immediately freed by refcounting",
       "Both are still alive in memory -- each other's reference keeps their refcount above zero -- until something runs gc.collect() (or an automatic collection triggers)",
@@ -536,7 +546,13 @@ export const quizMemoryGc = [
     explain: "This is a real, documented mid-release change: the incremental GC shipped in 3.14.0 reduced worst-case pause times but caused higher memory use in some production workloads, so 3.14.5 reverted to the classic generational design -- which is what a 3.14.5+ interpreter (like the one used to verify this lesson) reports via gc.get_stats() (3 generations).",
   },
   {
-    q: "```python\nclass Service:\n    @functools.lru_cache(maxsize=None)\n    def compute(self, n):\n        return n * 2\n```\nWhy is putting @lru_cache directly on this instance method a memory leak risk?",
+    q: `\`\`\`python
+class Service:
+    @functools.lru_cache(maxsize=None)
+    def compute(self, n):
+        return n * 2
+\`\`\`
+Why is putting @lru_cache directly on this instance method a memory leak risk?`,
     options: [
       "lru_cache doesn't work on methods at all -- it raises a TypeError",
       "The cache key includes self (the first positional argument), so every distinct Service instance that ever calls compute is kept alive by the cache for the life of the program",
@@ -558,7 +574,11 @@ export const quizMemoryGc = [
     explain: "This is exactly the nuance this lesson verifies with two real measurements rather than asserting one blanket rule: allocation size and resulting fragmentation -- not whether del was called -- determine whether freed memory becomes visible as lower RSS.",
   },
   {
-    q: "```python\nnested = [[1, 2, 3] for _ in range(3)]\nprint(sys.getsizeof(nested))\n```\nWhy does this print the same number as `sys.getsizeof([1, 2, 3])` even though nested clearly holds more data?",
+    q: `\`\`\`python
+nested = [[1, 2, 3] for _ in range(3)]
+print(sys.getsizeof(nested))
+\`\`\`
+Why does this print the same number as \`sys.getsizeof([1, 2, 3])\` even though nested clearly holds more data?`,
     options: [
       "It's a bug in sys.getsizeof",
       "sys.getsizeof only measures the container's own overhead -- it never follows pointers into the objects a container holds",

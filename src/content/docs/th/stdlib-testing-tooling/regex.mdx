@@ -316,7 +316,12 @@ export const quizRegex = [
         explain: "re._compile เก็บ cache สูงสุด re._MAXCACHE (512) entry คีย์ด้วย pattern text และ flag ที่ตรงเป๊ะ การเรียกครั้งที่สองด้วย argument เดิมเจอ cache hit และคืน object เดิม -- verified ด้วย 'is' ข้างบน flag ที่ต่างกันคือ cache miss และคืน object คนละตัว"
     },
     {
-        q: "```python\nimport re\nhtml = \"<b>bold</b> and <i>italic</i>\"\nprint(re.search(r\"<.*>\", html).group())\n```\nโค้ดนี้พิมพ์อะไร?",
+        q: `\`\`\`python
+import re
+html = "<b>bold</b> and <i>italic</i>"
+print(re.search(r"<.*>", html).group())
+\`\`\`
+โค้ดนี้พิมพ์อะไร?`,
         options: [
             "<b>",
             "<b>bold</b> and <i>italic</i>",
@@ -338,7 +343,14 @@ export const quizRegex = [
         explain: "re.M (MULTILINE) ทำให้ ^ match ทันทีหลังทุก newline และ $ match ทันทีก่อนทุก newline นอกเหนือจากจุดเริ่ม/จบของทั้ง string re.S เปลี่ยนสิ่งที่ '.' match (เพิ่ม newline) ไม่เกี่ยวกับ ^/$ เลย"
     },
     {
-        q: "```python\nimport re\nuser_input = \"3.14 (pi)\"\ntext = \"value is 3.14 (pi) exactly\"\nprint(bool(re.search(user_input, text)))\nprint(bool(re.search(re.escape(user_input), text)))\n```\nโค้ดนี้พิมพ์อะไร?",
+        q: `\`\`\`python
+import re
+user_input = "3.14 (pi)"
+text = "value is 3.14 (pi) exactly"
+print(bool(re.search(user_input, text)))
+print(bool(re.search(re.escape(user_input), text)))
+\`\`\`
+โค้ดนี้พิมพ์อะไร?`,
         options: [
             "True then True -- the pattern matches the literal substring either way",
             "False then True -- unescaped, '.' and the parentheses change what the pattern means; escaped, it matches the literal text",

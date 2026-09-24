@@ -330,7 +330,14 @@ export const quizVenvPip = [
         explain: "Activation is a PATH edit in the current shell, nothing more -- verified: `echo $PATH` before and after activation shows only .venv/bin prepended. No new process starts, and no files outside the shell's environment variables are touched.",
     },
     {
-        q: "```bash\n$ python -m pip install -e .\n$ python -c \"import edemo; print(edemo.greet())\"\nv1\n$ sed -i '' 's/v1/v2/' src/edemo/__init__.py\n$ python -c \"import edemo; print(edemo.greet())\"\n```\nWhat does the second import print, and why?",
+        q: `\`\`\`bash
+$ python -m pip install -e .
+$ python -c "import edemo; print(edemo.greet())"
+v1
+$ sed -i '' 's/v1/v2/' src/edemo/__init__.py
+$ python -c "import edemo; print(edemo.greet())"
+\`\`\`
+What does the second import print, and why?`,
         options: [
             "v1 -- installed packages are copied and don't see later source edits",
             "v2 -- an editable install links to the source tree, so edits are visible on the next import with no reinstall",
@@ -352,7 +359,15 @@ export const quizVenvPip = [
         explain: "pip freeze snapshots whatever is currently installed as version==number lines with no hashes and no platform-specific wheel selection. uv.lock records a hash and platform-specific wheel/sdist entry for every package by default (visible in the real uv.lock excerpt in this lesson) -- that's what actually pins the exact bytes that get installed, not just a version string.",
     },
     {
-        q: "```python\ndef ensure_dependency(package: str) -> None:\n    subprocess.run([\"pip\", \"install\", package], check=True)\n\ndef main() -> None:\n    ensure_dependency(\"requests\")\n    import requests\n```\nWhat is wrong with this pattern?",
+        q: `\`\`\`python
+def ensure_dependency(package: str) -> None:
+    subprocess.run(["pip", "install", package], check=True)
+
+def main() -> None:
+    ensure_dependency("requests")
+    import requests
+\`\`\`
+What is wrong with this pattern?`,
         options: [
             "Nothing -- it guarantees the dependency is always available",
             "It installs a dependency as a side effect of every program run, with no lockfile and no guarantee it targets the running interpreter's environment",

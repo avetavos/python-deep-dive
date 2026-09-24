@@ -851,7 +851,20 @@ export const quizAsyncAwait = [
     explain: "The official asyncio documentation warns that a task with no other reference may be garbage collected at any time, even before it finishes. A short demo often survives because the loop's internal scheduling happens to keep it alive, but that is an implementation detail, not a guarantee -- always keep a reference (a set, a variable, or a TaskGroup)."
   },
   {
-    q: "```python\nasync def worker(label, delay, fail):\n    await asyncio.sleep(delay)\n    if fail:\n        raise ValueError(label)\n    return label\n\nasync def main():\n    async with asyncio.TaskGroup() as tg:\n        tg.create_task(worker(\"A\", 0.05, False))\n        tg.create_task(worker(\"B\", 0.01, True))\n        tg.create_task(worker(\"C\", 0.2, False))\n```\nWhat happens to task C when B raises?",
+    q: `\`\`\`python
+async def worker(label, delay, fail):
+    await asyncio.sleep(delay)
+    if fail:
+        raise ValueError(label)
+    return label
+
+async def main():
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(worker("A", 0.05, False))
+        tg.create_task(worker("B", 0.01, True))
+        tg.create_task(worker("C", 0.2, False))
+\`\`\`
+What happens to task C when B raises?`,
     options: [
       "C keeps running to completion regardless of B's failure",
       "TaskGroup cancels C as soon as B's exception is observed, before C's full delay elapses",
@@ -873,7 +886,22 @@ export const quizAsyncAwait = [
     explain: "time.sleep is a genuinely blocking call -- it does not yield control back to the event loop the way asyncio.sleep does. Since the event loop runs on one thread, that thread is now unavailable to run any other coroutine for the full duration. asyncio.to_thread (or run_in_executor) is the fix for blocking calls that cannot be replaced with an async equivalent."
   },
   {
-    q: "```python\nclass Account:\n    def __init__(self, balance):\n        self.balance = balance\n\nasync def withdraw(acct, amount):\n    if acct.balance >= amount:\n        await asyncio.sleep(0)\n        acct.balance -= amount\n\nasync def main():\n    acct = Account(100)\n    await asyncio.gather(withdraw(acct, 80), withdraw(acct, 80))\n    print(acct.balance)\n```\nWhat does this print, and why?",
+    q: `\`\`\`python
+class Account:
+    def __init__(self, balance):
+        self.balance = balance
+
+async def withdraw(acct, amount):
+    if acct.balance >= amount:
+        await asyncio.sleep(0)
+        acct.balance -= amount
+
+async def main():
+    acct = Account(100)
+    await asyncio.gather(withdraw(acct, 80), withdraw(acct, 80))
+    print(acct.balance)
+\`\`\`
+What does this print, and why?`,
     options: [
       "20 -- the second withdrawal correctly sees the reduced balance",
       "-60 -- both coroutines read balance=100 before either one wrote the new value",

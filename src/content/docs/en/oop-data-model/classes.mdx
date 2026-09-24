@@ -448,7 +448,19 @@ export const quizClasses = [
     explain: "super() returns a proxy that forwards the call to the next class in the MRO -- here the parent's __init__ -- so the subclass can reuse the parent's setup logic instead of duplicating it."
   },
   {
-    q: "```python\nclass Dog:\n    tricks: list[str] = []\n\n    def add_trick(self, t):\n        self.tricks.append(t)\n\nrex = Dog()\nfido = Dog()\nrex.add_trick(\"sit\")\nprint(fido.tricks)\n```\nWhat does this print?",
+    q: `\`\`\`python
+class Dog:
+    tricks: list[str] = []
+
+    def add_trick(self, t):
+        self.tricks.append(t)
+
+rex = Dog()
+fido = Dog()
+rex.add_trick("sit")
+print(fido.tricks)
+\`\`\`
+What does this print?`,
     options: [
       "[] -- fido has its own empty list",
       "['sit'] -- fido shares the same list object as rex",
@@ -459,7 +471,19 @@ export const quizClasses = [
     explain: "tricks is a class attribute -- one list shared by every Dog. rex.add_trick mutates that shared list in place, so fido.tricks sees the same change: ['sit']. rex.tricks is fido.tricks is True."
   },
   {
-    q: "```python\nclass Base:\n    def __init__(self, **kw): print(\"Base\", kw); super().__init__()\nclass Left(Base):\n    def __init__(self, **kw): print(\"Left\"); super().__init__(**kw)\nclass Right(Base):\n    def __init__(self, **kw): print(\"Right\"); super().__init__(**kw)\nclass Diamond(Left, Right):\n    def __init__(self, **kw): print(\"Diamond\"); super().__init__(**kw)\n\nDiamond(value=1)\n```\nWhat order do the prints appear in?",
+    q: `\`\`\`python
+class Base:
+    def __init__(self, **kw): print("Base", kw); super().__init__()
+class Left(Base):
+    def __init__(self, **kw): print("Left"); super().__init__(**kw)
+class Right(Base):
+    def __init__(self, **kw): print("Right"); super().__init__(**kw)
+class Diamond(Left, Right):
+    def __init__(self, **kw): print("Diamond"); super().__init__(**kw)
+
+Diamond(value=1)
+\`\`\`
+What order do the prints appear in?`,
     options: [
       "Diamond, Left, Base, Right",
       "Diamond, Left, Right, Base",

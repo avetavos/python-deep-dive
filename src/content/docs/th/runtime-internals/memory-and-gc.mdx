@@ -514,7 +514,17 @@ export const quizMemoryGc = [
     explain: "refcounting free object ทันทีที่ refcount ของมันเป็นศูนย์ — แต่ object สองตัวที่อ้างถึงกัน (ตรง ๆ หรือผ่านสายที่ยาวกว่านั้น) ไม่มีวันถึงศูนย์เองเลย แม้ไม่มีอะไรจากภายนอก cycle เข้าถึงตัวไหนได้ก็ตาม module gc หาและ free cycle ที่ unreachable แบบนี้เป็นระยะ ๆ",
   },
   {
-    q: "```python\nclass Node:\n    def __init__(self):\n        self.other = None\n\nn1, n2 = Node(), Node()\nn1.other = n2\nn2.other = n1\ndel n1, n2\n```\nหลัง `del n1, n2` เกิดอะไรขึ้นกับ Node สองตัวนี้จริง ๆ?",
+    q: `\`\`\`python
+class Node:
+    def __init__(self):
+        self.other = None
+
+n1, n2 = Node(), Node()
+n1.other = n2
+n2.other = n1
+del n1, n2
+\`\`\`
+หลัง \`del n1, n2\` เกิดอะไรขึ้นกับ Node สองตัวนี้จริง ๆ?`,
     options: [
       "Both are immediately freed by refcounting",
       "Both are still alive in memory -- each other's reference keeps their refcount above zero -- until something runs gc.collect() (or an automatic collection triggers)",
@@ -536,7 +546,13 @@ export const quizMemoryGc = [
     explain: "นี่คือการเปลี่ยนแปลงกลางรอบ release จริงที่มีเอกสารรองรับ: incremental GC ที่ shipped ใน 3.14.0 ลด worst-case pause time แต่ทำให้ใช้ memory สูงขึ้นใน production workload บางแบบ 3.14.5 จึง revert กลับไปเป็นดีไซน์ generational คลาสสิก -- ซึ่งเป็นสิ่งที่ interpreter 3.14.5 ขึ้นไป (แบบที่ใช้ยืนยันบทนี้) รายงานผ่าน gc.get_stats() (3 generation)",
   },
   {
-    q: "```python\nclass Service:\n    @functools.lru_cache(maxsize=None)\n    def compute(self, n):\n        return n * 2\n```\nทำไมการใส่ @lru_cache ตรง ๆ บน instance method นี้ถึงเสี่ยง memory leak?",
+    q: `\`\`\`python
+class Service:
+    @functools.lru_cache(maxsize=None)
+    def compute(self, n):
+        return n * 2
+\`\`\`
+ทำไมการใส่ @lru_cache ตรง ๆ บน instance method นี้ถึงเสี่ยง memory leak?`,
     options: [
       "lru_cache doesn't work on methods at all -- it raises a TypeError",
       "The cache key includes self (the first positional argument), so every distinct Service instance that ever calls compute is kept alive by the cache for the life of the program",
@@ -558,7 +574,11 @@ export const quizMemoryGc = [
     explain: "นี่คือความละเอียดอ่อนที่บทนี้ยืนยันด้วยการวัดจริงสองครั้งแทนที่จะยืนยันกฎเดียวครอบคลุมทุกกรณี: ขนาด allocation และ fragmentation ที่เกิดขึ้น -- ไม่ใช่ว่าเรียก del หรือเปล่า -- เป็นตัวตัดสินว่า memory ที่ free แล้วจะเห็นเป็น RSS ที่ลดลงหรือไม่",
   },
   {
-    q: "```python\nnested = [[1, 2, 3] for _ in range(3)]\nprint(sys.getsizeof(nested))\n```\nทำไมสิ่งนี้ถึง print ตัวเลขเดียวกับ `sys.getsizeof([1, 2, 3])` ทั้งที่ nested ชัดเจนว่าถือข้อมูลมากกว่า?",
+    q: `\`\`\`python
+nested = [[1, 2, 3] for _ in range(3)]
+print(sys.getsizeof(nested))
+\`\`\`
+ทำไมสิ่งนี้ถึง print ตัวเลขเดียวกับ \`sys.getsizeof([1, 2, 3])\` ทั้งที่ nested ชัดเจนว่าถือข้อมูลมากกว่า?`,
     options: [
       "It's a bug in sys.getsizeof",
       "sys.getsizeof only measures the container's own overhead -- it never follows pointers into the objects a container holds",

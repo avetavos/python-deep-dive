@@ -445,7 +445,14 @@ export const quizCustomErrors = [
     explain: "Python checks except clauses top to bottom and runs the first one whose type matches (via isinstance). Order matters: put more specific exception types before their broader ancestors."
   },
   {
-    q: "```python\ntry:\n    raise ValueError(\"boom\")\nexcept ValueError as e:\n    msg = str(e)\nprint(e)\n```\nWhat happens on the last line?",
+    q: `\`\`\`python
+try:
+    raise ValueError("boom")
+except ValueError as e:
+    msg = str(e)
+print(e)
+\`\`\`
+What happens on the last line?`,
     options: [
       "Prints 'boom' again",
       "Prints an empty string",
@@ -456,7 +463,13 @@ export const quizCustomErrors = [
     explain: "CPython implicitly runs `del e` when the except block exits, specifically to break a reference cycle between the exception's traceback and the frame. `e` is simply gone afterward -- reading it raises NameError."
   },
   {
-    q: "```python\ntry:\n    int(\"x\")\nexcept ValueError:\n    raise RuntimeError(\"second\")\n```\nWhat is `__context__` on the raised RuntimeError, given there is no `from` clause?",
+    q: `\`\`\`python
+try:
+    int("x")
+except ValueError:
+    raise RuntimeError("second")
+\`\`\`
+What is \`__context__\` on the raised RuntimeError, given there is no \`from\` clause?`,
     options: [
       "None -- without 'from', nothing is recorded",
       "The original ValueError -- Python records it implicitly even without 'from'",

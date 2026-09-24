@@ -404,7 +404,13 @@ export const quizLogging = [
         explain: "print writes unconditionally with no way for a caller to silence, redirect, or filter it by severity. A library that only calls logger.info/.warning/etc. lets the application configure everything (handlers, levels, formatters) centrally at its own entry point.",
     },
     {
-        q: "```python\nimport logging\nlogging.root.handlers.clear()\nlogging.info(\"dropped -- WARNING is the default threshold\")\nprint(logging.root.handlers)\n```\nWhat does the printed handlers list show, given that the message above was dropped?",
+        q: `\`\`\`python
+import logging
+logging.root.handlers.clear()
+logging.info("dropped -- WARNING is the default threshold")
+print(logging.root.handlers)
+\`\`\`
+What does the printed handlers list show, given that the message above was dropped?`,
         options: [
             "An empty list -- nothing happened since the message was dropped",
             "A list containing one StreamHandler -- logging.info() calls basicConfig() internally the moment root has no handlers, before even checking the level",
@@ -426,7 +432,17 @@ export const quizLogging = [
         explain: "Verified above: the root's handler list is unchanged after a plain basicConfig() call once a handler already exists -- not even the new format= is applied. Only basicConfig(..., force=True) removes the existing handlers first and truly reconfigures.",
     },
     {
-        q: "```python\nclass Expensive:\n    def __str__(self):\n        print(\"ran\")\n        return \"x\"\n\nlogger.setLevel(logging.WARNING)\nlogger.debug(f\"value is {Expensive()}\")\nlogger.debug(\"value is %s\", Expensive())\n```\nHow many times does \"ran\" print, and why?",
+        q: `\`\`\`python
+class Expensive:
+    def __str__(self):
+        print("ran")
+        return "x"
+
+logger.setLevel(logging.WARNING)
+logger.debug(f"value is {Expensive()}")
+logger.debug("value is %s", Expensive())
+\`\`\`
+How many times does "ran" print, and why?`,
         options: [
             "Zero times -- both calls are disabled at DEBUG level so neither ever touches Expensive()",
             "Once -- the f-string builds its string eagerly as part of evaluating the debug() call's arguments, before logging even checks the level; the %s form only stringifies if the record is actually emitted",

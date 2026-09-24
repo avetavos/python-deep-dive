@@ -368,7 +368,13 @@ This is why `True + True` evaluates to `2`.
 
 export const quizVariablesTypes = [
   {
-    q: "```python\na = [1, 2]\nb = a\nb.append(3)\nprint(a)\n```\nWhat does this print?",
+    q: `\`\`\`python
+a = [1, 2]
+b = a
+b.append(3)
+print(a)
+\`\`\`
+What does this print?`,
     options: [
       "[1, 2]",
       "[1, 2, 3]",
@@ -379,7 +385,15 @@ export const quizVariablesTypes = [
     explain: "b = a binds b to the same list object as a — no copy is made. Mutating through b (append) mutates the one shared object, so a shows the change too."
   },
   {
-    q: "```python\ndef set_volume(vol=None):\n    if vol:\n        return vol\n    return 50\n\nprint(set_volume(0))\n```\nWhat does this print?",
+    q: `\`\`\`python
+def set_volume(vol=None):
+    if vol:
+        return vol
+    return 50
+
+print(set_volume(0))
+\`\`\`
+What does this print?`,
     options: [
       "0",
       "50",
@@ -407,7 +421,11 @@ export const quizVariablesTypes = [
     explain: "list supports in-place mutation (append, sort, slice assignment, ...). tuple, frozenset, and str are all immutable — every operation on them returns a new object."
   },
   {
-    q: "```python\nlist = [1, 2, 3]\nprint(list([4, 5]))\n```\nWhat happens?",
+    q: `\`\`\`python
+list = [1, 2, 3]
+print(list([4, 5]))
+\`\`\`
+What happens?`,
     options: [
       "[4, 5]",
       "[1, 2, 3, 4, 5]",

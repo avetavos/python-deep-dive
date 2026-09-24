@@ -355,13 +355,22 @@ function นี้ดูถูกต้อง — มันสร้าง strin
 
 export const quizStrings = [
   {
-    q: "```python\ns = \"café\"\nb = s.encode(\"utf-8\")\nprint(len(s), len(b))\n```\nโค้ดนี้พิมพ์อะไร?",
+    q: `\`\`\`python
+s = "café"
+b = s.encode("utf-8")
+print(len(s), len(b))
+\`\`\`
+โค้ดนี้พิมพ์อะไร?`,
     options: ["4 4", "4 5", "5 5", "5 4"],
     answer: 1,
     explain: "len(s) นับตัวอักษร Unicode สี่ตัว ใน UTF-8 'é' encode เป็น 2 byte ในขณะที่อีกสามตัวอักษรเป็น 1 byte ต่อตัว ดังนั้น len(b) จึงเป็น 5"
   },
   {
-    q: "```python\nmessy = \"www.wow.com\"\nprint(messy.strip(\"www.\"))\n```\nโค้ดนี้พิมพ์อะไร?",
+    q: `\`\`\`python
+messy = "www.wow.com"
+print(messy.strip("www."))
+\`\`\`
+โค้ดนี้พิมพ์อะไร?`,
     options: [
       "wow.com",
       "www.wow.com",
@@ -383,7 +392,11 @@ export const quizStrings = [
     explain: "removeprefix (3.9+) เทียบ substring แบบ literal ที่จุดเริ่มต้นและลบก็ต่อเมื่อตรงกันเป๊ะ -- มันไม่เคยตีความ argument เป็น set ของตัวอักษรแบบที่ strip/lstrip ทำ"
   },
   {
-    q: "```python\nprint(str(\"a\\nb\"))\nprint(repr(\"a\\nb\"))\n```\nโค้ดนี้พิมพ์อะไร?",
+    q: `\`\`\`python
+print(str("a\\nb"))
+print(repr("a\\nb"))
+\`\`\`
+โค้ดนี้พิมพ์อะไร?`,
     options: [
       "สองบรรทัดเหมือนกัน ทั้งคู่แสดง \\n แบบ literal",
       "แรกแสดงการขึ้นบรรทัดจริง (a แล้ว b คนละบรรทัด) จากนั้น 'a\\nb' ที่เห็น escape ชัดเจน",

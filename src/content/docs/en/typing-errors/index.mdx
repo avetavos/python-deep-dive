@@ -215,7 +215,16 @@ export const quizIndex = [
     explain: "mypy and pyright are separate static analysis tools that read annotations and report inconsistencies without running the program. The typing module only supplies the names used in annotations."
   },
   {
-    q: "```python\ndef get_config(data: dict, key: str):\n    try:\n        return data[key]\n    except:\n        return None\n\nprint(get_config({}, \"port\") + 1)\n```\nWhat actually happens when this runs, and why is the -> Any-style signature part of the problem?",
+    q: `\`\`\`python
+def get_config(data: dict, key: str):
+    try:
+        return data[key]
+    except:
+        return None
+
+print(get_config({}, "port") + 1)
+\`\`\`
+What actually happens when this runs, and why is the -> Any-style signature part of the problem?`,
     options: [
       "Prints 1 -- None + 1 defaults to 1",
       "Raises TypeError: unsupported operand type(s) for +: 'NoneType' and 'int', far from the missing key that actually caused it",
@@ -237,7 +246,16 @@ export const quizIndex = [
     explain: "Type hints are inert without a checker actually reading them. Neither Python nor pytest nor the typing module enforces them at runtime -- only running mypy/pyright (ideally in CI, on every change) turns hints into an actual guarantee."
   },
   {
-    q: "```python\ndef cleanup():\n    try:\n        raise ValueError(\"boom\")\n    finally:\n        return \"done\"\n\nprint(cleanup())\n```\nWhat does this print?",
+    q: `\`\`\`python
+def cleanup():
+    try:
+        raise ValueError("boom")
+    finally:
+        return "done"
+
+print(cleanup())
+\`\`\`
+What does this print?`,
     options: [
       "Raises ValueError: boom, uncaught",
       "'done' -- the return inside finally discards the ValueError entirely",

@@ -448,7 +448,16 @@ export const quizDataclasses = [
     explain: "repr=False removes just that one field from the generated __repr__ string -- it still participates in __init__ and __eq__ unless those are separately disabled."
   },
   {
-    q: "```python\n@dataclass(frozen=True)\nclass Point:\n    x: float\n    y: float\n\np = Point(1.0, 2.0)\np.x = 5.0\n```\nWhat happens on the last line?",
+    q: `\`\`\`python
+@dataclass(frozen=True)
+class Point:
+    x: float
+    y: float
+
+p = Point(1.0, 2.0)
+p.x = 5.0
+\`\`\`
+What happens on the last line?`,
     options: [
       "p.x becomes 5.0 normally",
       "FrozenInstanceError: cannot assign to field 'x'",
@@ -459,7 +468,15 @@ export const quizDataclasses = [
     explain: "frozen=True generates a __setattr__ that raises dataclasses.FrozenInstanceError for any assignment after construction. Verified message on 3.14: \"cannot assign to field 'x'\"."
   },
   {
-    q: "```python\n@dataclass(order=True, kw_only=True)\nclass Version:\n    major: int\n    minor: int\n\nVersion(1, 2)\n```\nWhat happens?",
+    q: `\`\`\`python
+@dataclass(order=True, kw_only=True)
+class Version:
+    major: int
+    minor: int
+
+Version(1, 2)
+\`\`\`
+What happens?`,
     options: [
       "Creates Version(major=1, minor=2) normally",
       "TypeError -- kw_only=True rejects positional arguments",
@@ -470,7 +487,13 @@ export const quizDataclasses = [
     explain: "kw_only=True removes positional parameters from the generated __init__ entirely -- every field must be passed by keyword. Version(1, 2) raises TypeError: Version.__init__() takes 1 positional argument but 3 were given, and both mypy --strict and pyright reject the call statically too."
   },
   {
-    q: "```python\nperson = Person(\"Ada\", Address(\"London\"))\nsnapshot = asdict(person)\nsnapshot[\"address\"][\"city\"] = \"Paris\"\nprint(person.address.city)\n```\nWhat does this print?",
+    q: `\`\`\`python
+person = Person("Ada", Address("London"))
+snapshot = asdict(person)
+snapshot["address"]["city"] = "Paris"
+print(person.address.city)
+\`\`\`
+What does this print?`,
     options: [
       "Paris -- asdict returns references to the original nested objects",
       "London -- asdict deep-copies nested dataclasses into plain dicts",

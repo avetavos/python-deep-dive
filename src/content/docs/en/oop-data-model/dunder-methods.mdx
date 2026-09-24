@@ -494,7 +494,15 @@ export const quizDunder = [
     explain: "Arithmetic operators map directly to dunder names -- + is __add__, - is __sub__, * is __mul__, and so on."
   },
   {
-    q: "```python\nclass Item:\n    def __getitem__(self, i):\n        return [10, 20, 30][i]\n\nfor v in Item():\n    print(v)\n```\nHow does the `for` loop know when to stop?",
+    q: `\`\`\`python
+class Item:
+    def __getitem__(self, i):
+        return [10, 20, 30][i]
+
+for v in Item():
+    print(v)
+\`\`\`
+How does the \`for\` loop know when to stop?`,
     options: [
       "Python calls __getitem__ with 0, 1, 2, ... until it raises IndexError",
       "Python calls __len__ first to know how many items to fetch",
@@ -505,7 +513,16 @@ export const quizDunder = [
     explain: "With no __iter__ defined, Python's legacy iteration fallback calls __getitem__(0), __getitem__(1), ... and stops the moment one call raises IndexError. __len__ plays no role in this fallback at all."
   },
   {
-    q: "```python\nclass Thing:\n    def __eq__(self, other):\n        return True\n\nt = Thing()\nd = {}\nd[t] = 1\n```\nWhat happens?",
+    q: `\`\`\`python
+class Thing:
+    def __eq__(self, other):
+        return True
+
+t = Thing()
+d = {}
+d[t] = 1
+\`\`\`
+What happens?`,
     options: [
       "d becomes {t: 1} normally",
       "TypeError: unhashable type: 'Thing' when d[t] = 1 runs",
@@ -516,7 +533,16 @@ export const quizDunder = [
     explain: "Defining __eq__ sets __hash__ to None unless __hash__ is also defined. Thing has no __hash__, so using an instance as a dict key raises TypeError at that line."
   },
   {
-    q: "```python\nclass V:\n    def __eq__(self, other):\n        if not isinstance(other, V):\n            raise NotImplementedError\n        return True\n\nprint(V() == \"x\")\n```\nWhat does this print (or raise)?",
+    q: `\`\`\`python
+class V:
+    def __eq__(self, other):
+        if not isinstance(other, V):
+            raise NotImplementedError
+        return True
+
+print(V() == "x")
+\`\`\`
+What does this print (or raise)?`,
     options: [
       "False",
       "True",

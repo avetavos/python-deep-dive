@@ -442,7 +442,14 @@ export const quizObjectModel = [
     explain: "Every heap-allocated Python object starts with the same PyObject header: a reference count field and a pointer to the object's type. Everything type-specific (list items, int digits, an instance's own __dict__) comes after that shared header.",
   },
   {
-    q: "```python\nimport sys\nx = object()\nprint(sys.getrefcount(x))\ny = x\nprint(sys.getrefcount(x))\n```\nWhat does the first print show, and why?",
+    q: `\`\`\`python
+import sys
+x = object()
+print(sys.getrefcount(x))
+y = x
+print(sys.getrefcount(x))
+\`\`\`
+What does the first print show, and why?`,
     options: [
       "1 -- only the name x references it",
       "2 -- the name x, plus the temporary reference from passing x into getrefcount itself",
@@ -453,7 +460,13 @@ export const quizObjectModel = [
     explain: "sys.getrefcount(x) always reports at least one more than the references you'd count by hand, because passing x as an argument to getrefcount creates one more temporary reference for the duration of the call.",
   },
   {
-    q: "```python\nfor n in (-6, -5, 256, 257):\n    p = n\n    q = int(str(n))\n    print(n, p is q)\n```\nBased on CPython's small-int cache, which n values print True?",
+    q: `\`\`\`python
+for n in (-6, -5, 256, 257):
+    p = n
+    q = int(str(n))
+    print(n, p is q)
+\`\`\`
+Based on CPython's small-int cache, which n values print True?`,
     options: [
       "All four",
       "None of them",
@@ -486,7 +499,15 @@ export const quizObjectModel = [
     explain: "type called with three arguments (name, bases tuple, namespace dict) creates a new class object -- exactly what the `class` statement compiles down to internally. This is the actual mechanism frameworks use to generate classes dynamically.",
   },
   {
-    q: "```python\ndef get_status_code(value):\n    if value is 200:\n        return \"OK\"\n    return \"Unknown\"\n\nprint(get_status_code(int(input())))\n```\nWhy can this print \"Unknown\" even when the user types exactly `200`?",
+    q: `\`\`\`python
+def get_status_code(value):
+    if value is 200:
+        return "OK"
+    return "Unknown"
+
+print(get_status_code(int(input())))
+\`\`\`
+Why can this print "Unknown" even when the user types exactly \`200\`?`,
     options: [
       "int(input()) always returns a string, so the comparison never matches",
       "200 typed at a prompt is parsed into a new int object at runtime, and is compares identity -- CPython does not guarantee that a freshly-parsed int reuses the small-int cache object",

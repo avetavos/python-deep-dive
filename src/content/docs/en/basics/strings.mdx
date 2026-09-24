@@ -355,13 +355,22 @@ and call `"".join(pieces)` at the end — this is O(n) instead of O(n²).
 
 export const quizStrings = [
   {
-    q: "```python\ns = \"café\"\nb = s.encode(\"utf-8\")\nprint(len(s), len(b))\n```\nWhat does this print?",
+    q: `\`\`\`python
+s = "café"
+b = s.encode("utf-8")
+print(len(s), len(b))
+\`\`\`
+What does this print?`,
     options: ["4 4", "4 5", "5 5", "5 4"],
     answer: 1,
     explain: "len(s) counts 4 Unicode characters. In UTF-8, 'é' encodes to 2 bytes while the other three characters are 1 byte each, so len(b) is 5."
   },
   {
-    q: "```python\nmessy = \"www.wow.com\"\nprint(messy.strip(\"www.\"))\n```\nWhat does this print?",
+    q: `\`\`\`python
+messy = "www.wow.com"
+print(messy.strip("www."))
+\`\`\`
+What does this print?`,
     options: [
       "wow.com",
       "www.wow.com",
@@ -383,7 +392,11 @@ export const quizStrings = [
     explain: "removeprefix (3.9+) compares a literal substring at the start and removes it only if it matches exactly once -- it never treats the argument as a set of characters the way strip/lstrip do."
   },
   {
-    q: "```python\nprint(str(\"a\\nb\"))\nprint(repr(\"a\\nb\"))\n```\nWhat does this print?",
+    q: `\`\`\`python
+print(str("a\\nb"))
+print(repr("a\\nb"))
+\`\`\`
+What does this print?`,
     options: [
       "Two identical lines, both showing a literal \\n",
       "First an actual line break (a then b on separate lines), then 'a\\nb' with the escape visible",

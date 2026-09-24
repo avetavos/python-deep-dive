@@ -566,7 +566,13 @@ export const quizStdlibTour = [
         explain: "strftime รับ format string (เช่น '%Y-%m-%d') สำหรับ output แบบกำหนดเอง isoformat() ก็เป็นเมธอดจริงเช่นกัน แต่ให้แค่รูปแบบ ISO 8601 ที่ตายตัว ไม่ใช่ format ใดก็ได้"
     },
     {
-        q: "```python\nimport datetime as dt\nnaive = dt.datetime(2026, 9, 22, 10, 0)\naware = dt.datetime(2026, 9, 22, 10, 0, tzinfo=dt.timezone.utc)\nnaive - aware\n```\nเกิดอะไรขึ้น?",
+        q: `\`\`\`python
+import datetime as dt
+naive = dt.datetime(2026, 9, 22, 10, 0)
+aware = dt.datetime(2026, 9, 22, 10, 0, tzinfo=dt.timezone.utc)
+naive - aware
+\`\`\`
+เกิดอะไรขึ้น?`,
         options: [
             "คืน timedelta เป็น 0",
             "TypeError -- can't subtract offset-naive and offset-aware datetimes",
@@ -577,7 +583,12 @@ export const quizStdlibTour = [
         explain: "Python ปฏิเสธที่จะเดาว่า naive datetime หมายถึง UTC หรือเวลาท้องถิ่น ดังนั้นการเปรียบเทียบหรือลบระหว่าง naive กับ aware datetime จะ raise TypeError เสมอ ยืนยันข้อความจริง: \"can't subtract offset-naive and offset-aware datetimes\"",
     },
     {
-        q: "```python\nimport subprocess\nfilename = \"notes.txt; echo INJECTED\"\nsubprocess.run(f\"ls {filename}\", shell=True)\n```\noutput จริงมีอะไรรวมอยู่ด้วย?",
+        q: `\`\`\`python
+import subprocess
+filename = "notes.txt; echo INJECTED"
+subprocess.run(f"ls {filename}", shell=True)
+\`\`\`
+output จริงมีอะไรรวมอยู่ด้วย?`,
         options: [
             "มีแค่ error ว่าไม่พบ notes.txt",
             "บรรทัดที่มีคำว่า INJECTED -- shell รันคำสั่งที่สองหลังเครื่องหมาย semicolon",

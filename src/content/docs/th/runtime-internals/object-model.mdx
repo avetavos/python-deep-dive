@@ -442,7 +442,14 @@ export const quizObjectModel = [
     explain: "Python object ทุกตัวที่ allocate บน heap ขึ้นต้นด้วย PyObject header เดียวกัน: ฟิลด์ reference count กับ pointer ไปยัง type ของ object นั้น ส่วนที่เฉพาะแต่ละ type (element ของ list, หลักเลขของ int, __dict__ ของ instance เอง) มาต่อจาก header ที่ใช้ร่วมกันนี้",
   },
   {
-    q: "```python\nimport sys\nx = object()\nprint(sys.getrefcount(x))\ny = x\nprint(sys.getrefcount(x))\n```\nการ print ครั้งแรกแสดงอะไร และเพราะอะไร?",
+    q: `\`\`\`python
+import sys
+x = object()
+print(sys.getrefcount(x))
+y = x
+print(sys.getrefcount(x))
+\`\`\`
+การ print ครั้งแรกแสดงอะไร และเพราะอะไร?`,
     options: [
       "1 -- only the name x references it",
       "2 -- the name x, plus the temporary reference from passing x into getrefcount itself",
@@ -453,7 +460,13 @@ export const quizObjectModel = [
     explain: "sys.getrefcount(x) รายงานค่ามากกว่าจำนวน reference ที่นับด้วยมือเสมออย่างน้อยหนึ่ง เพราะการส่ง x เป็น argument เข้าไปใน getrefcount เองก็สร้าง reference ชั่วคราวเพิ่มอีกหนึ่งตัวตลอดช่วงที่ call กำลังทำงาน",
   },
   {
-    q: "```python\nfor n in (-6, -5, 256, 257):\n    p = n\n    q = int(str(n))\n    print(n, p is q)\n```\nอิงจาก small-int cache ของ CPython ค่า n ไหนที่ print True?",
+    q: `\`\`\`python
+for n in (-6, -5, 256, 257):
+    p = n
+    q = int(str(n))
+    print(n, p is q)
+\`\`\`
+อิงจาก small-int cache ของ CPython ค่า n ไหนที่ print True?`,
     options: [
       "All four",
       "None of them",
@@ -486,7 +499,15 @@ export const quizObjectModel = [
     explain: "type ที่เรียกด้วยสามอาร์กิวเมนต์ (name, bases tuple, namespace dict) สร้าง class object ใหม่ — สิ่งที่ statement class คอมไพล์ลงไปข้างในเป๊ะ ๆ นี่คือกลไกจริงที่เฟรมเวิร์กใช้สร้าง class แบบ dynamic",
   },
   {
-    q: "```python\ndef get_status_code(value):\n    if value is 200:\n        return \"OK\"\n    return \"Unknown\"\n\nprint(get_status_code(int(input())))\n```\nทำไมโค้ดนี้ถึง print \"Unknown\" ได้ แม้ผู้ใช้จะพิมพ์ `200` เป๊ะ ๆ?",
+    q: `\`\`\`python
+def get_status_code(value):
+    if value is 200:
+        return "OK"
+    return "Unknown"
+
+print(get_status_code(int(input())))
+\`\`\`
+ทำไมโค้ดนี้ถึง print "Unknown" ได้ แม้ผู้ใช้จะพิมพ์ \`200\` เป๊ะ ๆ?`,
     options: [
       "int(input()) always returns a string, so the comparison never matches",
       "200 typed at a prompt is parsed into a new int object at runtime, and is compares identity -- CPython does not guarantee that a freshly-parsed int reuses the small-int cache object",

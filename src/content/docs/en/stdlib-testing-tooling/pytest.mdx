@@ -697,7 +697,11 @@ export const quizPytest = [
         explain: "parametrize generates one test invocation per tuple of arguments supplied, keeping the test body DRY while covering many cases.",
     },
     {
-        q: "```python\nwith patch(\"requests.get\", return_value=fake):\n    weather.get_temperature_wrong_target(\"bkk\")\n```\n`weather.py` has `from requests import get as _get` and calls `_get(...)`. What actually happens?",
+        q: `\`\`\`python
+with patch("requests.get", return_value=fake):
+    weather.get_temperature_wrong_target("bkk")
+\`\`\`
+\`weather.py\` has \`from requests import get as _get\` and calls \`_get(...)\`. What actually happens?`,
         options: [
             "The mock intercepts the call normally",
             "A ConnectionError is raised -- the real requests.get runs because patching requests.get never touched weather's own _get reference",
@@ -708,7 +712,13 @@ export const quizPytest = [
         explain: "from requests import get as _get binds a name into weather's own namespace at import time. Patching the attribute on the requests module afterwards does not change weather._get -- the real (unmocked) network call fires and fails to connect. Verified: pytest.raises(requests.exceptions.ConnectionError) passes here.",
     },
     {
-        q: "```python\ndef test_plain_magicmock_hides_the_typo():\n    fake_account = MagicMock()\n    send_notification(fake_account, \"hi\")   # calls fake_account.notify(...)\n    fake_account.notify.assert_called_once_with(\"hi\")\n```\n`Account` only has `withdraw`/`deposit`, no `notify`. Does this test pass?",
+        q: `\`\`\`python
+def test_plain_magicmock_hides_the_typo():
+    fake_account = MagicMock()
+    send_notification(fake_account, "hi")   # calls fake_account.notify(...)
+    fake_account.notify.assert_called_once_with("hi")
+\`\`\`
+\`Account\` only has \`withdraw\`/\`deposit\`, no \`notify\`. Does this test pass?`,
         options: [
             "No -- MagicMock raises AttributeError for undefined methods",
             "Yes -- a plain MagicMock invents any attribute you access, so the typo is never caught",
@@ -730,7 +740,15 @@ export const quizPytest = [
         explain: "Coverage measures execution, not verification. The pricing.py demo in this lesson has 100% coverage and a real bug (discount applied 100x too small) because both tests use assertions too weak to notice the wrong numeric result.",
     },
     {
-        q: "```python\n@given(st.integers(), st.integers(), st.integers())\ndef test_clamp_result_is_always_within_bounds(value, low, high):\n    if low > high:\n        return\n    result = clamp(value, low, high)\n    assert low <= result <= high\n```\nWhat does hypothesis do when this test fails?",
+        q: `\`\`\`python
+@given(st.integers(), st.integers(), st.integers())
+def test_clamp_result_is_always_within_bounds(value, low, high):
+    if low > high:
+        return
+    result = clamp(value, low, high)
+    assert low <= result <= high
+\`\`\`
+What does hypothesis do when this test fails?`,
         options: [
             "It reports the failure with a random large input and stops",
             "It automatically shrinks the failing input to the smallest reproducing case it can find",

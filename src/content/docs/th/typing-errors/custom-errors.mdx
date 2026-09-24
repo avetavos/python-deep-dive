@@ -440,7 +440,14 @@ export const quizCustomErrors = [
     explain: "Python เช็ค except clause จากบนลงล่างและรัน clause แรกที่ type ตรงกัน (ผ่าน isinstance) ลำดับสำคัญ: วาง exception type ที่เจาะจงกว่าไว้ก่อน ancestor ที่กว้างกว่าเสมอ"
   },
   {
-    q: "```python\ntry:\n    raise ValueError(\"boom\")\nexcept ValueError as e:\n    msg = str(e)\nprint(e)\n```\nบรรทัดสุดท้ายจะเกิดอะไรขึ้น?",
+    q: `\`\`\`python
+try:
+    raise ValueError("boom")
+except ValueError as e:
+    msg = str(e)
+print(e)
+\`\`\`
+บรรทัดสุดท้ายจะเกิดอะไรขึ้น?`,
     options: [
       "พิมพ์ 'boom' อีกครั้ง",
       "พิมพ์ string ว่าง",
@@ -451,7 +458,13 @@ export const quizCustomErrors = [
     explain: "CPython รัน `del e` แบบ implicit เมื่อ except block จบ โดยเฉพาะเพื่อตัด reference cycle ระหว่าง traceback ของ exception กับ frame `e` หายไปหลังจากนั้น -- การอ่านมัน raise NameError"
   },
   {
-    q: "```python\ntry:\n    int(\"x\")\nexcept ValueError:\n    raise RuntimeError(\"second\")\n```\n`__context__` ของ RuntimeError ที่ raise ออกมาคืออะไร เมื่อไม่มี clause `from`?",
+    q: `\`\`\`python
+try:
+    int("x")
+except ValueError:
+    raise RuntimeError("second")
+\`\`\`
+\`__context__\` ของ RuntimeError ที่ raise ออกมาคืออะไร เมื่อไม่มี clause \`from\`?`,
     options: [
       "None -- ถ้าไม่มี 'from' จะไม่มีอะไรถูกบันทึก",
       "ValueError เดิม -- Python บันทึกมันแบบ implicit แม้ไม่มี 'from'",

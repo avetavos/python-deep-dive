@@ -970,7 +970,15 @@ export const quizTypeHints = [
     explain: "str | None คือ syntax ตาม PEP 604 ส่วน Optional[str] และ Union[str, None] คือรูปแบบเก่าที่เทียบเท่ากัน"
   },
   {
-    q: "```python\ndef describe(count: int | None) -> str:\n    if count:\n        return f\"count={count}\"\n    return \"no count\"\n\nprint(describe(0))\n```\nโค้ดนี้พิมพ์อะไร และทำไมถึงเป็น bug?",
+    q: `\`\`\`python
+def describe(count: int | None) -> str:
+    if count:
+        return f"count={count}"
+    return "no count"
+
+print(describe(0))
+\`\`\`
+โค้ดนี้พิมพ์อะไร และทำไมถึงเป็น bug?`,
     options: [
       "'count=0' -- ถูกต้อง เพราะส่ง 0 เข้าไป",
       "'no count' -- if count: ถือว่า 0 เป็น falsy ไม่ใช่แค่ None",
@@ -1003,7 +1011,11 @@ export const quizTypeHints = [
     explain: "cast ไม่ทำงานอะไรตอน runtime เลย มันมีไว้แค่บอก checker ให้ถือว่า value เป็น type ที่ระบุนับจากจุดนั้นไป ถ้า claim นั้นผิด checker จะเงียบและโปรแกรมอาจ crash ทีหลังมาก"
   },
   {
-    q: "```python\ndef is_int_guard(val: object) -> TypeGuard[int]: ...\ndef is_int_is(val: int | str) -> TypeIs[int]: ...\n```\nหลัง `if is_int_is(val): ... else: ...` checker infer type ของ `val` ใน branch `else` เป็นอะไร (val เดิมเป็น `int | str`)?",
+    q: `\`\`\`python
+def is_int_guard(val: object) -> TypeGuard[int]: ...
+def is_int_is(val: int | str) -> TypeIs[int]: ...
+\`\`\`
+หลัง \`if is_int_is(val): ... else: ...\` checker infer type ของ \`val\` ใน branch \`else\` เป็นอะไร (val เดิมเป็น \`int | str\`)?`,
     options: [
       "int | str -- TypeIs ไม่เคย narrow branch else",
       "str -- TypeIs narrow branch negative ให้ตัด int ออก",

@@ -756,7 +756,20 @@ export const quizAsyncAwait = [
     explain: "เอกสารทางการของ asyncio เตือนว่า task ที่ไม่มี reference อื่นอาจถูก garbage collect เมื่อไหร่ก็ได้ แม้ก่อนที่มันจะเสร็จ demo สั้นๆ มักรอดเพราะ scheduling ภายในของ loop บังเอิญเก็บมันไว้ แต่นั่นเป็นรายละเอียด implementation ไม่ใช่การรับประกัน -- เก็บ reference เสมอ (set, ตัวแปร, หรือ TaskGroup)"
   },
   {
-    q: "```python\nasync def worker(label, delay, fail):\n    await asyncio.sleep(delay)\n    if fail:\n        raise ValueError(label)\n    return label\n\nasync def main():\n    async with asyncio.TaskGroup() as tg:\n        tg.create_task(worker(\"A\", 0.05, False))\n        tg.create_task(worker(\"B\", 0.01, True))\n        tg.create_task(worker(\"C\", 0.2, False))\n```\nเกิดอะไรขึ้นกับ task C เมื่อ B raise?",
+    q: `\`\`\`python
+async def worker(label, delay, fail):
+    await asyncio.sleep(delay)
+    if fail:
+        raise ValueError(label)
+    return label
+
+async def main():
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(worker("A", 0.05, False))
+        tg.create_task(worker("B", 0.01, True))
+        tg.create_task(worker("C", 0.2, False))
+\`\`\`
+เกิดอะไรขึ้นกับ task C เมื่อ B raise?`,
     options: [
       "C รันจนจบไม่ว่า B จะ fail หรือไม่",
       "TaskGroup ยกเลิก C ทันทีที่เห็น exception ของ B ก่อนที่ delay เต็มของ C จะผ่านไป",
@@ -778,7 +791,22 @@ export const quizAsyncAwait = [
     explain: "time.sleep เป็น blocking call จริงๆ -- มันไม่คืนการควบคุมให้ event loop แบบที่ asyncio.sleep ทำ เพราะ event loop รันบนเธรดเดียว เธรดนั้นจึงใช้รัน coroutine อื่นไม่ได้เลยตลอดระยะเวลานั้น asyncio.to_thread (หรือ run_in_executor) คือทางแก้สำหรับ blocking call ที่แทนที่ด้วย async เทียบเท่าไม่ได้"
   },
   {
-    q: "```python\nclass Account:\n    def __init__(self, balance):\n        self.balance = balance\n\nasync def withdraw(acct, amount):\n    if acct.balance >= amount:\n        await asyncio.sleep(0)\n        acct.balance -= amount\n\nasync def main():\n    acct = Account(100)\n    await asyncio.gather(withdraw(acct, 80), withdraw(acct, 80))\n    print(acct.balance)\n```\nโค้ดนี้พิมพ์อะไร และเพราะอะไร?",
+    q: `\`\`\`python
+class Account:
+    def __init__(self, balance):
+        self.balance = balance
+
+async def withdraw(acct, amount):
+    if acct.balance >= amount:
+        await asyncio.sleep(0)
+        acct.balance -= amount
+
+async def main():
+    acct = Account(100)
+    await asyncio.gather(withdraw(acct, 80), withdraw(acct, 80))
+    print(acct.balance)
+\`\`\`
+โค้ดนี้พิมพ์อะไร และเพราะอะไร?`,
     options: [
       "20 -- การถอนครั้งที่สองเห็น balance ที่ลดแล้วถูกต้อง",
       "-60 -- ทั้งสอง coroutine อ่าน balance=100 ก่อนที่ตัวใดตัวหนึ่งจะเขียนค่าใหม่",

@@ -379,7 +379,13 @@ export const namesDiagram = `flowchart LR
 
 export const quizVariablesTypes = [
   {
-    q: "```python\na = [1, 2]\nb = a\nb.append(3)\nprint(a)\n```\nโค้ดนี้พิมพ์อะไร?",
+    q: `\`\`\`python
+a = [1, 2]
+b = a
+b.append(3)
+print(a)
+\`\`\`
+โค้ดนี้พิมพ์อะไร?`,
     options: [
       "[1, 2]",
       "[1, 2, 3]",
@@ -390,7 +396,15 @@ export const quizVariablesTypes = [
     explain: "b = a ผูก b เข้ากับ list object ตัวเดียวกับ a ไม่มีการคัดลอกเกิดขึ้น การแก้ไขผ่าน b (append) แก้ object ที่ใช้ร่วมกันตัวเดียว ดังนั้น a จึงเห็นการเปลี่ยนแปลงด้วย"
   },
   {
-    q: "```python\ndef set_volume(vol=None):\n    if vol:\n        return vol\n    return 50\n\nprint(set_volume(0))\n```\nโค้ดนี้พิมพ์อะไร?",
+    q: `\`\`\`python
+def set_volume(vol=None):
+    if vol:
+        return vol
+    return 50
+
+print(set_volume(0))
+\`\`\`
+โค้ดนี้พิมพ์อะไร?`,
     options: [
       "0",
       "50",
@@ -418,7 +432,11 @@ export const quizVariablesTypes = [
     explain: "list รองรับการแก้ไขในที่ (append, sort, slice assignment, ...) ส่วน tuple, frozenset, และ str ล้วน immutable — ทุก operation บนมันคืน object ใหม่เสมอ"
   },
   {
-    q: "```python\nlist = [1, 2, 3]\nprint(list([4, 5]))\n```\nจะเกิดอะไรขึ้น?",
+    q: `\`\`\`python
+list = [1, 2, 3]
+print(list([4, 5]))
+\`\`\`
+จะเกิดอะไรขึ้น?`,
     options: [
       "[4, 5]",
       "[1, 2, 3, 4, 5]",

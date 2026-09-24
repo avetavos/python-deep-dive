@@ -218,7 +218,14 @@ export const quizOopIndex = [
     explain: "Integers, strings, functions, and classes are all objects in Python -- type(42), type(print), and type(int) all return real classes, confirming there's no special non-object category."
   },
   {
-    q: "```python\nclass Point:\n    pass\n\nprint(type(Point))\nprint(type(type(Point)))\n```\nWhat does this print?",
+    q: `\`\`\`python
+class Point:
+    pass
+
+print(type(Point))
+print(type(type(Point)))
+\`\`\`
+What does this print?`,
     options: [
       "<class 'Point'> then <class 'Point'>",
       "<class 'type'> then <class 'type'>",
@@ -229,7 +236,19 @@ export const quizOopIndex = [
     explain: "Point is itself an object whose type is the metaclass type. type is its own type too (type(type) is type), so both lines print <class 'type'>."
   },
   {
-    q: "```python\nclass Base:\n    def __init__(self):\n        self.ready = True\n\nclass Broken(Base):\n    def __init__(self, name):\n        self.name = name\n\nb = Broken(\"x\")\nprint(b.ready)\n```\nWhat happens on the last line?",
+    q: `\`\`\`python
+class Base:
+    def __init__(self):
+        self.ready = True
+
+class Broken(Base):
+    def __init__(self, name):
+        self.name = name
+
+b = Broken("x")
+print(b.ready)
+\`\`\`
+What happens on the last line?`,
     options: [
       "Prints True",
       "Prints None",

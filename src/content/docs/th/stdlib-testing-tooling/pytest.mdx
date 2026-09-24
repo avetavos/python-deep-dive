@@ -697,7 +697,11 @@ export const quizPytest = [
         explain: "parametrize สร้าง test invocation หนึ่งตัวต่อหนึ่ง tuple ของ argument ที่ให้มา ทำให้ตัวเทสกระชับในขณะที่ครอบคลุมหลายกรณี",
     },
     {
-        q: "```python\nwith patch(\"requests.get\", return_value=fake):\n    weather.get_temperature_wrong_target(\"bkk\")\n```\n`weather.py` มี `from requests import get as _get` และเรียก `_get(...)` เกิดอะไรขึ้นจริง?",
+        q: `\`\`\`python
+with patch("requests.get", return_value=fake):
+    weather.get_temperature_wrong_target("bkk")
+\`\`\`
+\`weather.py\` มี \`from requests import get as _get\` และเรียก \`_get(...)\` เกิดอะไรขึ้นจริง?`,
         options: [
             "mock intercept การเรียกตามปกติ",
             "เกิด ConnectionError -- requests.get ตัวจริงถูกเรียก เพราะ patch requests.get ไม่เคยแตะ _get ของ weather เอง",
@@ -708,7 +712,13 @@ export const quizPytest = [
         explain: "from requests import get as _get ผูกชื่อเข้ากับ namespace ของ weather เองตอน import การ patch attribute บนโมดูล requests ทีหลังไม่เปลี่ยน weather._get -- การเรียกเครือข่ายจริง (ที่ไม่ได้ถูก mock) จึงทำงานและเชื่อมต่อไม่สำเร็จ ยืนยันแล้ว: pytest.raises(requests.exceptions.ConnectionError) ผ่านที่นี่",
     },
     {
-        q: "```python\ndef test_plain_magicmock_hides_the_typo():\n    fake_account = MagicMock()\n    send_notification(fake_account, \"hi\")   # calls fake_account.notify(...)\n    fake_account.notify.assert_called_once_with(\"hi\")\n```\n`Account` มีแค่ `withdraw`/`deposit` ไม่มี `notify` เทสนี้ผ่านไหม?",
+        q: `\`\`\`python
+def test_plain_magicmock_hides_the_typo():
+    fake_account = MagicMock()
+    send_notification(fake_account, "hi")   # calls fake_account.notify(...)
+    fake_account.notify.assert_called_once_with("hi")
+\`\`\`
+\`Account\` มีแค่ \`withdraw\`/\`deposit\` ไม่มี \`notify\` เทสนี้ผ่านไหม?`,
         options: [
             "ไม่ -- MagicMock raise AttributeError สำหรับเมธอดที่ไม่ได้นิยาม",
             "ผ่าน -- MagicMock ธรรมดาสร้าง attribute อะไรก็ได้ที่ถูกเข้าถึง จึงไม่มีวันจับการพิมพ์ผิดได้",
@@ -730,7 +740,15 @@ export const quizPytest = [
         explain: "Coverage วัดการรัน ไม่ใช่การตรวจสอบ ตัวอย่าง pricing.py ในบทนี้มี coverage 100% และมี bug จริง (ส่วนลดถูกคำนวณน้อยไป 100 เท่า) เพราะเทสทั้งสองใช้ assertion ที่อ่อนเกินกว่าจะสังเกตค่าตัวเลขที่ผิด",
     },
     {
-        q: "```python\n@given(st.integers(), st.integers(), st.integers())\ndef test_clamp_result_is_always_within_bounds(value, low, high):\n    if low > high:\n        return\n    result = clamp(value, low, high)\n    assert low <= result <= high\n```\nhypothesis ทำอะไรเมื่อเทสนี้ล้มเหลว?",
+        q: `\`\`\`python
+@given(st.integers(), st.integers(), st.integers())
+def test_clamp_result_is_always_within_bounds(value, low, high):
+    if low > high:
+        return
+    result = clamp(value, low, high)
+    assert low <= result <= high
+\`\`\`
+hypothesis ทำอะไรเมื่อเทสนี้ล้มเหลว?`,
         options: [
             "รายงานความล้มเหลวด้วย input สุ่มขนาดใหญ่แล้วหยุด",
             "ย่อ (shrink) input ที่ล้มเหลวลงเหลือกรณีที่เล็กที่สุดที่ยัง reproduce ได้โดยอัตโนมัติ",

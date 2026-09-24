@@ -376,7 +376,15 @@ Python จะคืน `None` โดยอัตโนมัติ
 
 export const quizFunctions = [
   {
-    q: "```python\ndef add_item(item, items=[]):\n    items.append(item)\n    return items\n\nprint(add_item(\"a\"))\nprint(add_item(\"b\"))\n```\nโค้ดนี้พิมพ์อะไร?",
+    q: `\`\`\`python
+def add_item(item, items=[]):
+    items.append(item)
+    return items
+
+print(add_item("a"))
+print(add_item("b"))
+\`\`\`
+โค้ดนี้พิมพ์อะไร?`,
     options: [
       "['a']\n['b']",
       "['a']\n['a', 'b']",
@@ -387,7 +395,16 @@ export const quizFunctions = [
     explain: "list ค่าเริ่มต้นถูกสร้างครั้งเดียวตอน def และใช้ร่วมกันทุกครั้งที่เรียกโดยไม่ส่ง items มา การเรียกครั้งที่สองต่อเข้าไปใน list เดิมที่ครั้งแรกแก้ไปแล้ว"
   },
   {
-    q: "```python\ncounter = 0\n\ndef increment():\n    counter += 1\n    return counter\n\nincrement()\n```\nจะเกิดอะไรขึ้น?",
+    q: `\`\`\`python
+counter = 0
+
+def increment():
+    counter += 1
+    return counter
+
+increment()
+\`\`\`
+จะเกิดอะไรขึ้น?`,
     options: [
       "คืนค่า 0",
       "คืนค่า 1",
@@ -409,7 +426,11 @@ export const quizFunctions = [
     explain: "ค่าเริ่มต้นถูกคำนวณครั้งเดียวตอน def รันและสร้าง function object ไม่ใช่ทุกครั้งที่เรียก -- นี่คือเหตุผลที่ mutable default และ default แบบ datetime.now() ถึง freeze"
   },
   {
-    q: "```python\ndef power(base, /, exponent=2):\n    return base ** exponent\n```\nการเรียกแบบไหน raise TypeError?",
+    q: `\`\`\`python
+def power(base, /, exponent=2):
+    return base ** exponent
+\`\`\`
+การเรียกแบบไหน raise TypeError?`,
     options: [
       "power(3)",
       "power(3, 4)",
@@ -426,7 +447,15 @@ export const quizFunctions = [
     explain: "int ไม่มี method __call__ จึงเรียกด้วย () ไม่ได้ callable() คืน False สำหรับข้อมูลธรรมดาอย่างตัวเลขหรือ string"
   },
   {
-    q: "```python\ndef total(*args, **kwargs):\n    return sum(args) + sum(kwargs.values())\n\nnumbers = [1, 2, 3]\nextra = {\"bonus\": 10}\nprint(total(*numbers, **extra))\n```\nโค้ดนี้พิมพ์อะไร?",
+    q: `\`\`\`python
+def total(*args, **kwargs):
+    return sum(args) + sum(kwargs.values())
+
+numbers = [1, 2, 3]
+extra = {"bonus": 10}
+print(total(*numbers, **extra))
+\`\`\`
+โค้ดนี้พิมพ์อะไร?`,
     options: ["16", "TypeError", "6", "[1, 2, 3, 10]"],
     answer: 0,
     explain: "*numbers กระจาย [1, 2, 3] เป็น positional argument สามตัวที่ *args เก็บไว้ **extra กระจาย {'bonus': 10} เป็น keyword argument ที่ **kwargs เก็บไว้ sum((1,2,3)) + sum((10,)) เท่ากับ 16"

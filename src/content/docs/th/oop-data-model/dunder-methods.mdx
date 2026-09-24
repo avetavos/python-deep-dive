@@ -494,7 +494,15 @@ export const quizDunder = [
     explain: "Arithmetic operator ผูกกับชื่อ dunder โดยตรง -- + คือ __add__, - คือ __sub__, * คือ __mul__ และต่อไปตามนี้"
   },
   {
-    q: "```python\nclass Item:\n    def __getitem__(self, i):\n        return [10, 20, 30][i]\n\nfor v in Item():\n    print(v)\n```\n`for` loop รู้ได้อย่างไรว่าเมื่อไหร่ควรหยุด?",
+    q: `\`\`\`python
+class Item:
+    def __getitem__(self, i):
+        return [10, 20, 30][i]
+
+for v in Item():
+    print(v)
+\`\`\`
+\`for\` loop รู้ได้อย่างไรว่าเมื่อไหร่ควรหยุด?`,
     options: [
       "Python เรียก __getitem__ ด้วย 0, 1, 2, ... จนกว่าจะ raise IndexError",
       "Python เรียก __len__ ก่อนเพื่อรู้จำนวน item ที่ต้องดึง",
@@ -505,7 +513,16 @@ export const quizDunder = [
     explain: "เมื่อไม่มี __iter__ กำหนดไว้ legacy iteration fallback ของ Python จะเรียก __getitem__(0), __getitem__(1), ... และหยุดทันทีที่มีการเรียกใดเรียกหนึ่ง raise IndexError __len__ ไม่มีบทบาทใน fallback นี้เลย"
   },
   {
-    q: "```python\nclass Thing:\n    def __eq__(self, other):\n        return True\n\nt = Thing()\nd = {}\nd[t] = 1\n```\nเกิดอะไรขึ้น?",
+    q: `\`\`\`python
+class Thing:
+    def __eq__(self, other):
+        return True
+
+t = Thing()
+d = {}
+d[t] = 1
+\`\`\`
+เกิดอะไรขึ้น?`,
     options: [
       "d กลายเป็น {t: 1} ตามปกติ",
       "TypeError: unhashable type: 'Thing' ตอน d[t] = 1 รัน",
@@ -516,7 +533,16 @@ export const quizDunder = [
     explain: "การกำหนด __eq__ ทำให้ __hash__ เป็น None เว้นแต่จะกำหนด __hash__ ด้วย Thing ไม่มี __hash__ ดังนั้นการเอา instance ไปเป็น dict key จึง raise TypeError ที่บรรทัดนั้น"
   },
   {
-    q: "```python\nclass V:\n    def __eq__(self, other):\n        if not isinstance(other, V):\n            raise NotImplementedError\n        return True\n\nprint(V() == \"x\")\n```\nโค้ดนี้พิมพ์ (หรือ raise) อะไร?",
+    q: `\`\`\`python
+class V:
+    def __eq__(self, other):
+        if not isinstance(other, V):
+            raise NotImplementedError
+        return True
+
+print(V() == "x")
+\`\`\`
+โค้ดนี้พิมพ์ (หรือ raise) อะไร?`,
     options: [
       "False",
       "True",

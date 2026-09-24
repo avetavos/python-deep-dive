@@ -693,7 +693,22 @@ export const quizExceptions = [
     explain: "The new exception's __cause__ attribute is set to `original`, and Python prints both tracebacks chained together. Use `from None` instead to discard the cause entirely."
   },
   {
-    q: "```python\ndef a():\n    b()\ndef b():\n    raise ValueError(\"x\")\n\ndef reraise_bare():\n    try:\n        a()\n    except ValueError:\n        raise\n\ndef reraise_e(err):\n    raise err\n```\nCompared to calling `reraise_bare()`, what happens to the traceback frame count when catching from `a()` and calling `reraise_e(caught)` instead?",
+    q: `\`\`\`python
+def a():
+    b()
+def b():
+    raise ValueError("x")
+
+def reraise_bare():
+    try:
+        a()
+    except ValueError:
+        raise
+
+def reraise_e(err):
+    raise err
+\`\`\`
+Compared to calling \`reraise_bare()\`, what happens to the traceback frame count when catching from \`a()\` and calling \`reraise_e(caught)\` instead?`,
     options: [
       "Identical frame count -- raise and raise e are the same",
       "One fewer frame, since raise e skips the original call site",
@@ -704,7 +719,17 @@ export const quizExceptions = [
     explain: "Bare `raise` re-raises the exact same exception with its original traceback, adding nothing. `raise err` (or `raise e`) adds a new frame for the line where it is called, even though the exception object is the same one."
   },
   {
-    q: "```python\ndef risky_lookup(data, key):\n    try:\n        return data[key]\n    except:\n        pass\n    return -1\n\nprint(risky_lookup(None, \"x\"))\n```\nWhat does this print, and why is it dangerous?",
+    q: `\`\`\`python
+def risky_lookup(data, key):
+    try:
+        return data[key]
+    except:
+        pass
+    return -1
+
+print(risky_lookup(None, "x"))
+\`\`\`
+What does this print, and why is it dangerous?`,
     options: [
       "Raises TypeError, since None is not subscriptable",
       "-1 -- the bare except: also swallows the TypeError from indexing None, not just a missing key",

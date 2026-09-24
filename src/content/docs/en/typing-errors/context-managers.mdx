@@ -433,7 +433,18 @@ export const quizContextManagers = [
     explain: "__exit__ runs unconditionally after the with body, receiving (None, None, None) on a normal exit or the exception info when one was raised."
   },
   {
-    q: "```python\nclass CM:\n    def __enter__(self):\n        return self\n    def __exit__(self, exc_type, exc, tb):\n        return True\n\nwith CM():\n    raise ValueError(\"x\")\nprint(\"after\")\n```\nWhat does this print?",
+    q: `\`\`\`python
+class CM:
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc, tb):
+        return True
+
+with CM():
+    raise ValueError("x")
+print("after")
+\`\`\`
+What does this print?`,
     options: [
       "Raises ValueError: x, uncaught",
       "'after' -- the ValueError is silently suppressed because __exit__ returns True",
@@ -455,7 +466,12 @@ export const quizContextManagers = [
     explain: "enter_context both enters the context manager right away and schedules its exit for when the enclosing ExitStack itself exits, unwinding all registered managers in LIFO order."
   },
   {
-    q: "```python\nwith contextlib.ExitStack() as stack:\n    stack.callback(print, \"first\")\n    stack.enter_context(managed_resource(\"r\"))\n```\nWhen the with block exits, in what order do the callback and the resource's cleanup run?",
+    q: `\`\`\`python
+with contextlib.ExitStack() as stack:
+    stack.callback(print, "first")
+    stack.enter_context(managed_resource("r"))
+\`\`\`
+When the with block exits, in what order do the callback and the resource's cleanup run?`,
     options: [
       "The callback runs first, since it was registered first",
       "The resource's cleanup runs first, since it was registered last -- ExitStack unwinds LIFO",

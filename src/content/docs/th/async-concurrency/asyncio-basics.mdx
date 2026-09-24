@@ -346,8 +346,8 @@ asyncio.run(main())
 แล้วพิมพ์ task tree ออกมาได้เลย ไม่ต้องใส่ instrument ไม่ต้อง restart:
 
 ```bash
-python -m asyncio ps 12345      # ตาราง task แบบแบนใน PID 12345
-python -m asyncio pstree 12345  # ต้นไม้ของ await
+python -m asyncio ps 12345      # flat table of tasks in PID 12345
+python -m asyncio pstree 12345  # the await tree
 ```
 
 ความสามารถนี้ต่อยอดจาก external debugger interface ของ PEP 768 ซึ่งทำให้ `python -m pdb -p 12345`
@@ -556,7 +556,20 @@ export const quizAsyncioBasics = [
     explain: "asyncio.run(coro) สร้าง event loop ใหม่ ขับ coroutine จนเสร็จ แล้วปิด loop -- เป็น entry point มาตรฐานเรียกครั้งเดียวสำหรับโปรแกรม async ใน Python 3.7+"
   },
   {
-    q: "```python\nasync def fetch(label, delay):\n    await asyncio.sleep(delay)\n    return label\n\nasync def main():\n    results = []\n    for label, delay in [(\"A\", 0.2), (\"B\", 0.2), (\"C\", 0.2)]:\n        results.append(await fetch(label, delay))\n    print(results)\n\nasyncio.run(main())\n```\nใช้เวลาประมาณเท่าไหร่ และเพราะอะไร?",
+    q: `\`\`\`python
+async def fetch(label, delay):
+    await asyncio.sleep(delay)
+    return label
+
+async def main():
+    results = []
+    for label, delay in [("A", 0.2), ("B", 0.2), ("C", 0.2)]:
+        results.append(await fetch(label, delay))
+    print(results)
+
+asyncio.run(main())
+\`\`\`
+ใช้เวลาประมาณเท่าไหร่ และเพราะอะไร?`,
     options: [
       "~0.2s -- asyncio รันทุกอย่างแบบ concurrent โดยค่าเริ่มต้น",
       "~0.6s -- แต่ละ await ใน loop block จนกว่า call นั้นจะเสร็จก่อนตัวถัดไปจะเริ่ม",
@@ -578,7 +591,14 @@ export const quizAsyncioBasics = [
     explain: "ตั้งแต่ Python 3.8 asyncio.CancelledError inherit ตรงจาก BaseException นี่คือความตั้งใจ: except Exception แบบกว้างๆ ที่มีไว้จับ bug ระดับ application ไม่ควรจับและทิ้ง cancellation request โดยไม่ตั้งใจ"
   },
   {
-    q: "```python\nasync def main():\n    print(9)\n\nasyncio.run(main())\nasyncio.run(main())\n```\nเกิดอะไรขึ้นเมื่อรันโค้ดนี้?",
+    q: `\`\`\`python
+async def main():
+    print(9)
+
+asyncio.run(main())
+asyncio.run(main())
+\`\`\`
+เกิดอะไรขึ้นเมื่อรันโค้ดนี้?`,
     options: [
       "RuntimeError: event loop is already running",
       "พิมพ์ 9 สองครั้ง -- แต่ละ asyncio.run call ได้ event loop อิสระของตัวเอง",
@@ -589,7 +609,18 @@ export const quizAsyncioBasics = [
     explain: "การเรียก asyncio.run แบบ sequential โดยครั้งแรกเสร็จสมบูรณ์ก่อนครั้งถัดไปจะเริ่ม รองรับได้เต็มที่ -- แต่ละครั้งสร้าง loop ใหม่แล้วปิดหลังเสร็จ RuntimeError เกิดเฉพาะเมื่อเรียก asyncio.run จาก*ภายใน*coroutine ที่กำลังรันอยู่บน loop แล้ว (nesting ไม่ใช่ sequencing)"
   },
   {
-    q: "```python\nasync def numbers(n):\n    for i in range(n):\n        yield i\n\nasync def main():\n    async with aclosing(numbers(5)) as gen:\n        async for i in gen:\n            if i == 1:\n                break\n```\n`aclosing` รับประกันอะไรที่ loop ธรรมดาไม่มี `async with` จะไม่รับประกัน?",
+    q: `\`\`\`python
+async def numbers(n):
+    for i in range(n):
+        yield i
+
+async def main():
+    async with aclosing(numbers(5)) as gen:
+        async for i in gen:
+            if i == 1:
+                break
+\`\`\`
+\`aclosing\` รับประกันอะไรที่ loop ธรรมดาไม่มี \`async with\` จะไม่รับประกัน?`,
     options: [
       "loop จะรันครบทั้ง 5 item ไม่ว่าจะมี break",
       "cleanup ของ async generator (aclose) จะรันแม้ loop จะออกก่อนกำหนดผ่าน break",

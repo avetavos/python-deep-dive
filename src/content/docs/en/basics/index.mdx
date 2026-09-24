@@ -173,7 +173,18 @@ You never need to "box" a primitive into a wrapper class as you would in Java.
 
 export const quizBasicsIndex = [
   {
-    q: "```python\nclass Animal:\n    pass\n\nclass Dog(Animal):\n    pass\n\nfido = Dog()\nprint(type(fido) == Animal)\nprint(isinstance(fido, Animal))\n```\nWhat does this print?",
+    q: `\`\`\`python
+class Animal:
+    pass
+
+class Dog(Animal):
+    pass
+
+fido = Dog()
+print(type(fido) == Animal)
+print(isinstance(fido, Animal))
+\`\`\`
+What does this print?`,
     options: [
       "True\nTrue",
       "False\nTrue",
@@ -184,7 +195,11 @@ export const quizBasicsIndex = [
     explain: "type(fido) is exactly Dog, not Animal, so type(fido) == Animal is False. isinstance walks the whole class hierarchy, so isinstance(fido, Animal) is True because Dog subclasses Animal."
   },
   {
-    q: "```python\nprint(type(int))\nprint(type(type))\n```\nWhat does this print?",
+    q: `\`\`\`python
+print(type(int))
+print(type(type))
+\`\`\`
+What does this print?`,
     options: [
       "<class 'int'>\n<class 'int'>",
       "<class 'type'>\n<class 'type'>",

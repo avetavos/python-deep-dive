@@ -214,7 +214,16 @@ export const quizIndex = [
     explain: "mypy และ pyright เป็น static analysis tool แยกต่างหากที่อ่าน annotation แล้วรายงานความไม่สอดคล้องโดยไม่ต้องรันโปรแกรม module typing มีหน้าที่แค่ให้ชื่อที่ใช้ใน annotation เท่านั้น"
   },
   {
-    q: "```python\ndef get_config(data: dict, key: str):\n    try:\n        return data[key]\n    except:\n        return None\n\nprint(get_config({}, \"port\") + 1)\n```\nโค้ดนี้เกิดอะไรขึ้นจริง ๆ ตอนรัน และทำไม signature สไตล์ -> Any ถึงเป็นส่วนหนึ่งของปัญหา?",
+    q: `\`\`\`python
+def get_config(data: dict, key: str):
+    try:
+        return data[key]
+    except:
+        return None
+
+print(get_config({}, "port") + 1)
+\`\`\`
+โค้ดนี้เกิดอะไรขึ้นจริง ๆ ตอนรัน และทำไม signature สไตล์ -> Any ถึงเป็นส่วนหนึ่งของปัญหา?`,
     options: [
       "พิมพ์ 1 -- None + 1 default เป็น 1",
       "raise TypeError: unsupported operand type(s) for +: 'NoneType' and 'int' ห่างไกลจาก key ที่หายไปซึ่งเป็นต้นเหตุจริง",
@@ -236,7 +245,16 @@ export const quizIndex = [
     explain: "Type hints ไม่มีผลอะไรเลยถ้าไม่มี checker มาอ่านมันจริง ๆ ทั้ง Python, pytest หรือ module typing ไม่บังคับใช้มันตอน runtime -- มีแค่การรัน mypy/pyright จริง (ควรอยู่ใน CI ทุกครั้งที่มีการเปลี่ยนแปลง) เท่านั้นที่ทำให้ hints กลายเป็นการรับประกันจริง"
   },
   {
-    q: "```python\ndef cleanup():\n    try:\n        raise ValueError(\"boom\")\n    finally:\n        return \"done\"\n\nprint(cleanup())\n```\nโค้ดนี้พิมพ์อะไร?",
+    q: `\`\`\`python
+def cleanup():
+    try:
+        raise ValueError("boom")
+    finally:
+        return "done"
+
+print(cleanup())
+\`\`\`
+โค้ดนี้พิมพ์อะไร?`,
     options: [
       "raise ValueError: boom โดยไม่มีใครจับ",
       "'done' -- return ภายใน finally ทิ้ง ValueError ไปทั้งหมด",
